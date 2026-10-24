@@ -86,7 +86,7 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 
 各周按 6 个学习日安排，每天 4 小时明确任务 + 1 小时机动；具体资料、安装、文件、操作、命令与验收均按学习日写在指南中。对应实验目录的 README 保存实际环境、复现索引与结果。说明文档已提供，源码、配置、数据与结果按学习日逐步创建。
 
-**当前进度（2026-10-24 文件核对）**：已有第一周练习脚本、第二周环境检查与 `torch_basics.py`、`pyproject.toml` 和 `src/petvision/` 包目录；`data/datasets.py` 已实现 MNIST 加载、固定划分和三个 DataLoader，`scripts/inspect_mnist.py` 用于数据检查与可视化。MNIST 训练 / 评估入口、模型、配置和后续周次代码尚未实现。下文的成果表、目录蓝图与命令是逐周目标，不代表已经完成验收。
+**当前进度（2026-10-24 文件核对）**：已有第一周练习脚本、第二周环境检查与 `torch_basics.py`、`pyproject.toml` 和 `src/petvision/` 包目录；`data/datasets.py` 已实现 MNIST 加载、固定划分和三个 DataLoader，`scripts/inspect_mnist.py` 用于数据检查与可视化。固定结构 MLP 和 `tests/test_cv_training.py` 的三个 Day 3 基础测试已实现，CPU 和 CUDA 检查均通过；MNIST 训练 / 评估入口、配置、后续训练检查和后续周次代码尚未实现。下文的成果表、目录蓝图与命令是逐周目标，不代表已经完成验收。
 
 | 周次 | 逐日学习指南 | 环境、运行与周总结 |
 | --- | --- | --- |

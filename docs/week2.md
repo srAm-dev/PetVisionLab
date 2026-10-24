@@ -18,7 +18,7 @@
 
 ## 本周目录蓝图
 
-以下为本周逐步形成的文件，注释标明计划创建或修改时间。目前已有 `check_environment.py`、`torch_basics.py`、`pyproject.toml`、包目录和环境快照；`src/petvision/data/datasets.py` 已有 MNIST 加载、固定划分和三个 DataLoader，`scripts/inspect_mnist.py` 已有数据检查与可视化；训练 / 评估、模型、配置和测试仍需实现。下面的目录图描述本周目标。
+以下为本周逐步形成的文件，注释标明计划创建或修改时间。目前已有 `check_environment.py`、`torch_basics.py`、`pyproject.toml`、包目录和环境快照；`src/petvision/data/datasets.py` 已有 MNIST 加载、固定划分和三个 DataLoader，`scripts/inspect_mnist.py` 已有数据检查与可视化；Day 3 的固定结构 MLP 和三个基础测试已实现，CPU 和 CUDA 检查均通过。训练 / 评估入口、配置、训练统计与保存加载检查按后续学习日补齐。下面的目录图描述本周目标。
 
 ```text
 PetVisionLab/

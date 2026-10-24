@@ -32,7 +32,7 @@ Conda 显式清单记录 Conda 包，pip 补充包还需依赖版本与实际安
 <a id="commands"></a>
 ## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day 1 两个脚本、包配置和 Day 2 的 MNIST 加载、固定划分、DataLoader 与 inspect_mnist.py；训练 / 评估入口仍需实现，表中后续参数是目标接口。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
+以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day 1 两个脚本、包配置、Day 2 的 MNIST 加载与检查，以及 Day 3 的固定结构 MLP 和三个基础测试；训练 / 评估入口仍需实现，表中后续参数是目标接口。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
@@ -54,6 +54,10 @@ Conda 显式清单记录 Conda 包，pip 补充包还需依赖版本与实际安
 MNIST 下载、固定划分与 DataLoader 见[Day 2 数据步骤](../../../docs/week2.md#mnist-data)，训练对象接线见[Day 4](../../../docs/week2.md#training-objects)，实际保存 / 加载操作见[Day 5](../../../docs/week2.md#checkpoint-io)。
 
 Day 2 数据条件：`data_dir=datasets/raw`，`split_path=experiments/mnist_mlp/week2/mnist_split.json`，seed=42，batch_size=128，num_workers=0，drop_last=False；预处理依次为 ToTensor 与 Normalize(mean=(0.5,), std=(0.5,))。训练打乱批次顺序，验证和测试按固定顺序取样；划分不随每轮训练改变。
+
+Day 3 检查记录（2026-10-24）：运行 `python -m pytest tests/test_cv_training.py -q -s`，结果为 `3 passed`。CPU 前反向检查通过，设备测试在 RTX 4060 Laptop GPU（`cuda:0`）上通过。B=1/4 时 logits 分别为 `[1,10]` / `[4,10]`，损失为有限标量，所有可训练参数的梯度存在且有限；参数量为 235146。
+
+手写三分类交叉熵检查：正确类 logit 从 0 提高到 2 时，loss 从约 1.098612 降至 0.239545。模型目前使用固定尺寸的 `MLP()`，Day 4 再扩展配置参数。
 
 完整 YAML 见[Day 4 配置示例](../../../docs/week2.md#mnist-config)，参数解析见[最小入口示例](../../../docs/week2.md#cli-config)。统一使用 `data.root`、`data.split_path`、`data.batch_size` 和 `training.learning_rate`；相对路径均从项目根目录解释。
 
