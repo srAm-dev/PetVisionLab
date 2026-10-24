@@ -1,0 +1,9 @@
+/home/sun/miniforge3/envs/petvision/bin/python
+PyTorch:2.14.1+cu130
+torchvision:0.29.1+cu130
+PyTorch CUDA:13.0
+CUDA available:True
+GPU:NVIDIA GeForce RTX 4060 Laptop GPU
+VRAM total/free: 8.00/6.93 GiB
+GPU matrix product:tensor([[2., 2.],
+        [2., 2.]], device='cuda:0')

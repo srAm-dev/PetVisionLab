@@ -1,0 +1,27 @@
+PetVisionLab 第一周环境记录
+记录日期：2026-10-20（Asia/Shanghai）
+
+操作系统：Linux
+发行版：Arch Linux
+内核版本：6.18.54.1-microsoft-standard-WSL2
+体系结构：x86_64
+
+Conda 版本：26.9.2
+Conda 命令路径：/home/sun/miniforge3/condabin/conda
+Conda 环境名：petvision
+Conda 环境路径：/home/sun/miniforge3/envs/petvision
+Python 版本：3.12.15
+Python 解释器路径：/home/sun/miniforge3/envs/petvision/bin/python
+NumPy 版本：2.5.4
+Matplotlib 版本：3.11.2
+
+环境定义：environment.yml
+包版本清单：experiments/basics/week1/conda-packages.txt
+同平台精确清单：experiments/basics/week1/conda-explicit.txt
+
+在项目根目录激活环境：
+conda activate petvision
+
+运行 Day 1 练习：
+python scripts/python_basics.py
+python scripts/numpy_basics.py
