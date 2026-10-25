@@ -32,6 +32,8 @@ python -m pip check
 
 统一 `[B,T,C]` 输入，自写布尔 Mask 的 True=屏蔽；causal 与 padding 合并后逐 query 检查，任一行没有可关注 key 时明确抛出 ValueError。本轮使用保留首个有效 token 的右侧 padding；padding query 输出不要求为零。B=2、T=8、C=32、heads=4、FFN=128 为起始检查配置。参考运行关闭 dropout，使用相同权重、精度、输入与 Mask。记录每项最大误差、容差、是否使用 CPU/GPU；张量检查结果直接打印并在周末总结。
 
+Attention 返回供检查的 dropout 前权重；权重 dropout 由 Attention 管理，FFN 隐藏 dropout 由 FeedForward 管理，两条残差输出 dropout 由 EncoderBlock 管理，避免重复放置。位置编码在构造表之前校验 embed_dim 为正偶数。
+
 构造 Attention 对象及权重复制见[Day 2](../../../docs/week4.md#reference-check)，Mask 创建与合并见[Day 3](../../../docs/week4.md#day-3)，可学习参数注册和位置 buffer 分别见 Day 4 / Day 5；ViT / GPT 复用 EncoderBlock 的类并创建新实例。
 
 | 文件或目录 | 内容与产生时间 |

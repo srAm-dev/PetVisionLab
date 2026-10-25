@@ -7,11 +7,14 @@ from torchvision.datasets import MNIST
 from torchvision import transforms
 
 
-def build_mnist_loaders(data_dir, split_path, batch_size, seed):
+def build_mnist_loaders(
+    data_dir, split_path, batch_size, seed,
+    validation_size=5000, num_workers=0, mean=(0.5,), std=(0.5,),
+):
     """加载 MNIST，复用固定划分，并返回训练、验证和测试 DataLoader。"""
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=(0.5,), std=(0.5,)),
+        transforms.Normalize(mean=mean, std=std),
     ])
     train_base = MNIST(
         root=data_dir, train=True, download=True, transform=transform,
@@ -23,6 +26,11 @@ def build_mnist_loaders(data_dir, split_path, batch_size, seed):
     n_total = len(train_base)
     if n_total != 60000:
         raise ValueError(f"MNIST 官方训练集应有 60000 条，实际为 {n_total}")
+
+    if type(validation_size) is not int or not 0 < validation_size < n_total:
+        raise ValueError("validation_size 必须是大于 0、小于总样本数的整数")
+
+    n_train = n_total - validation_size
 
     # 首次生成划分；已有文件时读取，避免覆盖之前的实验条件。
     split_exists = split_path.exists()
@@ -37,8 +45,8 @@ def build_mnist_loaders(data_dir, split_path, batch_size, seed):
             "version": 1,
             "seed": seed,
             "n_total": n_total,
-            "train_indices": indices[:55000],
-            "val_indices": indices[55000:],
+            "train_indices": indices[:n_train],
+            "val_indices": indices[n_train:],
         }
 
     # 读取和首次生成的划分都使用相同的完整性检查。
@@ -54,7 +62,10 @@ def build_mnist_loaders(data_dir, split_path, batch_size, seed):
                 f"期望 {expected!r}，实际 {split_data.get(name)!r}"
             )
 
-    for name, expected_size in (("train_indices", 55000), ("val_indices", 5000)):
+    for name, expected_size in (
+        ("train_indices", n_train),
+        ("val_indices", validation_size),
+    ):
         values = split_data.get(name)
         if not isinstance(values, list):
             raise ValueError(f"{name} 必须是列表")
@@ -89,14 +100,14 @@ def build_mnist_loaders(data_dir, split_path, batch_size, seed):
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True,
         generator=torch.Generator().manual_seed(seed),
-        num_workers=0, drop_last=False,
+        num_workers=num_workers, drop_last=False,
     )
     val_loader = DataLoader(
         val_set, batch_size=batch_size, shuffle=False,
-        num_workers=0, drop_last=False,
+        num_workers=num_workers, drop_last=False,
     )
     test_loader = DataLoader(
         test_set, batch_size=batch_size, shuffle=False,
-        num_workers=0, drop_last=False,
+        num_workers=num_workers, drop_last=False,
     )
     return train_loader, val_loader, test_loader

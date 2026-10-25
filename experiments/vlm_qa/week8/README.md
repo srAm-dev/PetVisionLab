@@ -35,11 +35,14 @@ model_manifest.json 记录每个模型 ID、完整 commit SHA、模型类、proc
 
 入门模型：CLIP `openai/clip-vit-base-patch32`；LLM `HuggingFaceTB/SmolLM2-360M-Instruct`；VLM `HuggingFaceTB/SmolVLM-256M-Instruct`。按当前兼容模型卡先验证，再固定实际 revision 与依赖。LLM/VLM batch=1、do_sample=False、max_new_tokens=128；记录精度、上下文、图像处理、生成耗时与峰值显存。CLIP 使用模型 processor 和固定英文模板，零样本结果单列。VQA 原始样本和标准在正式推理前固定，统计含全部失败记录。所选 SmolVLM 模型卡标注主要语言为英语，本轮优先英文问答；如增加中文题，单独记录语言条件并解释结果。
 
+LLM / VLM 当前按 batch=1 逐题调用，其他 batch 值需明确拒绝。每轮生成一次 run_id，原始输出与判定使用同一个运行标识；VLM 单图和批量模式复用 infer_one，参考答案只用于人工判定，不进入模型输入。模型 manifest 保留每次使用的完整配置及实际兼容版本。
+
 CLIP 创建和图文输入见[Day 1](../../../docs/week8.md#clip-inputs)，LLM 的配置、模型 / tokenizer 加载及生成见[Day 2](../../../docs/week8.md#llm-inference)，VLM 的完整图片输入路径见[Day 3](../../../docs/week8.md#vlm-image-inputs)。judgments.csv 带 run_id，与本轮选择的原始输出对应；统计前先筛选同一轮。
 
 | 文件或目录 | 内容与产生时间 |
 | --- | --- |
 | `clip_subset.json / clip_results.csv` | Day 1：固定图像索引、类别分数、预测与标签 |
+| `figures/clip_mistakes.png` | Day 1：有错分时保存最多 8 张原图及真实 / 预测类 |
 | `model_manifest.json / environments/{local,cloud}/` | 模型版本、分别保存的两端环境及安装信息 |
 | `llm_outputs.jsonl` | 五个固定 messages 的原始输出和配置 |
 | `images_manifest.csv / questions.jsonl` | 20+ 图片与预先写好的 40+ 题标准 |

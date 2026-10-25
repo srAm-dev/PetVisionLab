@@ -1,0 +1,25 @@
+model:
+  name: mlp
+  input_dim: 784
+  hidden_dims: [256, 128]
+  num_classes: 10
+data:
+  name: mnist
+  root: datasets/raw
+  split_path: experiments/mnist_mlp/week2/mnist_split.json
+  validation_size: 5000
+  batch_size: 128
+  num_workers: 0
+  normalize:
+    mean: [0.5]
+    std: [0.5]
+training:
+  seed: 42
+  device: auto
+  dtype: float32
+  epochs: 5
+  optimizer: adam
+  learning_rate: 0.001
+  weight_decay: 0.0
+experiment_dir: experiments/mnist_mlp/week2
+output_dir: outputs/mnist_mlp

@@ -53,3 +53,35 @@ def test_mlp_device():
         assert parameter.grad is not None, f"{name} 没有梯度"
         assert torch.isfinite(parameter.grad).all().item(), f"{name} 梯度不有限"
     print("device:", logits.device)
+
+
+def test_evaluate_metrics():
+    from itertools import islice
+
+    from torch.utils.data import DataLoader, TensorDataset
+    from petvision.training.cv_trainer import evaluate
+
+    # 为了单独检查统计，直接准备 3 条已知的分类分数。
+    logits = torch.tensor([
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [2.0, 0.0],
+    ])
+    labels = torch.tensor([0, 1, 1], dtype=torch.long)
+    loader = DataLoader(TensorDataset(logits, labels), batch_size=2, shuffle=False)
+    model = torch.nn.Identity()
+    criterion = torch.nn.CrossEntropyLoss()
+
+    metrics = evaluate(model, loader, criterion, torch.device("cpu"))
+    expected_loss = criterion(logits, labels).item()
+    assert metrics["n_samples"] == 3
+    assert abs(metrics["loss"] - expected_loss) < 1e-6
+    assert abs(metrics["accuracy"] - 1 / 3) < 1e-6
+
+    # 只读取第一批时，应统计 2 条，而不是整个 dataset 的 3 条。
+    partial = evaluate(model, islice(loader, 1), criterion, torch.device("cpu"))
+    assert partial["n_samples"] == 2
+    assert abs(partial["loss"] - criterion(logits[:2], labels[:2]).item()) < 1e-6
+    assert partial["accuracy"] == 0.5
+    print("full:", metrics)
+    print("first batch:", partial)

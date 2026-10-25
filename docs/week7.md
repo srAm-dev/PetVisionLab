@@ -1,6 +1,6 @@
 # 第七周逐日学习指南：简化字节级 BPE、采样与中断续训
 
-> 更新日期：2026-10-24  
+> 更新日期：2026-10-25<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写字节级 BPE 与 Unicode 往返检查，加入 Temperature/Top-k 和完整恢复训练，整理字符/BPE 分开评估的语言模型报告。  
@@ -39,7 +39,7 @@ PetVisionLab/
     ├── bpe_tokenizer.json                 # Day 2：字节词表与有序 merge
     ├── tokenizer_comparison.csv           # Day 5：相同原文的编码结果
     ├── samples.jsonl                      # Day 3–5：采样和 BPE 样例
-    └── runs/bpe/                          # 配置、history 与曲线
+    └── runs/bpe/                          # 配置、history、run_summary、评估 JSON 与曲线
 # checkpoints：outputs/mini_gpt_bpe/，模型与 tokenizer 配套保存
 ```
 
@@ -135,10 +135,16 @@ UTF-8 中 a=97、b=98，初始序列为 `[97,98,97,98]`。相邻 pair 中 `(97,9
 ```python
 def count_pairs(ids): ...
 def merge_pair(ids, pair, new_id): ...
-def decode(ids): ...
+
+
+class ByteBPETokenizer:
+    def __init__(self): ...
+    def decode(self, ids): ...
 ```
 
 count_pairs 和 merge_pair 可作为 tokenizer.py 内的辅助函数；decode 是 ByteBPETokenizer 的方法，需要使用该对象的词表，不能仅凭任意 ID 列表猜出 bytes。
+
+count_pairs 返回 `{(left_id, right_id): 次数}` 字典；merge_pair 返回替换后的新列表。没有 pair 时返回空计数字典，训练循环在取最大值前退出。平频规则可写为 `min(counts, key=lambda pair: (-counts[pair], pair))`；这行仅在 counts 非空时执行。
 
 ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in range(256)}` 和空的有序 merge 列表；bytes([i]) 表示包含一个值为 i 的字节，不能写成创建 i 个零字节的 bytes(i)。训练每产生新 ID，就把左右 token 的 bytes 拼接后加入 vocab；vocab_size 用只读属性返回 `len(self.vocab)`，调用方读取 `tokenizer.vocab_size`，不加括号，与字符 tokenizer 的属性一致。decode 逐个查 vocab、拼接全部 bytes 后严格解码 UTF-8。
 
@@ -204,6 +210,8 @@ python -m pytest tests/test_tokenizer.py -q
 没有 pair 可合并时提前结束，保存实际词表大小，模型输出维度以这个实际值为准。
 
 把算法接入 train_tokenizer.py：按第二周 argparse 写法接收 `--vocab-size`（int，默认 512）与 `--max-train-chars`（int，默认 100000），后者要求为正。main 读取 `datasets/processed/tinyshakespeare/train.txt` 的 bytes 并按 UTF-8 解码，先按字符截取再转 bytes；新建 ByteBPETokenizer，调用 train(text_subset, vocab_size)，随后 save 到 `experiments/mini_gpt/week7/bpe_tokenizer.json`。父目录先创建，记录子集 hash、字符数和字节数。load 与字符 tokenizer 一样作为类方法，从保存的规则还原对象，不重新训练。
+
+读取 train.txt 后先与第六周 split_manifest 的 train hash 核对，再计算截取子集的 hash；两者分别保存为原训练 split 标识和 BPE 学习子集标识。已有 bpe_tokenizer.json 时先核对这些条件，改变词表或子集应另存版本，不能覆盖仍被 checkpoint 引用的 tokenizer。
 
 #### 第二步：encode 使用已有规则
 
@@ -385,7 +393,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 | model_state / model_config | 参数、buffer、完整模型结构和词表大小 |
 | optimizer_state | AdamW 的 step、动量和二阶矩等状态 |
 | step / config | 已完成更新次数、累计目标与实际训练设置 |
-| best_val_loss / best_step / 日志累计值 | 历史最佳验证结果、已处理 token/bytes 数，以及未完成统计区间的 NLL 与目标数 |
+| best_val_loss / best_step / 日志累计值 | 历史最佳验证结果、已处理 token/bytes 数、已记录训练秒数，以及未完成统计区间的 NLL 与目标数 |
 | tokenizer / split 标识 | 配套文件路径或内容、hash、原文边界 |
 | python_rng / numpy_rng / torch_rng | 各随机数生成器的状态 |
 | cuda_rng / train_generator_state | CUDA 随机状态和独立训练采样 Generator 状态 |
@@ -406,6 +414,8 @@ completed_steps = checkpoint["step"]
 只有模型参数相同，下一步训练仍可能不同。恢复流程应先构造模型/优化器并加载，再恢复随机状态，最后取下一批数据。
 
 恢复历史 best_val_loss 后再判断新结果是否改善，不能重置为无穷大后覆盖更好的 best；沿用同一输出目录并保留原 best 文件。history 只追加恢复点之后的新验证行，若日志已有比 checkpoint.step 更晚的记录，先归档冲突记录，不能混入本轮。
+
+配置核对也在恢复分支实际执行：模型结构、tokenizer / split hash、batch、context、优化器类型与超参数、验证间隔必须与保存时一致；允许提高 training.steps 这一累计目标，不能靠修改 YAML 学习率却被 optimizer_state 静默覆盖。当前等价续训检查使用同一 device / dtype。best.pt 的 step 及指标应与 last 中保存的 best_step / best_val_loss 对应；从更早备份恢复且目录里已有后续 best 时，应连同冲突日志归档后处理，不能把“未来的 best”混进这条恢复路径。
 
 把随机状态字段对应到真实 API：
 
@@ -435,6 +445,12 @@ NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载
 3. 再新建模型、优化器与 Generator，加载第 20 步状态；恢复后第一次实际采样应与连续路径第 21 步一致。不要为了查看下一批而额外调用一次采样。
 4. 两条路径完成 40 步后，在同一固定 batch、eval 下比较 loss；逐参数求最大绝对差。optimizer 按对应参数检查 step、exp_avg、exp_avg_sq，整数进度完全相同，浮点差小于 `1e-6`。
 5. 随机状态另做短往返：保存后分别抽取 Python/NumPy/Torch 数值，恢复后重新抽取，应得到同一串；这项独立检查完成后重置测试状态，再运行训练对照。CPU 小检查不要求 CUDA 才能执行。
+
+sample_batch 当前只返回 x/y，没有返回起点。测试中若要核对起点，可在实际采样之前 clone Generator 状态到一个独立探针 Generator，用相同的 randint 参数从探针取得预期起点，再正常调用 sample_batch；探针不推进真实训练 Generator。同时比较两条路径实际取得的 x/y。也可仅在测试辅助函数中返回起点，不必为打印多消耗一批真实训练数据。
+
+保存时统一使用已完成更新后的状态：若本步刚完成验证，先把该行日志写入、更新 best 值并清零区间累计，再写 checkpoint；若在验证间隔中间保存，区间 NLL / 目标数保持实际累计值。恢复后使用相同顺序，这样不会把上个区间重复统计。
+
+因此今天增加完整恢复状态时，要把第六周循环里的 checkpoint 调用移到区间累计清零之后，再构造完整字典。资源统计也区分本进程 segment_seconds 与各段累计 train_seconds，恢复时接上 checkpoint 保存的累计值；若只测了恢复后的这一段，报告为该段耗时，不能标成完整训练时间。峰值显存记录各段峰值，汇总取最大值，不把不同进程的峰值相加。
 
 #### 第四步：解释总步数语义
 
@@ -525,6 +541,8 @@ output_dir: outputs/mini_gpt_bpe
 
 将 train_gpt.py、generate.py 中第六周写死的 CharTokenizer.load 改为调用 load_tokenizer，再核对文件 hash；compare_tokenizers.py 也用同一入口分别读两个文件。不能只修改训练脚本，却让生成脚本仍把 BPE 文件当字符表读取。模型、优化器和 embedding/head 均新建，第六周的字符权重保留不动。
 
+同时改造生成后的解码分支：字符 tokenizer 继续 decode(all_ids)；BPE 用 vocab 中的 bytes 拼接完整输出，严格解码失败时按 Day 2 的展示规则处理，并记录 decode_ok、raw_bytes_hex 和原始 IDs。不能仍无条件调用严格 decode 后在无效 UTF-8 处终止整个生成脚本。严格往返测试仍调用 tokenizer.decode，不经过展示分支。若统计替换字符数，注明这是展示文本中的 U+FFFD 数量，并不能准确代表无效字节数量。
+
 <a id="bpe-resume-order"></a>
 正式 BPE 训练按以下顺序执行，具体命令见本节下方：
 
@@ -559,6 +577,8 @@ context=128 在字符模型中约为 128 个已编码字符，在 BPE 中可能�
 #### 第四步：把不同指标分开解释
 
 BPE 验证 loss 单独报告，不能因数字低于字符 loss 就断言更好。比较生成耗时时注明同样 prompt、生成 token 数及实际输出字节数；token/s 依赖 tokenizer。
+
+本周 BPE 曲线由 train_gpt.py 读取本次 history 后传给 plot_lm_history，保存为 `experiments/mini_gpt/week7/runs/bpe/figures/loss_curves.png`；run_summary.json 同目录保存训练时间、峰值显存和累计输入 token / bytes。生成计时在模型加载、prompt 编码完成后开始，GPU 前后同步，记录整个自回归循环的 generate_seconds；输出字节数由实际输出计算，不能用 max_new_tokens 代替。字符与 BPE 样例均用同一字段定义。
 
 ### 运行与验收
 
@@ -630,6 +650,8 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 `--evaluate-only` 分支在创建训练循环和写训练文件之前返回：按 checkpoint 重建模型与 tokenizer，只读取所选 split，切 eval 并关闭梯度，不更新参数。对长度为 N 的编码序列，用第六周的固定分窗方式统计 `N-1` 个有效目标，保留尾窗并按目标数汇总 NLL。打印模型、tokenizer hash、原文范围、目标数与 loss；测试结果整理到本周总结，不覆盖训练 history 或 checkpoint。
 
 参数解析复用第二周的 argparse：`--evaluate-only` 为 store_true，`--checkpoint` 为 Path，`--split` 限定 val/test；evaluate-only 时必须提供 checkpoint，且与 resume 互斥。先在临时小模型上检查这个分支返回完整目标计数、参数未变，正式运行前后 history 行数与 checkpoint 保持一致。这样下方三条命令确实只评估，不会先训练再评估。
+
+建议给 --split 默认 val；未开启 evaluate-only 时传 --checkpoint 应报错，避免误以为它会恢复训练。只评估分支在 main 中先执行并 return，再进入新训练 / resume 分支。把本次真实结果保存到所选配置的 `experiment_dir/{split}_metrics.json`，字段包含 model、checkpoint、checkpoint_step、tokenizer_hash、split_hash、split、n_target_tokens、loss 和窗口规则。三组分别写自己的目录，再在本周 README 链接它们；结果保存只涉及评估文件，不改训练 config、history 或权重。
 
 #### 第二步：报告四项证据
 

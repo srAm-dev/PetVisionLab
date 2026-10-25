@@ -43,6 +43,8 @@ python -m pip check
 
 CIFAR-10 加载函数、两个 transform 与检查脚本的接线见[Day 1 数据步骤](../../../docs/week3.md#cifar-data)，沿用第二周的 JSON / DataLoader 方法，分别处理 45k/5k/10k 三份数据。
 
+配置中的 validation_size 和 num_workers 传给 build_cifar10_loaders，归一化 / 增强参数用于创建 transform；正式划分固定为 45000/5000。逐轮追加 history、耗时与峰值显存保存到 run_summary.json，具体见[资源记录步骤](../../../docs/week3.md#training-resources)。
+
 初始状态按[训练前保存步骤](../../../docs/week3.md#initial-state)产生：Day 2 写 `outputs/cnn_bn_on/initial.pt`，Day 4 写 `outputs/resnet_on/initial.pt`，均在正式训练的第一次前向前保存，step=0。smoke/overfit 的模型不用于这些文件。
 
 Day 5 在 BN off 配置设置 `training.init_checkpoint: outputs/cnn_bn_on/initial.pt`，在 residual off 配置设置 `training.init_checkpoint: outputs/resnet_on/initial.pt`。两组分别复制并核对共有层，保存各自 initial.pt 后，从新优化器、零进度开始训练；best/last 用于训练结果和评估。文件不存在时先补齐该对基线，不能替换成训练后权重。运行命令不变，这个字段由配置读取。数据顺序使用独立 Generator；相同 seed 只能作为随机设置记录，若未独立控制随机增强，不声称逐样本增强完全一致。
@@ -54,7 +56,8 @@ Day 5 在 BN off 配置设置 `training.init_checkpoint: outputs/cnn_bn_on/initi
 | `results.csv` | Day 6：验证结果与预算 |
 | `figures/bn_comparison.png` | BN 对照曲线 |
 | `figures/residual_comparison.png` | 残差对照曲线 |
-| `runs/<variant>/` | 各组配置快照与 history |
+| `runs/<variant>/` | 各组配置快照、逐轮追加的 history、run_summary.json 与单组图 |
+| 各组 `figures/mistakes_val.png` | Day 6：验证误分类，位于各自 experiment_dir |
 | `outputs/{cnn_bn_on,cnn_bn_off,resnet_on,resnet_off}/` | 项目根下各组 initial（step=0）和 best/last checkpoint |
 
 结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。

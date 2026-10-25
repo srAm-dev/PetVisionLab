@@ -1,6 +1,6 @@
 # 第三周逐日学习指南：CNN、ResNet 与 BN / 残差对照
 
-> 更新日期：2026-10-24  
+> 更新日期：2026-10-25<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写 CNN、BasicBlock 和 CIFAR 版 ResNet18，完成 BN on/off 与同深宽残差 on/off 两类对照，保留统一划分供第五周复用。  
@@ -38,6 +38,7 @@ PetVisionLab/
 │   ├── README.md                          # 已提供
 │   ├── cifar10_split.json                 # Day 1：45k/5k 固定索引
 │   ├── results.csv                        # Day 6：四组验证结果
+│   ├── runs/<variant>/                    # Day 2–5：config、history、run_summary 与单组图
 │   ├── configs/                           # Day 5：实际配置快照
 │   └── figures/                           # Day 5–6：两类对照曲线
 └── outputs/{cnn_bn_on,cnn_bn_off,resnet_on,resnet_off}/
@@ -123,7 +124,7 @@ MaxPool(K2,S2)       [B,32,16,16]
 <a id="cifar-data"></a>
 #### 第二步：下载 CIFAR-10，明确加载函数与预处理
 
-今天把第二周的 MNIST 数据加载流程扩展到 **CIFAR-10**：三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 `src/petvision/data/datasets.py` 新增 `build_cifar10_loaders(data_dir, split_path, batch_size, seed, train_transform, val_transform, num_workers=0)`，返回 train_loader、val_loader、test_loader。两个 transform 由调用者传入，便于正式训练使用增强、过拟合检查改用确定性变换。
+今天把第二周的 MNIST 数据加载流程扩展到 **CIFAR-10**：三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 `src/petvision/data/datasets.py` 新增 `build_cifar10_loaders(data_dir, split_path, batch_size, seed, train_transform, val_transform, num_workers=0, validation_size=5000)`，返回 train_loader、val_loader、test_loader。两个 transform 由调用者传入，便于正式训练使用增强、过拟合检查改用确定性变换；validation_size 和 num_workers 都由配置传入，不能只接收 batch_size。
 
 先在 `scripts/inspect_cifar10.py` 的 main 中建立本日条件：data_dir 为 `datasets/raw`，split_path 为本周 `cifar10_split.json`，batch_size=64、seed=42。在顶层导入 torchvision.transforms，main 中创建：
 
@@ -160,6 +161,8 @@ test_set = CIFAR10(root=data_dir, train=False, download=True, transform=val_tran
 #### 第三步：保存 45k/5k 索引，再创建三个 DataLoader
 
 复用[第二周 MNIST 的索引保存和批次步骤](week2.md#mnist-data)：本周只对 0..49999 生成排列，前 45000 个作为 train_indices，其余 5000 个作为 val_indices。JSON 的 dataset 改为 cifar10、n_total 改为 50000，保存到传入 split_path；存在文件时读取并核对，不因开始新模型就覆盖划分。
+
+函数内部先校验 validation_size 为满足 `0 < validation_size < 50000` 的整数，再计算 `n_train = n_total - validation_size`，用 `indices[:n_train]` / `indices[n_train:]` 切分；已有文件的长度校验也使用这两个变量。本周正式配置固定 5000，默认得到 45000/5000。验证参数是否生效时另用临时 split_path 和 validation_size=10000，应得到 40000/10000；不要改写跨周复用的正式划分。
 
 完成长度、范围、组内唯一性、交集和并集断言后，在数据函数内接上：
 
@@ -281,6 +284,26 @@ output_dir: outputs/cnn_bn_on
 
 修改已有 `scripts/train_cv.py`，顶层从 `petvision.models.cv.cnn` 导入 CNN，从 `petvision.data.datasets` 导入 build_cifar10_loaders。具体接线沿用[第二周对象创建顺序](week2.md#training-objects)：data.name=mnist 时保留原函数，data.name=cifar10 时先按配置创建两个 transform，再调用 Day 1 的 build_cifar10_loaders；model.name=cnn 时创建 CNN(num_classes=..., use_bn=...)。training.optimizer=adamw 时创建 torch.optim.AdamW 并传入配置的学习率、weight_decay。已有 `scripts/evaluate.py` 使用同一套模型 / 数据选择规则；过拟合检查把传给训练 dataset 的 transform 改为确定性 val_transform。
 
+同时把第二周“仅支持 mlp / mnist / adam”的入口校验改成实际已实现的选择分支；未知名称仍报错。只新增 CNN 创建代码而保留旧的拒绝条件，会在创建模型之前退出。当前 dtype 仍限定 float32；CIFAR 的 image_size 当前只支持 32，先明确校验，不能接收其他值却继续按 32 训练。
+
+把 Day 1 的固定 transform 改为读取 data.normalize 的 mean/std、augmentation.random_crop_padding 和 random_horizontal_flip：padding=0 时省略随机裁剪，flip=false 时省略翻转；其他训练设置按配置创建。val_transform 始终只包含 ToTensor 和 Normalize。下面是 main 中 CIFAR 分支的调用，两个 transform 已先建立：
+
+```python
+data_cfg = cfg["data"]
+train_loader, val_loader, test_loader = build_cifar10_loaders(
+    data_dir=data_cfg["root"],
+    split_path=data_cfg["split_path"],
+    batch_size=data_cfg["batch_size"],
+    seed=cfg["training"]["seed"],
+    train_transform=train_transform,
+    val_transform=val_transform,
+    num_workers=data_cfg["num_workers"],
+    validation_size=data_cfg["validation_size"],
+)
+```
+
+过拟合模式在调用前令 train_transform=val_transform；独立评估也使用确定性变换。检查三个 loader 的大小、实际 transform 和一个批次，而不是只打印 YAML。第五周 ViT 继续复用这条 CIFAR 分支。
+
 #### 第三步：先检查再正式训练
 
 创建 `tests/test_resnet.py`，今天先放 CNN 检查，Day 3–4 再向同一文件添加 BasicBlock 与 ResNet18 检查。顶层导入 torch、CNN；分别用 B=1/4 的 `[B,3,32,32]` 图片检查 `[B,10]` 输出，再用 long 标签计算交叉熵并 backward，核对活跃参数梯度存在且有限。
@@ -315,6 +338,63 @@ torch.save({
 state_dict 包含参数与 BN buffers；此处直接写盘，不保留会随训练改变的内存引用。保存逻辑只进入正式训练分支，smoke/overfit 仍只打印。后续 off 组加载并对齐权重后，也在各自 output_dir 保存自己的 initial.pt。
 
 模型初始化或初始权重加载完成后，再按 training.seed 重置训练随机状态，并创建训练 loader 的迭代器。每对实验采用相同的数据采样与增强设置，避免模型构造消耗随机数的差异影响后续数据顺序。
+
+<a id="training-resources"></a>
+#### 第五步：接入逐轮日志与实际资源记录
+
+在已有 `scripts/train_cv.py` 顶层补充 csv、json、time；结果仍由正式分支生成。第二周 MNIST 的五轮小实验保持循环结束后统一保存。本周 CIFAR 训练较长，改为每个 epoch 完成后只追加当前 row，训练结束后再从完整 history 绘图；不要把累计 history 整个传给追加写入。
+
+在脚本顶层新增 `append_history(row, experiment_dir)`。本周 row 包含 variant 和第二周五项 epoch 指标，variant 取 `Path(cfg["experiment_dir"]).name`。下面是该函数的实现：
+
+```python
+def append_history(row, experiment_dir):
+    path = Path(experiment_dir) / "history.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists() or path.stat().st_size == 0
+    columns = ["variant", "epoch", "train_loss", "train_accuracy",
+               "val_loss", "val_accuracy"]
+    with path.open("a", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+```
+
+从零实验应使用新的运行目录；若重跑同一 variant，先归档原配置、history、曲线和权重，再开始一份空 history。每轮先 history.append(row)，再 append_history(row, experiment_dir)；结束后 plot_history(history, experiment_dir)。CIFAR 分支不再调用旧 save_history 覆盖追加结果；MNIST 保留原逻辑。两轮临时数据检查 CSV 应恰好一行表头、两行数据，variant 全部一致。
+
+训练总耗时在模型 / loader / 优化器准备完、initial.pt 保存后开始，覆盖所有训练、验证、逐轮日志和 best/last 保存；排除下载、初始化和最终画图。在正式 for 循环前执行：
+
+```python
+if device.type == "cuda":
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+started = time.perf_counter()
+```
+
+for 循环结束后、画图前执行：
+
+```python
+if device.type == "cuda":
+    torch.cuda.synchronize(device)
+train_seconds = time.perf_counter() - started
+peak_allocated_mib = (
+    torch.cuda.max_memory_allocated(device) / 1024**2
+    if device.type == "cuda" else None
+)
+summary = {
+    "params": sum(p.numel() for p in model.parameters()),
+    "epochs": cfg["training"]["epochs"],
+    "train_seconds": train_seconds,
+    "peak_allocated_mib": peak_allocated_mib,
+    "device": str(device),
+    "dtype": str(next(model.parameters()).dtype),
+    "timing_scope": "train+validation+epoch_logging+checkpoint_io",
+}
+with (experiment_dir / "run_summary.json").open("w", encoding="utf-8") as file:
+    json.dump(summary, file, ensure_ascii=False, indent=2)
+```
+
+CUDA allocated 峰值包含已加载模型等当前 Torch 分配，不等于整张显卡使用量；CPU 对应值为 null。计时使用 [time.perf_counter](https://docs.python.org/zh-cn/3.12/library/time.html#time.perf_counter)，GPU 前后同步使用 [torch.cuda.synchronize](https://docs.pytorch.org/docs/stable/generated/torch.cuda.synchronize.html)。用于确定预算的单 epoch 短运行也按同样方法测量，但结果只打印，正式 summary 来自重新初始化后的完整运行。Day 6 的 train_seconds 从各自 run_summary.json 读取，不能靠回忆填写。
 
 ### 运行与验收
 
@@ -641,6 +721,8 @@ Day 2 和 Day 4 的 on 组已经完成时直接复用，不为填写对照表再
 
 每行至少包括 variant、split=val、best_epoch、val_loss、val_accuracy、params、epochs、batch、train_seconds、config、checkpoint。
 
+params 和 train_seconds 读取各组 experiment_dir/run_summary.json，epoch 指标读取同目录 history.csv；batch、epochs 来自对应 config.yaml。独立验证先打印并核对完整结果；本周汇总表由这里明确列出的文件与该次验证输出填写。
+
 best 的指标来自同一个验证选择规则。最终一轮指标和 best epoch 的指标可以不同，汇总时写清选择口径。
 
 按各组保存的 best epoch 从自身 history 找同一行，使用这一行的 val_loss 和 val_accuracy；二者不能分别取各列的最优值。用下方独立评估命令覆盖全部 5000 条验证样本，再核对这两个指标。CSV 写法复用第一周 Day 6，曲线读取各组自己的 history。
@@ -652,6 +734,8 @@ BN 图只画同 CNN 两组的 train/val；残差图只画同深宽两组。横�
 读取四个 runs/<variant>/history.csv，用第一周的 subplots / plot / savefig 方法分别保存 `experiments/cnn_vs_resnet/week3/figures/bn_comparison.png` 和 `experiments/cnn_vs_resnet/week3/figures/residual_comparison.png`。图与 results.csv 来自已有训练记录，不为绘图重新训练；在本周 README 链接这两张图和结果表。
 
 选少量验证误分类，注明真实类和预测类。对照结论依次写观察事实、可能解释、控制条件和局限。
+
+将第二周 evaluate.py 的 collect_mistakes 也接到 `--split val` 分支；收集后按三通道 mean/std 逆归一化、permute(1,2,0) 显示。图片分别保存到各组 `experiment_dir/figures/mistakes_val.png`；测试图用 mistakes_test.png，避免后续测试覆盖验证分析。这次只取验证图片，完整验证指标仍由全体 5000 条统计。
 
 #### 第三步：有限参考重写 BasicBlock
 

@@ -32,14 +32,15 @@ Conda 显式清单记录 Conda 包，pip 补充包还需依赖版本与实际安
 <a id="commands"></a>
 ## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day 1 两个脚本、包配置、Day 2 的 MNIST 加载与检查，以及 Day 3 的固定结构 MLP 和三个基础测试；训练 / 评估入口仍需实现，表中后续参数是目标接口。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
+以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day 1–4 的数据、模型、训练 / 验证、参数化配置入口、检查模式与日志绘图。Day 5–6 的 checkpoint 保存加载、独立 evaluate 入口和最终测试仍待实现；表中这些后续命令在完成对应步骤后才可运行。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/check_environment.py --output-dir experiments/mnist_mlp/week2` | 打印并记录环境 |
 | Day 1 | `python scripts/torch_basics.py` | Tensor 与 autograd 检查 |
 | Day 2 | `python scripts/inspect_mnist.py` | 固定划分与数据检查 |
-| Day 3–6 | `python -m pytest tests/test_cv_training.py -q` | 关键形状、梯度、保存加载 |
+| Day 3–6 | `python -m pytest tests/test_cv_training.py -q` | 当前 4 项形状 / 梯度 / 设备 / 统计检查；Day 5 再补保存加载 |
+| Day 4 第三步（按指南创建脚本后） | `python scripts/check_mnist_training.py` | 独立运行两批 smoke 与固定 64 样本拟合 |
 | Day 4 | `python scripts/train_cv.py --help` | 核对配置参数与互斥检查模式 |
 | Day 4 | `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke` | 两批次 smoke |
 | Day 4 | `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --overfit-samples 64` | 固定小样本过拟合 |
@@ -57,9 +58,29 @@ Day 2 数据条件：`data_dir=datasets/raw`，`split_path=experiments/mnist_mlp
 
 Day 3 检查记录（2026-10-24）：运行 `python -m pytest tests/test_cv_training.py -q -s`，结果为 `3 passed`。CPU 前反向检查通过，设备测试在 RTX 4060 Laptop GPU（`cuda:0`）上通过。B=1/4 时 logits 分别为 `[1,10]` / `[4,10]`，损失为有限标量，所有可训练参数的梯度存在且有限；参数量为 235146。
 
-手写三分类交叉熵检查：正确类 logit 从 0 提高到 2 时，loss 从约 1.098612 降至 0.239545。模型目前使用固定尺寸的 `MLP()`，Day 4 再扩展配置参数。
+手写三分类交叉熵检查：正确类 logit 从 0 提高到 2 时，loss 从约 1.098612 降至 0.239545。Day 3 检查使用固定尺寸的 `MLP()`；参数化改造按 Day 4 第四步完成，并保留该默认调用。
+
+Day 4 第一步检查记录（2026-10-25）：set_seed 的 Python / NumPy / Torch 随机序列复现检查通过。训练 / 验证函数通过 10 项临时小样本检查，覆盖 CPU/CUDA、非整批的按样本加权损失、部分遍历的实际样本数、训练前清梯度与参数更新、eval/no_grad 下参数和已有梯度不变，以及空输入报错。原有 Day 3 三项测试也通过。另在 `cuda:0` 上取真实 MNIST 训练和验证各一批，每批 128 条，确认训练更新参数、验证不改变参数或已有梯度；这属于批次检查，尚未进行整轮正式训练或完整验证。
+
+Day 4 第二、三步示例验证（2026-10-25）：统计检查覆盖两批大小为 2/1 的已知数据及只读取首批的情况，均符合全体样本平均损失与实际样本数。MNIST smoke 的训练、验证各处理两批、每批 128 条；固定 64 条训练样本更新 200 次后，loss 约为 0.000319，训练 accuracy=100%。这是小样本拟合检查，未评估完整验证或测试集，也未保存正式训练结果。
+
+Day 4 第四步接口检查（2026-10-25）：现有 4 项测试与 6 项临时接口检查共 10 项通过。MLP 默认结构仍为 235146 个参数，自定义 4→8→4→3 结构为 91 个参数，CPU/CUDA 前反向正常。数据函数默认读取 55k/5k/10k；独立临时划分使用 validation_size=10000 时为 50k/10k/10k，索引无重叠且完整覆盖官方训练集。mean/std、num_workers 和 batch_size 的传入值生效；旧划分数量不匹配时明确报错，原划分文件保持不变。当时实际 YAML 可创建模型与数据并完成一个批次的前反向；配置驱动的 smoke 检查随后在“前六步检查”中通过，当时正式训练仍待进行。
+
+MLP 循环组装检查（2026-10-25）：现有 4 项测试和 3 项临时回归检查共 7 项通过，覆盖 CPU/CUDA 的一层、两层、三层隐藏层配置及前反向；空隐藏层序列明确报错。默认参数量仍为 235146，默认 state_dict 键名与原两隐藏层实现一致，相同权重时输出一致。正式 MNIST 配置仍为 hidden_dims=[256,128]。
+
+Day 4 前六步检查（2026-10-25）：现有 4 项测试与 8 项临时入口检查共 12 项通过，包含命令行互斥 / 正数校验、不支持的模型 / 数据集 / 优化器 / dtype 明确报错，以及过拟合样本数上限校验。实际运行 train_cv.py 的 --smoke，训练和验证各处理 256 条样本；--overfit-samples 64 完成 200 次更新后，loss 约为 0.000319，固定训练样本 accuracy=100%。使用 RTX 4060 Laptop GPU。当时第七步尚未完成，该次检查未执行完整正式训练。
+
+当前文件核对（2026-10-25）：保存与绘图已实现，`history.csv` 有 epoch=1..5 的五行记录，与配置的 epochs=5 对应。第 5 轮 train_loss≈0.085465、train_accuracy≈97.30%，val_loss≈0.117921、val_accuracy=96.42%；这也是该表验证准确率最高的一轮。以上来自已有 CSV，本次文档检查没有重新训练。当前没有 best.pt/last.pt，无法据此重建当时模型或验证保存加载一致性，也没有独立测试结果。保留该记录作为阶段结果；Day 5 实现 checkpoint 后，将这次配置、history 和曲线一同归档，再从新模型完成一份权重与日志配套的运行。
+
+当前项目检查（2026-10-25）：`python -m pytest tests/test_cv_training.py -q -s` 的现有 4 项测试通过，设备检查使用 cuda:0。前面分步骤记录描述各自检查当时的范围，以本段和现有文件判断当前进度。
+
+当前入口另用临时合成数据验证了三个模式：正式分支生成两轮 CSV、配置快照和有效曲线；smoke 与 overfit 均保持已有结果文件的内容和修改时间不变。这是入口与文件隔离检查，输出保存在临时目录，不作为 MNIST 性能指标。
+
+Day 4 的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-configurable-interfaces)改造 MLP 和数据接口，验证默认值兼容及自定义参数生效，再写 YAML；第五步读取成字典，第六步将字段传给构造函数 / 数据函数。MLP 仍只接收 self 时不能使用 MLP(input_dim=...)；数据函数也需要先支持 validation_size、num_workers、mean、std。接口接通后再运行表中的 train_cv.py 检查模式。
 
 完整 YAML 见[Day 4 配置示例](../../../docs/week2.md#mnist-config)，参数解析见[最小入口示例](../../../docs/week2.md#cli-config)。统一使用 `data.root`、`data.split_path`、`data.batch_size` 和 `training.learning_rate`；相对路径均从项目根目录解释。
+
+第七步的保存 / 绘图函数和正式 else 分支已接入 train_cv.py：每轮收集 history，循环结束后一次写 CSV 和曲线。完整示例见[结果管理步骤](../../../docs/week2.md#run-modes)。当前 if / elif / else 已隔离检查模式与正式输出；指南中的显式 return 可用于明确提前结束 main。
 
 `--smoke` 与 `--overfit-samples` 互斥，检查结束后只打印并返回，不能写入或覆盖正式配置快照、history、曲线和 checkpoint。Day 4 准备训练与日志，Day 5 接通保存后运行正式 5 epochs；正式运行前重新固定种子并创建模型和优化器。具体规则见[运行模式说明](../../../docs/week2.md#run-modes)。
 
@@ -68,8 +89,8 @@ Day 3 检查记录（2026-10-24）：运行 `python -m pytest tests/test_cv_trai
 | `mnist_split.json` | Day 2：划分索引与 seed |
 | `figures/mnist_batch.png` | Day 2：训练批次中前 8 张图片及真实标签 |
 | `environment.txt / conda-*.txt / pip-freeze.txt` | 实际环境检查与安装后快照 |
-| `config.yaml` | Day 5：正式运行使用的配置快照 |
-| `history.csv / figures/training_curves.png` | Day 5：训练/验证指标 |
+| [config.yaml](config.yaml) | 已有：这次五轮运行的配置快照；尚未配套 checkpoint |
+| [history.csv](history.csv) / [训练曲线](figures/training_curves.png) | 已有：五轮训练 / 验证记录；Day 5 再形成包含权重的完整运行 |
 | `test_metrics.json / figures/mistakes.png` | Day 6：冻结配置后的独立测试 |
 | `outputs/mnist_mlp/{best,last}.pt` | 权重与配置，保存于项目根 outputs 下 |
 

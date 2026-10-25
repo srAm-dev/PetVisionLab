@@ -1,6 +1,6 @@
 # PetVision-Lab：Python / 数学基础 → CNN → ResNet → Transformer → ViT → Mini-GPT → LLM / VLM
 
-> **版本**：v1.10 · **更新日期**：2026-10-24  
+> **版本**：v1.12 · **更新日期**：2026-10-25<br>
 > **适用背景**：Python 实践与深度学习理论都需要补充，优先理解原理和亲手实现。  
 > **时间预算**：8 周，每周 30 小时，总计约 240 小时；每周 24 小时明确任务 + 6 小时补基础、调试和复盘。  
 > **算力分工**：本地笔记本 RTX 4060 用于基础练习、视觉模型和 Mini-GPT；第二周已保存的环境检查记录显示总显存为 8.00 GiB。计划使用云端 48GB 显存 GPU 运行后期 LLM / VLM，云端型号与可用显存届时实测。  
@@ -86,7 +86,7 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 
 各周按 6 个学习日安排，每天 4 小时明确任务 + 1 小时机动；具体资料、安装、文件、操作、命令与验收均按学习日写在指南中。对应实验目录的 README 保存实际环境、复现索引与结果。说明文档已提供，源码、配置、数据与结果按学习日逐步创建。
 
-**当前进度（2026-10-24 文件核对）**：已有第一周练习脚本、第二周环境检查与 `torch_basics.py`、`pyproject.toml` 和 `src/petvision/` 包目录；`data/datasets.py` 已实现 MNIST 加载、固定划分和三个 DataLoader，`scripts/inspect_mnist.py` 用于数据检查与可视化。固定结构 MLP 和 `tests/test_cv_training.py` 的三个 Day 3 基础测试已实现，CPU 和 CUDA 检查均通过；MNIST 训练 / 评估入口、配置、后续训练检查和后续周次代码尚未实现。下文的成果表、目录蓝图与命令是逐周目标，不代表已经完成验收。
+**当前进度（2026-10-25 文件核对）**：第一周练习与结果已保存。第二周已有 MNIST 固定划分、参数化 MLP、单轮训练 / 验证、随机种子、YAML 驱动入口、smoke / 固定样本拟合以及日志绘图；现有 4 项测试通过，设备测试使用 CUDA。仓库已有五轮 history 与曲线，第 5 轮 val_accuracy=0.9642；当前训练脚本尚未保存模型权重，因此这些记录不能代替 checkpoint 加载验证。Day 5–6 的 checkpoint 模块、独立 evaluate 入口和最终测试仍待实现，第 3–8 周源码与实验也仍待完成。完整状态与历史检查见[第二周记录](../experiments/mnist_mlp/week2/README.md)。下文目录与命令描述逐周目标。
 
 | 周次 | 逐日学习指南 | 环境、运行与周总结 |
 | --- | --- | --- |
@@ -151,6 +151,7 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 - 理解 MLP、激活函数、logits、softmax 和交叉熵。
 - 会写 `train_one_epoch()`、`evaluate()`，完成清梯度、反向传播、优化器更新和设备迁移。
 - 分清 `model.train()`、`model.eval()` 与 `torch.no_grad()` 的职责。
+- 理解配置接线：先将固定模型和数据设置改为构造 / 函数参数，再读取 YAML 并传给实际对象；改配置后验证结构或数据条件确实改变。
 
 **主资料**
 
@@ -163,8 +164,9 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 1. 用 PyTorch 重新实现第一周的线性回归，对照手写梯度和 `autograd`。
 2. 对 MNIST 实现三层 MLP，将官方训练集固定划分为训练集 / 验证集，保留官方测试集。
 3. 先关闭随机增强，在固定的小批数据上做过拟合检查：确认 loss 能明显下降，模型能拟合这些样本。
-4. 正式训练并记录训练 / 验证 loss 和 accuracy，按验证结果保存最佳权重。
-5. 从 checkpoint 重新创建模型、加载权重并推理；配置确定后再做独立测试。
+4. 按[第二周 Day 4 第四步](week2.md#mnist-configurable-interfaces)将 MLP 的尺寸和数据函数的划分 / 预处理设置参数化，保留旧默认调用。验证自定义参数有效后，再写 YAML、解析字段并创建实际训练对象；配置文件不会自动改变模型或数据。
+5. 通过配置入口的 smoke / 小样本检查后，Day 5 接通 checkpoint，再正式训练并记录训练 / 验证 loss 和 accuracy，按验证结果保存最佳权重。
+6. 从 checkpoint 重新创建模型、加载权重并推理；配置确定后再做独立测试。
 
 **调试清单**
 
@@ -172,9 +174,11 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 - 检查梯度是否存在、是否有限，是否遗漏 `zero_grad()` 或 `optimizer.step()`。
 - 验证阶段切换 `eval()` 并关闭梯度；loss 按样本数汇总。
 - 检查训练和验证是否误用了相同样本，数据与模型是否在同一设备。
+- 检查 YAML 字段是否真正传入对象；模型尺寸、验证集大小、归一化和 num_workers 不再在函数体中写死。
 
 **验收标准**
 
+- [ ] 默认 MLP 和数据接口仍可调用，修改参数的独立检查通过；配置中的字段由训练入口实际使用。
 - [ ] 分类训练与评估命令可独立运行。
 - [ ] 小批数据过拟合检查通过，能解释一个实际遇到的训练错误。
 - [ ] 保存加载前后的验证结果一致，允许硬件带来的数值波动。
@@ -525,6 +529,7 @@ PetVision-Lab/
 │   ├── check_environment.py
 │   ├── torch_basics.py
 │   ├── inspect_mnist.py
+│   ├── check_mnist_training.py    # 第 2 周 Day 4：独立 smoke 与小样本检查
 │   ├── inspect_cifar10.py
 │   ├── attention_basics.py
 │   ├── prepare_text.py
@@ -579,9 +584,10 @@ PetVision-Lab/
 │   └── vlm_qa/
 │       └── week8/
 ├── outputs/                      # 权重、大日志和临时产物
-│   ├── checkpoints/
-│   ├── logs/
-│   └── figures/
+│   ├── mnist_mlp/               # 第 2 周 best/last
+│   ├── {cnn_bn_on,cnn_bn_off,resnet_on,resnet_off}/
+│   ├── {vit_patch4,vit_patch8}/
+│   └── {bigram_char,mini_gpt,mini_gpt_bpe}/
 ├── notebooks/                    # 探索与可视化
 └── docs/
     ├── StudyPlan.md
@@ -609,7 +615,7 @@ PetVision-Lab/
 | 时间 | 创建范围 |
 | --- | --- |
 | 第 1 周 | 项目 README、Conda environment.yml、环境快照、Git 忽略规则、NumPy 练习脚本与周总结 |
-| 第 2 周 | 数据、MLP、分类训练 / 评估、checkpoint、种子工具和 MNIST 配置 |
+| 第 2 周 | 数据、MLP、参数化接口与配置接线、分类训练 / 评估、checkpoint 和种子工具 |
 | 第 3 周 | CNN / ResNet、两类消融配置和必要测试 |
 | 第 4–5 周 | Transformer 核心模块、ViT、Patch 配置、测试与视觉报告 |
 | 第 6–7 周 | Mini-GPT、Tokenizer、语言模型训练与生成、续训检查 |
@@ -637,7 +643,7 @@ PetVision-Lab/
 
 训练入口负责：解析配置 → 固定种子与划分 → 建立数据 → 创建模型和优化器 → 训练 / 验证 → 保存结果。网络结构留在 `models/` 中。
 
-第二周先实现简单的 `train_one_epoch()` 和 `evaluate()`，确认流程正确后再提取 Trainer。第七周恢复训练需恢复优化器、进度、随机状态以及配套 tokenizer，有 scheduler 时一并恢复；同时恢复历史最佳验证值和日志统计累计值，保留原 best 文件并避免重复追加 history。
+第二周先实现简单的 `train_one_epoch()` 和 `evaluate()`；主线继续复用函数，只有出现明确重复职责时才按需提取 Trainer 类。第七周恢复训练需恢复优化器、进度、随机状态以及配套 tokenizer，有 scheduler 时一并恢复；同时恢复历史最佳验证值和日志统计累计值，保留原 best 文件并避免重复追加 history。
 
 ### 9.2 第 8 周推理入口
 
@@ -725,6 +731,8 @@ conda list --explicit > experiments/basics/week1/conda-explicit.txt
 
 ### 10.2 配置示例
 
+YAML 只保存数值和名称，不会自动改造代码。第二周先按[接口改造步骤](week2.md#mnist-configurable-interfaces)让模型和数据函数接收配置参数，再由入口读取并传入；通过默认兼容和非默认参数检查后，才运行配置驱动的 smoke / 训练。
+
 字段层级从第二周开始统一：数据路径与批次放在 `data.root / split_path / batch_size`，优化设置放在 `training`，日志与权重分别使用顶层 `experiment_dir / output_dir`；相对路径均从项目根目录解释。完整 MNIST YAML 和参数读取示例见[第二周 Day 4](week2.md#mnist-config)。smoke/overfit 只打印检查结果，正式配置、history、曲线和 checkpoint 仅由正式训练分支写入。
 
 以下字段是逐周实现时的配置约定。第 3 周的 `configs/cv/resnet_cifar10.yaml` 示例：
@@ -733,7 +741,6 @@ conda list --explicit > experiments/basics/week1/conda-explicit.txt
 model:
   name: resnet18
   num_classes: 10
-  pretrained: false
   stem: cifar                 # 3x3、stride=1，移除初始最大池化
   residual: true
 
@@ -745,8 +752,16 @@ data:
   validation_size: 5000       # 从官方训练集固定划分，其余用于训练
   batch_size: 64
   num_workers: 0
+  augmentation:
+    random_crop_padding: 4
+    random_horizontal_flip: true
+  normalize:
+    mean: [0.5, 0.5, 0.5]
+    std: [0.5, 0.5, 0.5]
 
 training:
+  device: auto
+  dtype: float32
   epochs: 20                 # 小预算起步，正式对照固定同一预算
   learning_rate: 0.001
   optimizer: adamw
@@ -759,6 +774,10 @@ output_dir: outputs/resnet_on
 ```
 
 BN / 残差开关与 Patch=4/8 使用独立配置快照，记录差异；配置预算确定后，再运行正式对照。
+
+本例与第三周完整配置使用同一组字段；手写 ResNet 从零初始化，不设置尚无加载实现的 pretrained 开关。每个配置字段必须在对应入口被读取、传给对象或明确校验，不能只在 YAML 中出现。
+
+第二周的小实验在循环内收集指标，循环结束后一次保存 history 和曲线。第三周起在每个 epoch、语言模型在每个验证时点追加一条新记录；表头只在新文件写一次，不把完整历史反复追加。第七周恢复训练继续已有日志，先核对恢复步数。训练耗时与峰值显存的生成及保存见[第三周资源记录步骤](week3.md#training-resources)。
 
 第三周 on 组在首次训练前保存 step=0 的 initial.pt，off 组按[初始化对齐步骤](week3.md#initial-state)读取共有层初始状态并新建优化器。该初始化入口从零进度开始新的实验；第七周的 `--resume` 则恢复完整训练状态并继续累计步数，执行前提见[续训顺序](week7.md#bpe-resume-order)。
 

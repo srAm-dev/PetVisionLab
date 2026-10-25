@@ -1,6 +1,6 @@
 # 第五周逐日学习指南：小型 Vision Transformer 与视觉模型比较
 
-> 更新日期：2026-10-24  
+> 更新日期：2026-10-25<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-2)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：复用 Encoder 实现 ViT，完成 Patch=4/8 对照，并在配置冻结后统一测试 CNN、ResNet 和 ViT，形成带局限说明的视觉报告。  
@@ -34,6 +34,7 @@ PetVisionLab/
 │   ├── README.md                         # 已提供：运行入口与最终报告
 │   ├── patch_results.csv                 # Day 4：两组验证对照
 │   ├── visual_test_results.csv           # Day 5：六个冻结变体测试
+│   ├── runs/{patch4,patch8}/              # 配置、history、run_summary 与各组评估结果
 │   └── figures/                          # 跨模型对照曲线；单模型图在各自 experiment_dir/figures
 └── outputs/{vit_patch4,vit_patch8}/
     └── {best,last}.pt                     # 实际训练生成
@@ -164,6 +165,8 @@ CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训
 
 构造函数中用 `nn.Parameter` 注册 CLS 和位置嵌入，例如先以 `torch.zeros(1,1,C)` 和 `torch.zeros(1,N+1,C)` 建立 Parameter，再各用 `nn.init.normal_(parameter, mean=0.0, std=0.02)` 初始化；记录这一初始化方式。forward 只 expand/concat/相加，不临时创建新 Parameter。检查两者出现在 named_parameters 和 state_dict 中，位置长度与实际 N+1 不符时明确报错，B=1 与 B=4 都保持 batch 维。
 
+Day 1 尚未接好完整 ViT.forward 时，在测试里明确调用 patch_embed，手动 expand / concat / 加位置参数，核对这些中间结果即可；不要今天就调用尚未实现的完整分类前向。构造 ViT 时先检查 image_size 能被正整数 patch_size 整除；完整 forward 还要检查输入 H、W 均等于配置 image_size。仅比较 token 数不能识别例如 16×64 与 32×32 这类同数量、不同位置网格的输入。
+
 ### 运行与验收
 
 ```bash
@@ -213,7 +216,7 @@ python -m pytest tests/test_vit.py -q
 <a id="encoder-reuse"></a>
 #### 第一步：明确 ViT.forward 与复用模块的边界
 
-继续修改 `src/petvision/models/cv/vit.py`，从 `petvision.models.transformer.blocks` 导入 EncoderBlock，在昨天的 ViT 类中补齐构造函数和 forward；模型定义保留在该文件，训练入口只负责创建和调用它。
+继续修改 `src/petvision/models/cv/vit.py`，从 `petvision.models.transformer.blocks` 导入 EncoderBlock，从 `petvision.models.transformer.normalization` 导入 LayerNorm，在昨天的 ViT 类中补齐构造函数和 forward；模型定义保留在该文件，训练入口只负责创建和调用它。
 
 ```python
 def forward(self, images):
@@ -232,6 +235,8 @@ def forward(self, images):
 | 堆叠后的最终 LayerNorm、取 CLS、分类头 | ViT | 各一次 |
 
 整体顺序可先写为以下核心片段；构造函数中的 `self.blocks` 使用两个新建的 EncoderBlock，`self.final_norm` 是最终 LayerNorm：
+
+构造函数实际按 depth 创建 `nn.ModuleList`，每次循环新建 `EncoderBlock(embed_dim, heads, ffn_hidden_dim, dropout)`，不写死为两个共享对象。final_norm 使用 LayerNorm(embed_dim)，head 使用 nn.Linear(embed_dim, num_classes)；下方代码位于 ViT.forward 的输入尺寸检查之后，结尾还需 `return logits`。
 
 ```python
 tokens = self.patch_embed(images)
@@ -261,6 +266,8 @@ ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列�
 再对固定 64 条训练图做过拟合，训练时关闭随机增强以减少干扰。loss 不降时先检查取出的是否为 CLS、模型是否包含参数、优化器是否覆盖参数。
 
 保存加载检查使用一个固定随机图片批次、eval 和第二周的 tmp_path 流程，新模型加载后 logits 最大差小于 `1e-6`，同时核对 CLS/位置参数。测一轮训练前在 CUDA 分支调用 `torch.cuda.synchronize()`、`torch.cuda.reset_peak_memory_stats()`，用 `time.perf_counter()` 记开始/结束，结束前再次同步；峰值取 `torch.cuda.max_memory_allocated()/1024**2`，注明 MiB 和测量范围。CPU 分支跳过 CUDA 接口，记录设备即可。
+
+正式运行沿用[第三周逐轮追加与资源保存](week3.md#training-resources)：每组的 experiment_dir 同时保存 history.csv、run_summary.json 和配置快照。测时前重置峰值，计时范围覆盖训练 / 验证 / 逐轮保存；短检查的数字只用于确定预算，不写成正式两组训练时间。
 
 #### 第四步：接入已有训练入口
 
@@ -453,7 +460,7 @@ Macro-F1 ≈ 0.733333
 
 创建 `src/petvision/evaluation/` 和空的 `__init__.py`，再创建 `src/petvision/evaluation/classification.py`，实现 `metrics_from_confusion(matrix)`：输入整份数据的整数混淆矩阵，按第一步的公式返回 accuracy 和 macro_f1。矩阵的类别数由 matrix.shape[0] 确定；它不负责加载数据或模型。先用上面的两类 / 三类例子检查。
 
-在 evaluate.py 顶层导入这个函数。加载冻结模型和所选 loader、切 eval 后，在循环外建立 `matrix = torch.zeros((10,10), dtype=torch.long)`；循环内关闭梯度，取得 logits 和 predicted，再把标签和预测转到 CPU。按下方方式把当前批次累计到同一张矩阵：
+在 evaluate.py 顶层导入这个函数。今天将 main 中原先仅调用 evaluate 获取汇总指标的部分，改为本脚本顶层的 `evaluate_classification(model, loader, criterion, device, num_classes)`；让它在同一次完整遍历中统计 loss、正确数、样本数和混淆矩阵，再返回包含这些结果的字典。训练器里的 evaluate 保持原接口。加载冻结模型和所选 loader、切 eval 后，在新函数循环外建立 `matrix = torch.zeros((num_classes,num_classes), dtype=torch.long)`；类别数来自 cfg.model.num_classes，CIFAR 为 10。循环内关闭梯度，取得 logits 和 predicted，再把标签和预测转到 CPU。按下方方式把当前批次累计到同一张矩阵：
 
 ```python
 for true_id, pred_id in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
@@ -463,6 +470,8 @@ for true_id, pred_id in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
 loss 继续按第二周的样本加权方法累计。循环结束后才调用 metrics_from_confusion，断言 matrix.sum() 等于实际 n_samples，并核对矩阵算出的 accuracy 与总正确数 / 总样本数一致；不能对每批 F1 取平均。
 
 结果字典中加入 macro_f1、混淆矩阵的 `matrix.tolist()`、参数量 `sum(p.numel() for p in model.parameters())`。所有模型使用同一确定性预处理和同一数据划分，读取所选 config 的 experiment_dir，按 `f"{args.split}_metrics.json"` 写入对应验证或测试结果；保存方法复用第二周 JSON 输出。
+
+metrics_from_confusion 用整数矩阵累计、用浮点除法计算 F1；总样本数为 0 时明确报错。两类 / 三类手算检查放在本地草稿或当前评估模块的检查入口，实际调用该函数，不仅在纸上验证公式。误分类采集仍可沿用第二周的独立函数，或在这次完整循环中同步收集；若同步收集，收满图片后仍遍历全部样本。
 
 <a id="inference-timing"></a>
 #### 第三步：区分加载耗时与推理耗时
@@ -493,6 +502,8 @@ print("batch mean ms/img:", ms_per_image)
 ```
 
 这是模型前向的批量平均值，验证指标仍由完整验证集单独计算。每条测时记录写 warmup=5、repeats=20、实际 batch、dtype、device 和是否包含数据搬运；本片段不包含搬运。如记录峰值，CUDA allocated 包含已加载模型等当前分配，不能写成整张显卡的总使用量。
+
+将计时片段封装为 evaluate.py 顶层的 `benchmark_forward(model, images)`，返回包含 ms_per_image、warmup、repeats、batch_size、dtype、device、include_transfer=False 的字典。main 在完整评估后取所选 loader 的一批图片、迁移到设备，调用该函数，将返回值放入结果的 inference 字段，再写 metrics JSON。加载阶段的秒数另记 load_seconds，两个数字不能混用；六个模型都读取相同 batch 设置，并记录实际批大小。
 
 #### 第四步：冻结六个变体
 
@@ -569,7 +580,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 绘图也使用评估循环累计的同一张 matrix，classes 按基础 CIFAR10 dataset.classes 的原始顺序取得，不能临时按预测排序。在 evaluate.py 中，先创建 `fig, ax = plt.subplots()`，再用 `ax.imshow(matrix.numpy(), cmap="Blues")` 显示计数，添加 colorbar，横轴标预测类别、纵轴标真实类别。用 `ax.set_xticks(range(10), labels=classes, rotation=45, ha="right")` 和 `ax.set_yticks(range(10), labels=classes)` 标出实际类别，保存到当前 experiment_dir 的 `figures/confusion_test.png`，随后关闭图；验证图则用 confusion_val.png。imshow 的用法可查 [Matplotlib 官方接口](https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.imshow.html)。
 
-矩阵按真实类为行、预测类为列绘图，坐标轴写实际 classes；对角线之和应等于正确数，全矩阵和应为 10000。误分类沿用第二周的采集方法，按 CIFAR 的三通道逆归一化并转 HWC 显示，保存为当前 experiment_dir/figures/mistakes.png。总表每行链接该变体 experiment_dir 下的 test_metrics 和图表，避免只保存了一张图却无法对应模型。
+矩阵按真实类为行、预测类为列绘图，坐标轴写实际 classes；对角线之和应等于正确数，全矩阵和应为 10000。误分类沿用第二周的采集方法，按 CIFAR 的三通道逆归一化并转 HWC 显示，保存为当前 `experiment_dir/figures/mistakes_test.png`，验证样例保存为 mistakes_val.png。总表每行链接该变体 experiment_dir 下的 test_metrics 和图表，避免不同 split 的图互相覆盖。matrix 若已转为结果中的列表，画图前用 torch.tensor 恢复；获取 classes 时，Subset 的基础数据集是 loader.dataset.dataset，官方测试集则直接是 loader.dataset。
 
 #### 第四步：结论分成内部对照与跨模型比较
 

@@ -1,6 +1,6 @@
 # 第八周逐日学习指南：CLIP、LLM / VLM 推理与八周总结
 
-> 更新日期：2026-10-24  
+> 更新日期：2026-10-25<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-4)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：本地完成 CLIP 零样本任务，云端运行小型 LLM 与 VLM，保存至少 20 张图×每图2问的完整结果、人工判定和结构图，整理最终报告。  
@@ -43,6 +43,7 @@ PetVisionLab/
 │   ├── questions.jsonl                    # Day 4：40+ 问题和预先参考标准
 │   ├── vlm_outputs.jsonl                  # Day 4：全部原始回答与运行信息
 │   ├── judgments.csv                      # Day 4：人工判定及错误类型
+│   ├── figures/clip_mistakes.png            # Day 1：固定子集的错误样例（有错分时）
 │   └── tensor_flow.md                    # Day 3/5：实际结构与关键形状
 └── docs/final_report.md                    # Day 5–6：八周报告与未完成事项
 ```
@@ -227,6 +228,10 @@ clip_results.csv 每张一行，含 image_id、真实类、预测类、分数和
 
 类别得分以 `score_airplane ... score_truck` 十列按 classes 顺序保存，并带 score_type，明确是 cosine_similarity 还是应用 logit scale 后的 clip_logits；预测和 accuracy 使用同一套得分。用第一周 csv.DictWriter 写表，再读回核对 200 个 image_id 恰好等于固定子集，正确数/200 与终端 accuracy 一致。
 
+构造 CSV 行时，image_id 使用原始 CIFAR 全局索引，真实类取同一索引的 targets，预测类按配置 classes 顺序解释；先断言配置 classes 等于数据集 classes，避免同名类别顺序错位。每行加入 model_id、revision、prompt_template 和 config 标识，model_manifest 的 clip 条目保留本次完整配置。
+
+从这次错误预测中最多选 8 张原始 PIL 图片，用第二周 subplots 方法标注真实类 / 预测类，保存到 `experiments/vlm_qa/week8/figures/clip_mistakes.png`。直接显示原图，不对 PIL 再逆归一化；没有错误时在 README 记录 0 个样例。样例仅用于解释，accuracy 始终从完整 200 张计算。
+
 ### 运行与验收
 
 ```bash
@@ -304,7 +309,7 @@ python scripts/check_environment.py --output-dir experiments/vlm_qa/week8/enviro
 
 小模型可先用 FP32 推理；确认 GPU 支持 BF16 后，再显式选择 bfloat16 并记录。两种情况下都检查实际模型与浮点输入 dtype。加载耗时与生成耗时分别记录，不需要为了占满显存选择更大模型。
 
-单 prompt 与次日单图都验证通过后，在云端项目根目录执行 `conda env export --no-builds > environment-vlm.yml`，删除导出文件中的本机绝对 prefix，保留完整 PyTorch 安装命令和实际 index-url。这个 YAML 仍是云端平台的依赖快照，不等于跨平台锁文件。随后在已经由环境检查脚本创建的 cloud 目录导出：
+今天单 prompt 验证通过后，在云端项目根目录执行 `conda env export --no-builds > environment-vlm.yml`，删除导出文件中的本机绝对 prefix，保留完整 PyTorch 安装命令和实际 index-url。次日 VLM 若需要调整依赖，再更新对应快照并注明模型各自使用的版本。这个 YAML 仍是云端平台的依赖快照，不等于跨平台锁文件。随后在已经由环境检查脚本创建的 cloud 目录导出：
 
 ```bash
 conda list > experiments/vlm_qa/week8/environments/cloud/conda-packages.txt
@@ -383,6 +388,8 @@ inputs = {name: value.to(device) for name, value in inputs.items()}
 
 每条 prompt 单独构造一轮 user 消息，不把上一题回答放进下一题。设置 greedy 时不需要 temperature/top-k；先用第一题跑通，再遍历 cfg["data"]["prompts"] 中的五题。
 
+当前入口只实现单条逐题处理，在读取配置后校验 data.batch_size==1，max_new_tokens 为正整数；配置其他 batch 值时明确报错，不能仍逐条执行却报告为批量推理。device、dtype、do_sample、max_new_tokens 都必须用于实际对象或调用。本轮固定 do_sample=False；以后启用采样时，再补充种子和采样参数。
+
 #### 第四步：调用 generate，再只解码新生成部分
 
 因果模型 generate 的结果通常包含输入前缀；记录输入长度，再取新增 ID 解码。先检查返回结构，避免把原 prompt 重复计作模型回答。
@@ -412,6 +419,8 @@ print(answer)
 核对 `sequences.shape[-1] == input_length + new_ids.shape[-1]`，新增数量不超过 max_new_tokens；提前 EOS 可以少于 128。保存原 messages、rendered_prompt、输入/新增 ID 和 answer；五个 prompt 各自重新构造消息，按第六周 JSONL 方法写五条正式结果。
 
 写入路径使用 cfg["output_file"]，本题为 `experiments/vlm_qa/week8/llm_outputs.jsonl`。为本次完整运行生成一个 run_id，五条结果共用该标识；若追加保存多次运行，检查时先按 run_id 筛选本次五条，不能把暖机或重跑记录当成新增题目。
+
+顶层导入 `from uuid import uuid4`，在正式五题循环之前生成一次 `run_id = uuid4().hex`；不要每题重新生成。给每题稳定的 prompt_id（如 llm_q1..llm_q5），record 保存 run_id、prompt_id、messages、rendered_prompt、input_ids、new_ids、raw_answer、model_id、revision、实际 inference 配置和资源测量值，再按第六周方法追加一行。Tensor 先转为 CPU 列表，device / dtype 转为字符串，JSON 不直接序列化 Torch 对象。model_manifest 的 llm 条目保存完整 cfg，输出记录中的 revision 与该条目一致。
 
 #### 第五步：填写可重跑的模型记录
 
@@ -554,6 +563,8 @@ print(answer)
 
 若所选兼容版本改用在 messages 中携带图片的接口，应整条替换为该版本模型卡的路径，不能省略图片预处理或混合两套占位符格式。
 
+本节 AutoModelForImageTextToText 与单独 images 输入的组合可对照 [Idefics3 官方接口示例](https://huggingface.co/docs/transformers/model_doc/idefics3#transformers.Idefics3ForConditionalGeneration)。模型卡正文与不同版本文档可能展示其他 Auto 类；进入本周时同时核对已安装 Transformers 版本和实际模型 config，不把不同版本的导入、模板与 processor 调用拼成一段。这里提供待实现示例，是否通过以固定版本上的单图 smoke 为准。
+
 ```text
 原图 → 尺寸调整/切图 → pixel_values
 问题 → 模板/tokenizer → input_ids、attention_mask
@@ -598,6 +609,8 @@ finally:
 
 入口区分两种模式：`--image` 与 `--question` 配套用于单图，`--questions` 用于 Day 4 清单；两种输入方式互斥。`--smoke` 只打印该图的输入形状、回答和资源信息，不写或覆盖正式 `vlm_outputs.jsonl`。今天还没有 images manifest 时，单图分支直接使用命令中的图片路径。
 
+将图片加载、messages 构造、processor、设备迁移、generate 和新增 ID 解码封装为文件顶层的 `infer_one(model, processor, image_path, question, device, dtype, generation_config)`，返回 raw_answer、新增 ID 列表和本题测量结果；main 负责加载模型一次，并把 args.image / args.question 传给它。Day 4 循环也调用这个函数，不能让内部仍读取单图模式的 args.image。与 LLM 一样校验 batch_size==1，单图模式要求同时提供 image、question 和 smoke；批量模式禁止 smoke，避免参数被静默忽略。单图通过后更新 model_manifest 的 vlm 条目，记录完整 cfg、模型类、processor 和实际依赖。
+
 ### 运行与验收
 
 在云端已激活的 `petvision-vlm` 中执行：
@@ -638,7 +651,7 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --image data
 
 2. 题目整体覆盖类别、颜色、数量、位置和无法从图片判断的内容。参考答案或允许答案范围在推理前写好；信息不足题的正确行为可定义为明确说明无法判断。
 
-3. 让 infer_vlm 支持 `--questions`，逐题独立构造 messages，写 vlm_outputs.jsonl：qid、原始回答、model/revision、生成设置、耗时、峰值显存与状态；失败/超时也保留记录。
+3. 让 infer_vlm 支持 `--questions`，逐题独立构造 messages，写 vlm_outputs.jsonl：qid、原始回答、model/revision、生成设置、耗时、峰值显存与状态；读取或推理抛出的错误也保留记录。
 
 4. 创建 judgments.csv，由人工按预先标准标 correct/partial/wrong，并记录错误类型和简短理由。核对每张至少 2 条、总数至少 40，统计正确数时报告总题数与失败数，不只保留成功回答。
 
@@ -669,6 +682,8 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 某题读取/推理失败也写一条 error 结果，保留原因并继续检查剩余样本；不要删除失败行来提高看上去的成功率。
 
 循环中每题先建立含 run_id、qid、image_id 的记录，再在 try 中读取图片和生成；except 中写 status=error、raw_answer=None（序列化为 JSON null）和实际错误信息，最后将成功或失败记录统一追加一次。完整运行后，以当前 run_id 筛选记录检查每个 qid 恰好一条；重跑保留新 run_id 或单独输出文件，统计时明确选择一轮。
+
+run_id 沿用 Day 2 的 uuid4 写法，在批量循环开始前生成一次。传给 infer_one 的 question 只取问题文本；reference / criterion 留给人工判定，不拼入模型输入。记录同时保留问题文本、图片 hash、实际模型 revision、生成参数、新增 IDs 和资源字段，使回答能对应到本次输入。成功状态写 ok，失败状态写 error；本步骤的 try/except 处理实际抛出的错误，尚未实现的强制超时不要写成已有能力。
 
 #### 第三步：按预先标准人工判定
 

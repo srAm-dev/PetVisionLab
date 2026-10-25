@@ -1,6 +1,6 @@
 # 第四周逐日学习指南：手写 Attention 与 Transformer Encoder
 
-> 更新日期：2026-10-24  
+> 更新日期：2026-10-25<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-2)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：实现可复用多头 Attention、Mask、LayerNorm、FFN、位置编码和 Encoder，通过形状、归一化、梯度、未来隔离和官方参考对照。  
@@ -202,7 +202,7 @@ transpose 后内存可能不连续，合并时用 contiguous().view 或 reshape�
 
 #### 第二步：明确模块接口
 
-继续修改 `src/petvision/models/transformer/attention.py`，定义继承 nn.Module 的 MultiHeadSelfAttention；投影层在 __init__ 中创建，下方是类的方法，不能作为文件顶层的普通函数。
+继续修改 `src/petvision/models/transformer/attention.py`，补充 `from torch import nn`，定义继承 nn.Module 的 MultiHeadSelfAttention；投影层在 __init__ 中创建，下方是类的方法，不能作为文件顶层的普通函数。
 
 ```python
 def forward(self, x, attn_mask=None, key_padding_mask=None,
@@ -214,6 +214,8 @@ def forward(self, x, attn_mask=None, key_padding_mask=None,
 类的构造接口约定为 `MultiHeadSelfAttention(embed_dim, num_heads, dropout=0.0, bias=True)`；embed_dim 对应 C，num_heads 对应 heads。默认 forward 只返回输出 Tensor；return_weights=True 时返回 `(output, weights)`，weights 为 `[B,heads,T,T]` 的 dropout 前权重，EncoderBlock 使用默认返回值。
 
 参数包含 q_proj、k_proj、v_proj、out_proj。C%heads 不为 0 时在构造阶段报错，避免后续 reshape 才出现模糊异常。
+
+构造函数先检查 embed_dim、num_heads 为正整数，再检查能否整除，设置 `self.head_dim = embed_dim // num_heads`。四个投影均为 `nn.Linear(embed_dim, embed_dim, bias=bias)`；权重 dropout 用 `nn.Dropout(dropout)` 注册。forward 先保存原始 softmax 权重 weights，再用 dropout(weights) 与 V 相乘；return_weights=True 返回原始 weights。因此训练时用于加权的 dropout 权重不必行和为 1，检查归一化仍针对 dropout 前的权重。
 
 <a id="reference-check"></a>
 #### 第三步：逐项复制到官方参考
@@ -411,7 +413,7 @@ var  = ((x - mean) ** 2).mean(dim=-1, keepdim=True)
 y    = (x - mean) / sqrt(var + eps) * gamma + beta
 ```
 
-在自写 LayerNorm 的构造函数中，用 `self.gamma = nn.Parameter(torch.ones(C))`、`self.beta = nn.Parameter(torch.zeros(C))` 注册可学习参数；forward 使用同一组参数。普通 Tensor 属性不会自动成为模型的 parameters，不能仅写一个临时 gamma / beta。nn、torch 在 normalization.py 顶层导入。
+在自写 LayerNorm 的构造函数中，用 `self.gamma = nn.Parameter(torch.ones(embed_dim))`、`self.beta = nn.Parameter(torch.zeros(embed_dim))` 注册可学习参数，并保存 self.eps；forward 使用同一组参数。C 是公式中的特征数，代码实际读取构造参数 embed_dim。普通 Tensor 属性不会自动成为模型的 parameters，不能仅写一个临时 gamma / beta。nn、torch 在 normalization.py 顶层导入。
 
 统计范围是每个 token 的 C 个特征，不是整个 batch，也不是时间维。常量输入时归一化部分为 0，eps 防止除零。
 
@@ -437,6 +439,8 @@ x2 = x1 + ffn(norm2(x1))
 ```
 
 EncoderBlock 构造参数约定为 `embed_dim、num_heads、ffn_hidden_dim、dropout=0.0`；分别创建 norm1、Attention、norm2、FFN。forward 接收 x、attn_mask=None、key_padding_mask=None，传给 Attention 后只返回新的 x Tensor。第五周和第六周会按这个接口创建不同尺寸的新 Block。
+
+dropout 的归属也固定下来：MultiHeadSelfAttention 内只对 softmax 权重做 dropout；FeedForward 内在 GELU 后做一次隐藏层 dropout；EncoderBlock 在 attention 输出和 ffn 输出各做一次 dropout 后才残差相加。不要同时在 FFN 出口和 Block 的同一残差入口重复加一次。参考检查全部设为 0，实际模型则按配置传给这些 nn.Dropout，train/eval 自动控制其行为。
 
 两次归一化有各自的参数；不要误把 norm2 仍然作用在最初的 x 上。
 
@@ -500,7 +504,7 @@ PE(pos,2i+1) = cos(pos / 10000^(2i/C))
 
 Encoder 构造时创建 `self.position = SinusoidalPositionalEncoding(...)`，输入转到 GPU 后，buffer 随整个模型迁移。
 
-构造时约定最大位置长度，例如 max_length=128，保存形状 `[1,max_length,C]` 的 buffer；forward 检查 C 为偶数、T 不超过上限，再取 `[:, :T]`。用 T=1、T=8 验证广播，用奇数 C 和越界 T 验证明确报错；将整个模型 `.to(device=..., dtype=...)` 后，核对 buffer 与输入的 dtype/device 相同。位置表属于 buffer，Block 的可学习参数仍通过 parameters 管理。
+构造时先校验 embed_dim 为正偶数、max_length 为正整数，再建立 `[1,max_length,C]` 的 buffer；否则奇数维可能在构造 table 时就因正弦 / 余弦切片尺寸不同报错，等到 forward 才校验已经太晚。forward 检查输入最后一维等于 embed_dim、T 不超过上限，再取 `[:, :T]`。用 T=1、T=8 验证广播，用奇数 C 和越界 T 验证明确报错；将整个模型 `.to(device=..., dtype=...)` 后，核对 buffer 与输入的 dtype/device 相同。位置表属于 buffer，Block 的可学习参数仍通过 parameters 管理。
 
 #### 第二步：堆叠时正确传递同一 Mask
 

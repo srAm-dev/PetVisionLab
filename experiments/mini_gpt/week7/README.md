@@ -46,6 +46,8 @@ Day 4 的 `test_resume.py` 自带小模型配置和教学 token 数据，在 pyt
 
 tokenizer 训练脚本的参数和调用顺序见[Day 2](../../../docs/week7.md#bpe-training-entry)；训练、生成与编码比较统一通过[load_tokenizer](../../../docs/week7.md#tokenizer-dispatch)按 JSON type 选择字符 / BPE 实例。
 
+BPE 生成展示与 tokenizer 的严格 decode 分开：展示记录原始 IDs、bytes 和 decode_ok，合法输入的往返仍严格检查。恢复训练核对配置、历史 best 与日志步数；完整测试结果另存各模型自己的 test_metrics.json，再在本周汇总链接。
+
 所有模型的最终测试沿用[第六周验证窗口规则](../../../docs/week6.md#eval-windows)：同一 split 内覆盖 N-1 个目标、保留尾窗、按目标 token 数汇总。字符与 BPE 的 N 由各自 tokenizer 决定，指标仍分开报告。
 
 | 文件或目录 | 内容与产生时间 |
@@ -53,7 +55,8 @@ tokenizer 训练脚本的参数和调用顺序见[Day 2](../../../docs/week7.md#
 | `bpe_tokenizer.json` | 有序 merges、bytes 词表、训练子集 hash |
 | `tokenizer_comparison.csv` | 相同 val 原文的 token 数、字节数与编码耗时 |
 | `samples.jsonl` | 真实采样文本、token IDs、模型和参数 |
-| `runs/bpe/` | BPE GPT 配置、train/val history 与曲线 |
+| `runs/bpe/` | BPE GPT 配置、history、run_summary.json、figures/loss_curves.png |
+| 各模型 `experiment_dir/test_metrics.json` | Day 6：字符 Bigram、字符 GPT、BPE GPT 各自独立的最终评估结果 |
 | `outputs/mini_gpt_bpe/` | 项目根下：模型、优化器、随机状态与 tokenizer 标识 |
 
 结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。

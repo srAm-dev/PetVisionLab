@@ -51,8 +51,8 @@ python -m pip check
 | `patch_results.csv` | Day 4：两组 best 的验证结果、token 数、参数量与时间 |
 | `visual_test_results.csv` | Day 5：六个冻结变体的 test 指标 |
 | `figures/patch_comparison.png` | 两种 Patch 的训练/验证曲线 |
-| 各组 `experiment_dir/figures/confusion_{val,test}.png`、`mistakes.png` | 各变体混淆矩阵与真实误分类，按实际运行目录索引 |
-| `runs/patch4 / runs/patch8` | 各组配置快照和 history |
+| 各组 `experiment_dir/figures/confusion_{val,test}.png`、`mistakes_{val,test}.png` | 各变体混淆矩阵与真实误分类，按实际运行目录索引 |
+| `runs/patch4 / runs/patch8` | 各组 config、history、run_summary.json、val/test_metrics.json 和图表 |
 | `outputs/vit_patch4 / outputs/vit_patch8` | 项目根下：best/last checkpoint |
 
 结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。

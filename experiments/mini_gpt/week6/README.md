@@ -37,6 +37,8 @@ python -m pip check
 
 从文本 / tokenizer 文件读取到 token IDs、sample_batch 和语言训练函数的接线见[Day 2](../../../docs/week6.md#text-inputs)；train_step / evaluate_lm 放在 src/petvision/training/lm_trainer.py。last 在验证时点和最终步保存，恢复以文件中的 step 为准。
 
+两个训练函数统一返回 loss / n_target_tokens。即使最终 steps 不是 eval_interval 的整数倍，末步也执行完整验证并保存；每次只追加当前 row。各运行独立保存 figures/loss_curves.png，两组都完成后再生成周目录下的合并图，BPE 可复用同一入口。
+
 完整 YAML 和创建步骤见[第六周指南](../../../docs/week6.md)。Day 2–3 先做小规模检查，Day 4 完成保存后才启动正式 2000 步；`--output` 将完整生成样例追加到指定 JSONL 文件。
 
 验证使用[Day 2 固定分窗规则](../../../docs/week6.md#eval-windows)：长度 N 的 split 覆盖索引 1..N-1 的全部目标，窗口共享边界输入但不重复统计目标；尾窗按实际长度评估。总 NLL 除以 N-1，日志记录实际目标数；evaluate 结束后恢复调用前的 train/eval 模式，训练更新时启用 train；两组使用相同窗口和上下文重置方式，第七周最终测试沿用此规则。
@@ -45,7 +47,7 @@ python -m pip check
 | --- | --- |
 | `split_manifest.json` | 原文来源、SHA256、边界和规范化规则，第七周复用 |
 | `char_tokenizer.json` | 训练集字符映射、UNK 及格式版本 |
-| `runs/bigram / runs/gpt` | 各组配置与 train/val history |
+| `runs/bigram / runs/gpt` | 各组 config、逐验证点追加的 history、run_summary.json 和单模型曲线 |
 | `results.csv / figures/loss_curves.png` | 同 tokenizer 的验证结果及曲线 |
 | `samples.jsonl` | 真实生成文本、prompt、seed 与模型信息 |
 | `outputs/bigram_char / outputs/mini_gpt` | 项目根下：best/last 与配套模型信息 |
