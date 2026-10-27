@@ -33,6 +33,7 @@ nvidia-nvjitlink==13.4.92
 nvidia-nvshmem-cu13==3.4.5
 nvidia-nvtx==13.0.85
 packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1785888127/work
+-e git+https://github.com/srAm-dev/PetVisionLab.git@3c1a48805beb2b4d1f2db1df99fd50e561d6647a#egg=petvision_lab
 pillow @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pillow_1792416406/work
 pluggy @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pluggy_1792063298/work
 Pygments @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pygments_1786995678/work

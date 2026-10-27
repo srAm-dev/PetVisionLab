@@ -19,3 +19,4 @@ datasets/processed/
 .agents/
 .env.*
 !.env.example
+tmp/

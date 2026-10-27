@@ -125,6 +125,7 @@ openldap                     2.6.13           hbde042b_0            conda-forge
 openssl                      3.6.5            h781a0a9_0            conda-forge
 packaging                    26.3             pyhc364b38_0          conda-forge
 pcre2                        10.47            h8b3dc9c_1            conda-forge
+petvision-lab                0.1.0            pypi_0                pypi
 pillow                       13.0.0           py312h38079b3_0       conda-forge
 pip                          26.2.2           pyh8b19718_0          conda-forge
 pixman                       0.46.4           h54a6638_3            conda-forge

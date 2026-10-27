@@ -1,0 +1,11 @@
+{
+  "split": "test",
+  "loss": 0.10747273093014956,
+  "accuracy": 0.9662,
+  "n_samples": 10000,
+  "checkpoint": "outputs/mnist_mlp/best.pt",
+  "checkpoint_epoch": 5,
+  "config": "configs/cv/mlp_mnist.yaml",
+  "split_sha256": "085bc8523d96d53669e5f04ae2857dbfd6910ca605b2c4df0e3c39ec37acf385",
+  "mistake_examples_count": 8
+}

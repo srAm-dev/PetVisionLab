@@ -1,13 +1,51 @@
 import yaml
+import json
 import hashlib
 import torch
 import argparse
 from pathlib import Path
+import matplotlib.pyplot as plt
 from petvision.models.cv.mlp import MLP
 from petvision.training.cv_trainer import evaluate
 from petvision.utils.checkpoint import load_checkpoint
 from petvision.data.datasets import build_mnist_loaders
 
+def collect_mistakes(model, loader, device, limit=8):
+    mistakes = []
+    if limit <= 0:
+        return mistakes
+
+    model.eval()
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+            labels = labels.to(device)
+
+            logits = model(images)               # [B, 10]
+            probabilities = logits.softmax(dim=1)
+            predicted = logits.argmax(dim=1)     # [B]
+
+            # 找到当前批次中预测错误的样本位置。
+            wrong_indices = (
+                (predicted != labels)
+                .nonzero(as_tuple=True)[0]
+                .tolist()
+            )
+
+            for index in wrong_indices:
+                predicted_label = predicted[index].item()
+
+                mistakes.append({
+                    "image": images[index].cpu(),
+                    "true_label": labels[index].item(),
+                    "predicted_label": predicted_label,
+                    "score": probabilities[index, predicted_label].item(),
+                })
+
+                if len(mistakes) >= limit:
+                    return mistakes
+
+    return mistakes
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
@@ -73,6 +111,49 @@ def main():
     metrics = evaluate(model, loader, criterion, device)
     assert metrics["n_samples"] == len(loader.dataset)
     print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
+    if args.split == "test":
+        mistakes = collect_mistakes(model, loader, device, limit=8)
+        result = {
+            "split": args.split,
+            **metrics,
+            "checkpoint": str(args.checkpoint),
+            "checkpoint_epoch": checkpoint["epoch"],
+            "config": str(args.config),
+            "split_sha256": checkpoint["split_sha256"],
+            "mistake_examples_count": len(mistakes),  # 展示数量，不是总错分数。
+        }
+        experiment_dir = Path(cfg["experiment_dir"])
+        result_path = experiment_dir / "test_metrics.json"
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        with result_path.open("w", encoding="utf-8") as file:
+            json.dump(result, file, ensure_ascii=False, indent=2)
+
+        figure_path = experiment_dir / "figures" / "mistakes.png"
+        if not mistakes:
+            # 防止把上一次运行的图片误认为本次结果。
+            figure_path.unlink(missing_ok=True)
+            print("没有错分样例，不生成误分类图。")
+            return
+
+        fig, axes = plt.subplots(2, 4, figsize=(10, 5))
+        for ax in axes.flat:
+            ax.axis("off")
+        for ax, mistake in zip(axes.flat, mistakes):
+            image = mistake["image"]
+            normalize = cfg["data"]["normalize"]
+            mean = image.new_tensor(normalize["mean"]).view(-1, 1, 1)
+            std = image.new_tensor(normalize["std"]).view(-1, 1, 1)
+            image = image * std + mean
+            ax.imshow(image.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1)
+            ax.set_title(
+                f"true={mistake['true_label']}, pred={mistake['predicted_label']}\n"
+                f"score={mistake['score']:.2%}"
+            )
+        fig.tight_layout()
+        figure_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(figure_path)
+        plt.close(fig)
+        print("figure saved:", figure_path)
 
 if __name__ == "__main__":
     main()
