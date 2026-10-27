@@ -85,3 +85,82 @@ def test_evaluate_metrics():
     assert partial["accuracy"] == 0.5
     print("full:", metrics)
     print("first batch:", partial)
+
+
+def test_checkpoint_roundtrip(tmp_path):
+    from petvision.utils.checkpoint import load_checkpoint, save_checkpoint
+
+    model_config = {"input_dim": 4, "hidden_dims": [8], "num_classes": 3}
+    model = MLP(**model_config).cpu().eval()
+    images = torch.randn(3, 4)
+    labels = torch.tensor([0, 1, 2], dtype=torch.long)
+    with torch.no_grad():
+        logits_before = model(images)
+        loss_before = torch.nn.functional.cross_entropy(logits_before, labels)
+
+    path = tmp_path / "checkpoints" / "model.pt"
+    save_checkpoint({
+        "model_state": model.state_dict(),
+        "model_config": model_config,
+        "epoch": 2,
+    }, path)
+    checkpoint = load_checkpoint(path)
+    restored = MLP(**checkpoint["model_config"]).cpu().eval()
+    restored.load_state_dict(checkpoint["model_state"])
+    with torch.no_grad():
+        logits_after = restored(images)
+        loss_after = torch.nn.functional.cross_entropy(logits_after, labels)
+
+    assert checkpoint["epoch"] == 2
+    assert all(value.device.type == "cpu" for value in checkpoint["model_state"].values())
+    torch.testing.assert_close(logits_after, logits_before, rtol=0, atol=1e-6)
+    torch.testing.assert_close(loss_after, loss_before, rtol=0, atol=1e-6)
+    assert torch.equal(logits_after.argmax(1), logits_before.argmax(1))
+    print("checkpoint logits max error:", (logits_after - logits_before).abs().max().item())
+
+
+def test_checkpoint_best_and_last(tmp_path, monkeypatch):
+    import argparse
+    import hashlib
+    from pathlib import Path
+
+    import yaml
+    from petvision.utils.checkpoint import load_checkpoint
+
+    # 调用实际训练入口，只替换数据来源与验证分数，检查真正写出的文件。
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import train_cv
+
+    cfg = yaml.safe_load((project_root / "configs/cv/mlp_mnist.yaml").read_text())
+    cfg["model"].update(input_dim=4, hidden_dims=[8], num_classes=3)
+    cfg["training"].update(device="cpu", epochs=4)
+    cfg["experiment_dir"] = str(tmp_path / "experiment")
+    cfg["output_dir"] = str(tmp_path / "weights")
+    split_path = tmp_path / "split.json"
+    split_path.write_text("{}", encoding="utf-8")
+    cfg["data"]["split_path"] = str(split_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(train_cv, "parse_args", lambda: argparse.Namespace(
+        config=config_path, smoke=False, overfit_samples=None,
+    ))
+    batch = [(torch.randn(3, 4), torch.tensor([0, 1, 2], dtype=torch.long))]
+    monkeypatch.setattr(train_cv, "build_mnist_loaders", lambda **kwargs: (batch, batch, batch))
+    accuracies = iter([0.80, 0.85, 0.82, 0.85])
+    monkeypatch.setattr(train_cv, "evaluate", lambda *args: {
+        "loss": 0.5, "accuracy": next(accuracies), "n_samples": 3,
+    })
+    monkeypatch.setattr(train_cv, "plot_history", lambda *args: None)
+    train_cv.main()
+
+    best = load_checkpoint(tmp_path / "weights" / "best.pt")
+    last = load_checkpoint(tmp_path / "weights" / "last.pt")
+    assert best["epoch"] == 2  # 第 4 轮持平，保留较早一次。
+    assert last["epoch"] == 4
+    assert best["val_accuracy"] == 0.85
+    assert best["config"] == cfg
+    assert best["model_config"] == cfg["model"]
+    assert best["split_sha256"] == hashlib.sha256(split_path.read_bytes()).hexdigest()
+    assert any(not torch.equal(best["model_state"][key], value)
+               for key, value in last["model_state"].items())

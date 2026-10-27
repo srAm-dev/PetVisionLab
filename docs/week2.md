@@ -1,6 +1,6 @@
 # 第二周逐日学习指南：PyTorch、MNIST MLP 与完整训练流程
 
-> 更新日期：2026-10-25<br>
+> 更新日期：2026-10-27<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：用 autograd 对照手写梯度，完成 MNIST 数据划分、MLP 训练、小批过拟合、最佳 checkpoint、独立测试与加载一致性检查。  
@@ -18,7 +18,7 @@
 
 ## 本周目录蓝图
 
-以下为本周逐步形成的文件，注释标明计划创建或修改时间。当前已完成 Day 1–3 基础实现，以及 Day 4 的参数化接口、配置入口、训练 / 验证、检查模式和日志绘图；现有 4 项测试通过。仓库已有五轮 history 和曲线，但尚未保存 checkpoint，也没有独立评估入口；Day 5–6 继续完成保存加载与最终测试。已运行结果的来源和范围见[第二周记录](../experiments/mnist_mlp/week2/README.md)，下面的目录图描述本周完整目标。
+以下为本周逐步形成的文件，注释标明计划创建或修改时间。当前已有 Day1–4 的数据、模型、训练 / 验证、配置入口和日志绘图；Day5 的 checkpoint 与独立评估入口已接通，现有 6 项测试通过。正式五轮训练的配置、日志、曲线和 best/last 已生成；best 为第 5 轮，独立加载后完整验证集 accuracy=96.42%，与该轮日志一致。Day4 未配套权重的记录已归档，接下来按 Day6 做最终测试。已有结果与检查范围见[第二周记录](../experiments/mnist_mlp/week2/README.md)，下面的目录图描述本周完整目标。
 
 ```text
 PetVisionLab/
@@ -1689,7 +1689,7 @@ best 按验证 accuracy 选择，持平时可约定保留更早一次；last 是
 
 今天会修改三个位置：新建 `src/petvision/utils/checkpoint.py`，修改已有 `scripts/train_cv.py` 的正式 else 分支，新建 `scripts/evaluate.py`；测试继续添加到 `tests/test_cv_training.py`。本周 checkpoint 用于重建模型和评估，第七周再补优化器与随机状态以支持等价续训。
 
-当前已有一份未配套权重的五轮结果。再次正式训练前，将本周已有的 config.yaml、history.csv、figures/training_curves.png 复制到 `experiments/mnist_mlp/week2/archive/day4_without_checkpoint/`，保留文件名并在 README 说明来源；不移动 mnist_split.json。下面的新运行会重新写主目录日志，并首次保存与其对应的模型权重。
+Day4 未配套权重的五轮结果现已归档到 `experiments/mnist_mlp/week2/archive/day4_without_checkpoint/`，其中保存 config.yaml、history.csv 和 training_curves.png；mnist_split.json 仍在本周主目录。下面的新运行会重新生成主目录日志，并保存与其对应的模型权重。后续若重跑，先归档需要保留的配置、指标、曲线和权重。
 
 保存到磁盘时写 state_dict；若先在内存保留最佳状态，需要深拷贝，避免后续训练改变同一份引用。
 
@@ -1764,6 +1764,8 @@ model = model.to(device).eval()
 4. 用上面的加载片段建立模型，然后按下方代码选择 loader 和打印结果。这里 `evaluate` 继续使用已有按样本加权的统计实现。
 5. 文件末尾写 `if __name__ == "__main__": main()`。先运行 `python scripts/evaluate.py --help` 核对参数，再在训练产生权重后进行独立验证。
 
+配置字典在 Python 中的变量名是 cfg，但保存进 checkpoint 时用的键名是 config，读取应写 `checkpoint["config"]`，不能写成 checkpoint["cfg"]。设备选择也要放在解析参数、读取 YAML 之后，先赋值 `device_name = cfg["training"]["device"]`。
+
 下面片段接在 main 的模型加载之后，train_loader 不参与评估：
 
 ```python
@@ -1774,7 +1776,7 @@ assert metrics["n_samples"] == len(loader.dataset)
 print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 ```
 
-读取这类由 Tensor、字典和普通数值组成的 checkpoint 时，显式使用 `torch.load(checkpoint_path, map_location="cpu", weights_only=True)`，先在 CPU 上重建并加载，再迁移到评估设备。`map_location` 解决保存设备与加载设备不同的问题；`model.eval()` 切换层的运行模式，`torch.no_grad()` 关闭本次推理的梯度记录，两者都要处理。
+读取这类由 Tensor、字典和普通数值组成的 checkpoint 时，显式使用 `torch.load(checkpoint_path, map_location="cpu", weights_only=True)`，先在 CPU 上重建并加载，再迁移到评估设备。`map_location="auto"` 不是有效的 Torch 设备映射；YAML 中的 device=auto 是本项目入口自己解释的约定。这里先加载到 CPU，再由 model.to(device) 选择实际设备。`map_location` 解决保存设备与加载设备不同的问题；`model.eval()` 切换层的运行模式，`torch.no_grad()` 关闭本次推理的梯度记录，两者都要处理。
 
 #### 第三步：固定验证批次比较
 
@@ -1802,8 +1804,8 @@ python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outpu
 
 先通过保存加载的小规模检查，再从新模型正式训练。训练应写出 `config.yaml`、五行 epoch 指标、训练曲线和 `best.pt/last.pt`；独立评估应覆盖 `5000` 条验证样本，并与 best 所在 epoch 的验证结果对应。若文件不存在，先查保存分支和 `output_dir`，不要把尚未保存误判为加载 API 出错。
 
-- [ ] best 根据验证集选择，last 与 best 的含义清楚。
-- [ ] 独立进程可以重建模型加载权重，验证输出一致。
+- [x] best 按验证准确率选择，last 保存最后一轮；本次两者均为第 5 轮，已核对权重一致。
+- [x] 独立进程重建模型加载 best，完整验证集 5000 条的 loss / accuracy 与训练日志一致（2026-10-27）。
 - [ ] 知道 eval() 与关闭梯度分别解决什么问题。
 
 <a id="day-6"></a>

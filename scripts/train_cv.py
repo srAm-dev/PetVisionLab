@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 import torch
 import csv
+import hashlib
 import matplotlib.pyplot as plt
 from itertools import islice 
 from torch.utils.data import Subset, DataLoader
@@ -10,6 +11,7 @@ from petvision.data.datasets import build_mnist_loaders
 from petvision.models.cv.mlp import MLP
 from petvision.training.cv_trainer import train_one_epoch, evaluate
 from petvision.utils.seed import set_seed
+from petvision.utils.checkpoint import save_checkpoint
 
 
 def save_history(history, experiment_dir):
@@ -74,7 +76,7 @@ def main():
         raise ValueError("本周 training.dtype 仅支持 float32")
     print(cfg["model"]["name"], cfg["data"]["batch_size"])
     print(args.smoke, args.overfit_samples)
-    # 下一步：按模式创建数据、模型和优化器，调用训练/评估函数
+    # 按配置创建数据、模型和优化器，再进入所选运行模式。
     set_seed(cfg["training"]["seed"])
     device_name = cfg["training"]["device"]
     if device_name == "auto":
@@ -134,6 +136,8 @@ def main():
         print("overfit final:", final)
 
     else:
+        best_accuracy = float("-inf")
+        split_sha256 = hashlib.sha256(Path(cfg["data"]["split_path"]).read_bytes()).hexdigest()
         epochs = cfg["training"]["epochs"]
         if type(epochs) is not int or epochs <= 0:
             raise ValueError("training.epochs 必须是正整数")
@@ -164,7 +168,22 @@ def main():
                 f"val_loss={row['val_loss']:.6f}, "
                 f"val_accuracy={row['val_accuracy']:.2%}"
             )
-            # Day 5 在每轮验证后接入 checkpoint 保存，再进行正式五轮训练。
+            # 每轮保存 last；仅验证准确率提升时更新 best。
+            checkpoint = {
+                'model_state': model.state_dict(),
+                'model_config': cfg['model'],
+                'config': cfg,
+                'epoch': epoch,
+                'val_accuracy': val_metrics['accuracy'],
+                'val_loss': val_metrics['loss'],
+                'seed': cfg['training']['seed'],
+                'split_sha256': split_sha256,
+            }
+            output_dir = Path(cfg["output_dir"])
+            save_checkpoint(checkpoint, output_dir / "last.pt")
+            if val_metrics["accuracy"] > best_accuracy:
+                best_accuracy = val_metrics["accuracy"]
+                save_checkpoint(checkpoint, output_dir / "best.pt")
 
         save_history(history, experiment_dir)
         plot_history(history, experiment_dir)

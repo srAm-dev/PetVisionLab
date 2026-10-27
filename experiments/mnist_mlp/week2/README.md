@@ -32,14 +32,14 @@ Conda 显式清单记录 Conda 包，pip 补充包还需依赖版本与实际安
 <a id="commands"></a>
 ## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day 1–4 的数据、模型、训练 / 验证、参数化配置入口、检查模式与日志绘图。Day 5–6 的 checkpoint 保存加载、独立 evaluate 入口和最终测试仍待实现；表中这些后续命令在完成对应步骤后才可运行。
+以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day1–4 的实现，以及 Day5 的 checkpoint 保存加载和独立 evaluate 入口；相关检查已通过。含 best/last 的正式五轮训练已完成，独立加载验证也已通过；最终测试和结果输出按 Day6 继续完成。若要重新训练，先归档需要保留的当前结果与权重。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/check_environment.py --output-dir experiments/mnist_mlp/week2` | 打印并记录环境 |
 | Day 1 | `python scripts/torch_basics.py` | Tensor 与 autograd 检查 |
 | Day 2 | `python scripts/inspect_mnist.py` | 固定划分与数据检查 |
-| Day 3–6 | `python -m pytest tests/test_cv_training.py -q` | 当前 4 项形状 / 梯度 / 设备 / 统计检查；Day 5 再补保存加载 |
+| Day 3–6 | `python -m pytest tests/test_cv_training.py -q` | 当前 6 项：形状 / 梯度 / 设备 / 统计、保存加载、best/last 选择 |
 | Day 4 第三步（按指南创建脚本后） | `python scripts/check_mnist_training.py` | 独立运行两批 smoke 与固定 64 样本拟合 |
 | Day 4 | `python scripts/train_cv.py --help` | 核对配置参数与互斥检查模式 |
 | Day 4 | `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke` | 两批次 smoke |
@@ -70,11 +70,21 @@ MLP 循环组装检查（2026-10-25）：现有 4 项测试和 3 项临时回归
 
 Day 4 前六步检查（2026-10-25）：现有 4 项测试与 8 项临时入口检查共 12 项通过，包含命令行互斥 / 正数校验、不支持的模型 / 数据集 / 优化器 / dtype 明确报错，以及过拟合样本数上限校验。实际运行 train_cv.py 的 --smoke，训练和验证各处理 256 条样本；--overfit-samples 64 完成 200 次更新后，loss 约为 0.000319，固定训练样本 accuracy=100%。使用 RTX 4060 Laptop GPU。当时第七步尚未完成，该次检查未执行完整正式训练。
 
-当前文件核对（2026-10-25）：保存与绘图已实现，`history.csv` 有 epoch=1..5 的五行记录，与配置的 epochs=5 对应。第 5 轮 train_loss≈0.085465、train_accuracy≈97.30%，val_loss≈0.117921、val_accuracy=96.42%；这也是该表验证准确率最高的一轮。以上来自已有 CSV，本次文档检查没有重新训练。当前没有 best.pt/last.pt，无法据此重建当时模型或验证保存加载一致性，也没有独立测试结果。保留该记录作为阶段结果；Day 5 实现 checkpoint 后，将这次配置、history 和曲线一同归档，再从新模型完成一份权重与日志配套的运行。
+Day4 文件核对（2026-10-25）：保存与绘图已实现，`history.csv` 有 epoch=1..5 的五行记录，与配置的 epochs=5 对应。第 5 轮 train_loss≈0.085465、train_accuracy≈97.30%，val_loss≈0.117921、val_accuracy=96.42%；这也是该表验证准确率最高的一轮。以上来自已有 CSV，本次文档检查没有重新训练。当时没有 best.pt/last.pt，无法据此重建当时模型或验证保存加载一致性，也没有独立测试结果。这份阶段记录现已归档，Day5 的配套权重与日志见下方新记录。
 
-当前项目检查（2026-10-25）：`python -m pytest tests/test_cv_training.py -q -s` 的现有 4 项测试通过，设备检查使用 cuda:0。前面分步骤记录描述各自检查当时的范围，以本段和现有文件判断当前进度。
+Day4 项目检查（2026-10-25）：`python -m pytest tests/test_cv_training.py -q -s` 的现有 4 项测试通过，设备检查使用 cuda:0。前面分步骤记录描述各自检查当时的范围，以现有文件和下方 Day5 检查判断当前进度。
 
 当前入口另用临时合成数据验证了三个模式：正式分支生成两轮 CSV、配置快照和有效曲线；smoke 与 overfit 均保持已有结果文件的内容和修改时间不变。这是入口与文件隔离检查，输出保存在临时目录，不作为 MNIST 性能指标。
+
+Day5 检查（2026-10-26）：已修正 checkpoint 的 CPU 加载映射、evaluate.py 的入口保护、设备读取顺序和配置键名；评估核对模型、归一化、划分数量、种子及实际划分 hash，允许更改数据缓存位置、评估 batch 与设备。现有 6 项测试和 9 项临时评估检查共 15 项通过。保存加载后固定输入的 logits 最大绝对差为 0；模拟验证准确率 `[0.80,0.85,0.82,0.85]` 时，实际训练入口保存的 best 为第 2 轮、last 为第 4 轮，持平不覆盖较早 best。
+
+真实 MNIST 加载检查：使用一个训练批次更新后的临时模型保存 checkpoint，再在独立进程分别用 CUDA / batch=128 和 CPU / batch=257 完整评估 5000 条验证数据。准确率一致，CUDA loss 差为 0，CPU loss 差约为 `5.0e-8`；同一 CUDA 批次重载 logits 差为 0。临时 checkpoint 不作为正式训练结果，没有评估官方测试集。
+
+当前进度：旧五轮记录已移动到 [Day4 归档配置](archive/day4_without_checkpoint/config.yaml)、[归档指标](archive/day4_without_checkpoint/history.csv)和[归档曲线](archive/day4_without_checkpoint/training_curves.png)。Day5 正式五轮训练及对应 best/last 已生成，独立验证通过；接下来进入 Day6。
+
+Day5 复查（2026-10-27）：现有 6 项测试全部通过，设备测试使用 cuda:0。核对正式配置快照与训练 YAML 一致，history 包含 epoch=1..5；best/last 的配置、seed、划分 SHA-256、epoch 与验证指标均和对应日志一致。第 5 轮验证准确率最高，故 best 与 last 都为第 5 轮，模型参数相同，属于正常结果。
+
+本次只检查已有训练产物，没有重新训练。独立运行上表的 `evaluate.py ... --split val` 命令，在 GPU 上加载 best 并完整评估 5000 条验证样本，loss=0.1179209182560444、accuracy=0.9642，与第 5 轮日志完全一致。正式权重在 CPU 上经临时文件再次保存加载，固定随机输入的 logits 最大绝对差为 0；这是序列化一致性检查，不是额外训练结果。尚未评估官方测试集。
 
 Day 4 的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-configurable-interfaces)改造 MLP 和数据接口，验证默认值兼容及自定义参数生效，再写 YAML；第五步读取成字典，第六步将字段传给构造函数 / 数据函数。MLP 仍只接收 self 时不能使用 MLP(input_dim=...)；数据函数也需要先支持 validation_size、num_workers、mean、std。接口接通后再运行表中的 train_cv.py 检查模式。
 
@@ -89,8 +99,10 @@ Day 4 的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-con
 | `mnist_split.json` | Day 2：划分索引与 seed |
 | `figures/mnist_batch.png` | Day 2：训练批次中前 8 张图片及真实标签 |
 | `environment.txt / conda-*.txt / pip-freeze.txt` | 实际环境检查与安装后快照 |
-| [config.yaml](config.yaml) | 已有：这次五轮运行的配置快照；尚未配套 checkpoint |
-| [history.csv](history.csv) / [训练曲线](figures/training_curves.png) | 已有：五轮训练 / 验证记录；Day 5 再形成包含权重的完整运行 |
+| [归档 config.yaml](archive/day4_without_checkpoint/config.yaml) | Day4 五轮运行配置，未配套权重 |
+| [config.yaml](config.yaml) | Day5 正式五轮运行配置快照 |
+| [归档 history.csv](archive/day4_without_checkpoint/history.csv) / [归档曲线](archive/day4_without_checkpoint/training_curves.png) | Day4 五轮训练 / 验证记录 |
+| [history.csv](history.csv) / [训练曲线](figures/training_curves.png) | Day5 正式五轮指标与曲线，与该次 best/last 配套 |
 | `test_metrics.json / figures/mistakes.png` | Day 6：冻结配置后的独立测试 |
 | `outputs/mnist_mlp/{best,last}.pt` | 权重与配置，保存于项目根 outputs 下 |
 
