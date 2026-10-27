@@ -1,6 +1,6 @@
 # 第六周逐日学习指南：字符级 Bigram 与 Mini-GPT
 
-> 更新日期：2026-10-25<br>
+> 更新日期：2026-10-27<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：固定文本划分，完成同一字符 tokenizer 下的 Bigram 与小 GPT、验证曲线、保存加载和自回归生成，解释下一 token 预测。  
@@ -62,6 +62,19 @@ python -m pip check
 复用已经通过检查的 Attention、训练和保存加载方法，新增文本数据与模型。 本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
 
 ## 固定条件与接口约定
+
+<a id="lm-shapes"></a>
+本周模型在每个位置预测“下一个 token 是词表中的哪一项”，因此输出不是每张图片一个类别，而是每个文本位置都有一组类别分数。
+
+| 符号 / 名称 | 含义 | 例子或对应配置 |
+| --- | --- | --- |
+| token / ID / tokenizer | 文本处理单位 / 该单位的整数编号 / 编解码工具 | 本周一个已知字符对应一个 token；ID 不表示数值大小或语义相近 |
+| V / vocab_size | 词表大小，含 UNK | 若已知字符有 65 种，加一个 UNK 后 V=66，合法 ID 为 0..65 |
+| B / batch_size | 同时处理的文本片段数 | 16 |
+| T / context_length | 本次输入长度 / 模型允许的最大上下文长度 | 训练通常 T=128；尾窗和生成时 T 可更小 |
+| C / embed_dim | 每个 token 对应的浮点特征向量长度 | 128，不是词表大小 |
+| N | 当前 split 编码后的 token 总数 | 用于采样边界和 N-1 个验证目标的计数 |
+| NLL / PPL | 负对数似然 / 困惑度 | NLL 是正确 token 概率的负自然对数；平均 NLL 的 exp 为本口径的 PPL |
 
 文本采用作者仓库 Tiny Shakespeare，下载后记录实际来源 URL、文件 SHA256 与解码/换行处理方式。按 Unicode 字符位置顺序切成 80%/10%/10% 的 train/val/test，先保存原文，再分别编码和造窗口；窗口不跨边界。字符词表只从 train 建立，额外保留 `<unk>` ID；验证或 prompt 的未见字符映射到 UNK（未知字符占位 ID），并报告 OOV（未收录字符）的数量，已知字符的 encode/decode 应往返一致。
 
@@ -250,6 +263,8 @@ y：                 [1,2,3]
 
 Embedding(V,V) 可视为一张转移 logits 表，当前 token ID 取出一行，决定下一 token 的分布。它不利用更早的上下文；GPT 将能利用前缀信息。参数量为 V²。在 bigram.py 定义 `BigramLanguageModel(vocab_size)`，构造函数创建 `nn.Embedding(vocab_size, vocab_size)`，forward(token_ids) 返回查表结果；token_ids 必须是 long Tensor。
 
+Embedding 是可学习的查找表：第一个 V 是“有多少行可供 ID 索引”，第二个 V 是“每行有多少个数”。假设 V=4，输入 ID=2 就取表的第 2 行，得到对下一 token 为 0、1、2、3 的四个 logits；不是把数字 2 乘上权重。输入 `[B,T]` 的每个 ID 都取一行，结果为 `[B,T,V]`。这里特意让每行宽度等于 V，以便直接作为分类分数；GPT 的 token embedding 则为 Embedding(V,C)，先取 C 维特征，再经网络输出 V 维分数。
+
 #### 第三步：把交叉熵维度整理清楚
 
 ```text
@@ -261,12 +276,16 @@ loss 输入 target     [B*T]
 
 每个位置是一个 V 分类问题。目标 ID 范围必须在 0..V-1，不能先对 logits 做 softmax 再传给 CrossEntropyLoss。
 
+例如 B=2、T=3、V=4：logits 为 `[2,3,4]`，targets 为 `[2,3]`；展平后分别为 `[6,4]` 和 `[6]`，相当于一次评估六个“四选一”问题。`reshape(-1,V)` 只合并 batch 和位置两轴，不合并词表轴；`targets.reshape(-1)` 使用相同顺序，保证每个位置与自己的下一 token 标签对应。
+
 把自回归概率也对应到这个例子：一个 T+1 片段训练的条件概率是各位置下一 token 概率的乘积；取负对数后变为求和，批次 loss 再除以 `B*T`。Bigram 每一项只依赖当前 ID，GPT 每一项可依赖当前可见前缀。用 `[0,1,2,3]` 逐项指出「0→1、1→2、2→3」，解释为什么目标不能与当前位置输入完全相同。
 
 <a id="eval-windows"></a>
 #### 第四步：按固定目标区间分窗，完整统计验证 token
 
 训练按随机窗口采样；验证使用确定性的分窗，不抽取随机验证小批替代完整统计。本周不引入 BOS：当前 split 编码后有 N 个 token，索引 0 没有本 split 内的前驱，不计为目标；索引 1..N-1 各预测一次，目标总数应为 N-1。
+
+BOS 是 beginning-of-sequence，即额外添加的“序列开始”token。本轮不加它，因此第一个真实 token 只作为输入，不能假设前面还有一个可预测它的位置。有效目标数指实际参与交叉熵统计的位置数，不是窗口数，也不是原文文件的字节数。
 
 取 token IDs=`[0,1,2,3,4,5,6,7]`、context=3，按下面的边界取窗口：
 
@@ -746,6 +765,8 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 model、tokenizer_hash、val_loss、steps、params 和时间都对应实际运行。字符两组 tokenizer_hash 必须一致，才有直接比较 token loss 的前提。
 
 若报告 PPL，使用相同口径 loss 的 exp；本周并不要求额外实现复杂 PPL 评估，先保证 NLL 与有效 token 数正确。
+
+例如某个正确目标的预测概率为 0.5，它贡献的 NLL 为 `-ln(0.5)≈0.6931`。先把全部有效目标的 NLL 相加并除以目标数，得到平均 loss，再算 `PPL=exp(loss)`；不是分别计算各窗口 PPL 后取平均。若平均 loss 恰为 ln(2)，PPL 就为 2。不同 tokenizer 的预测单位不同，不能直接把字符 PPL 与 BPE PPL 的大小解释为谁更好。
 
 #### 第二步：解释模型实际学到了什么
 

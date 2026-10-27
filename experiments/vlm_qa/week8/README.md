@@ -33,6 +33,8 @@ model_manifest.json 记录每个模型 ID、完整 commit SHA、模型类、proc
 
 ## 配置与结果
 
+CLIP 做候选图文匹配，LLM 做纯文本推理，VLM 接收真实图像参与推理，VQA 是视觉问答任务。processor、revision、greedy 和各类 ID 的含义见[本周术语表](../../../docs/week8.md#inference-terms)。40+ 题表示至少 40 道题；这周命令使用预训练模型进行推理，不包含模型微调。
+
 入门模型：CLIP `openai/clip-vit-base-patch32`；LLM `HuggingFaceTB/SmolLM2-360M-Instruct`；VLM `HuggingFaceTB/SmolVLM-256M-Instruct`。按当前兼容模型卡先验证，再固定实际 revision 与依赖。LLM/VLM batch=1、do_sample=False、max_new_tokens=128；记录精度、上下文、图像处理、生成耗时与峰值显存。CLIP 使用模型 processor 和固定英文模板，零样本结果单列。VQA 原始样本和标准在正式推理前固定，统计含全部失败记录。所选 SmolVLM 模型卡标注主要语言为英语，本轮优先英文问答；如增加中文题，单独记录语言条件并解释结果。
 
 LLM / VLM 当前按 batch=1 逐题调用，其他 batch 值需明确拒绝。每轮生成一次 run_id，原始输出与判定使用同一个运行标识；VLM 单图和批量模式复用 infer_one，参考答案只用于人工判定，不进入模型输入。模型 manifest 保留每次使用的完整配置及实际兼容版本。

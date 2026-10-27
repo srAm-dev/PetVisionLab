@@ -39,6 +39,8 @@ python -m pip check
 
 ## 配置与结果
 
+BN 是批归一化，residual 是残差连接；on/off 表示启用 / 关闭。variant 是实验变体名称，路径中的 `<variant>` 要替换成 cnn_bn_on、cnn_bn_off、resnet_on 或 resnet_off，不保留尖括号。卷积、池化、stage 和初始状态对齐的含义见[本周术语与约定](../../../docs/week3.md#cnn-terms)。
+
 起始配置：seed=42、batch=64、20 epochs、AdamW lr=1e-3、weight_decay=1e-4、FP32；两对实验内部预算一致。训练/验证为 45k/5k，增强只作用训练。各组 experiment_dir 为 `experiments/cnn_vs_resnet/week3/runs/<variant>`，四组 checkpoint 输出目录分别为 `outputs/cnn_bn_on`、`outputs/cnn_bn_off`、`outputs/resnet_on`、`outputs/resnet_off`，best 按验证 accuracy 选择，持平保留较早一次；所有配置保存实际路径、参数量与初始化对齐方法。测试留到第五周。
 
 CIFAR-10 加载函数、两个 transform 与检查脚本的接线见[Day 1 数据步骤](../../../docs/week3.md#cifar-data)，沿用第二周的 JSON / DataLoader 方法，分别处理 45k/5k/10k 三份数据。

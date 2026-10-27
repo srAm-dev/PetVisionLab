@@ -1,6 +1,6 @@
 # 第八周逐日学习指南：CLIP、LLM / VLM 推理与八周总结
 
-> 更新日期：2026-10-25<br>
+> 更新日期：2026-10-27<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-4)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：本地完成 CLIP 零样本任务，云端运行小型 LLM 与 VLM，保存至少 20 张图×每图2问的完整结果、人工判定和结构图，整理最终报告。  
@@ -55,6 +55,21 @@ PetVisionLab/
 CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 张，以固定英文类别模板做零样本分类，使用模型自己的 processor。结果单列为预训练零样本条件。LLM/VLM 首次用 batch=1、greedy（do_sample=False）、max_new_tokens=128、固定 prompt 与精度；GPU 支持时可用 BF16，否则明确记录 FP32/FP16。VQA 在推理前写好至少 20 张图、每图 2 个问题与判定标准，覆盖类别、颜色、数量、位置和信息不足；每个问题独立上下文，不让前一题答案进入下一题。所选 SmolVLM 模型卡标注主要语言为英语，本轮优先用英文问题与判定标准；如增加中文题，单独报告语言条件和结果，避免把语言能力差异全部归因为视觉理解。
 
 ## 六天总览
+
+<a id="inference-terms"></a>
+本周先区分下列对象和记录，后面的脚本会分别创建或保存它们：
+
+| 名称 | 本项目中的含义 |
+| --- | --- |
+| CLIP / zero-shot | 图像和文本分别编码后比较相似度；零样本指本次不使用 CIFAR 标签训练这些预训练权重，而用类别文本直接分类 |
+| LLM / VLM / VQA | 大语言模型 / 视觉语言模型 / 视觉问答任务；本周分别做纯文本和带真实图片的推理 |
+| tokenizer / processor | tokenizer 把文字编码为 ID；processor 负责模型所需的图像预处理，并可统一组织图文输入 |
+| prompt / Chat Template | 给模型的提示内容 / 把角色、内容和控制标记排成该模型所需格式的模板；模板不是参考答案 |
+| model ID / revision | 模型仓库名称 / 该仓库的具体版本；固定完整 commit SHA 是为了再次加载同一版模型及 processor |
+| FP32 / FP16 / BF16 | float32 / float16 / bfloat16 浮点格式；后两者都是 16 位但数值范围和精度不同，需按模型与设备支持选择 |
+| greedy / do_sample=False | 每一步选得分最高的下一个 token，不做随机采样；不代表输出一定正确 |
+| max_new_tokens | 最多新增多少个 token，不含输入 prompt；遇到结束 token 时可能提前停止 |
+| image_id / qid / run_id | 图片编号 / 问题编号 / 一整轮推理的编号；同一轮的所有题共享 run_id，重跑才换一个 |
 
 | 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
 | --- | --- | --- | --- | --- |
@@ -178,6 +193,8 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.tx
 归一化后相似度                           [B,K]
 ```
 
+这里 B 是本批图片张数，K 是候选类别文本数量（本题为 10），D 是模型输出的共同特征长度，由实际模型决定。K 在此处既不是卷积核大小，也不是 Attention 的 key 张量。`[B,K]` 中第 b 行、第 k 列就是“第 b 张图片与第 k 个类别文本”的匹配分数。
+
 先在 run_clip.py 顶层导入 torch、CLIPModel、CLIPProcessor。配置中的 revision 已填入真实 SHA 后，在 main 内加载：
 
 ```python
@@ -219,6 +236,8 @@ print(outputs.image_embeds.shape, outputs.text_embeds.shape, scores.shape)
 若与 CLIP 模型返回的分类 logits 对齐，还要应用模型学习到的 logit scale；只做归一化特征点积得到的是余弦相似度。正的缩放不改变 argmax，但会改变 softmax 分数，保存结果时写清实际使用的是哪种分数。
 
 先用两维特征核对方向：图像特征 `[[3,4],[0,2]]`，文本特征 `[[1,0],[0,1]]`，逐行 L2 归一化后相似度应为 `[[0.6,0.8],[0,1]]`，两个预测均为类别 1。真实模型中取出实际特征 Tensor，再计算 `image_unit @ text_unit.T`，输出 `[B,10]`；检查最后一维对应 classes 的顺序，而不是沿 batch 做 argmax。
+
+这里 L2 归一化是“向量除以自身长度”，长度为各分量平方和的平方根：`[3,4]` 的长度是 `sqrt(3²+4²)=5`，归一化后为 `[0.6,0.8]`。单位向量之间的点积就是余弦相似度。它与前几周对像素做 `(x-mean)/std` 的 Normalize 是两种不同操作，不能相互替代。
 
 #### 第五步：保存一次完整子集结果
 
@@ -385,6 +404,8 @@ inputs = {name: value.to(device) for name, value in inputs.items()}
 ```
 
 打印 rendered_prompt、input_ids.shape 与实际 ID；模板已经包含特殊 token，因此本路径编码时设置 add_special_tokens=False。若使用直接输出 token 的路径，则按固定版本模型卡取得模型要求的输入字典，不再重复 tokenize 一次。
+
+逐个参数理解：`tokenize=False` 先返回格式化后的字符串，便于查看；`add_generation_prompt=True` 请求模板加入开始回答所需的提示部分，实际标记取决于该模型模板；`return_tensors="pt"` 让编码结果使用 PyTorch Tensor。inputs 通常含 input_ids（整数 token ID）和 attention_mask（区分有效输入与填充的位置，具体形状由接口决定）。后者不能直接当作第四周约定 True=屏蔽的手写布尔 Mask 使用，接口含义需分别核对。
 
 每条 prompt 单独构造一轮 user 消息，不把上一题回答放进下一题。设置 greedy 时不需要 temperature/top-k；先用第一题跑通，再遍历 cfg["data"]["prompts"] 中的五题。
 

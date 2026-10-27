@@ -30,6 +30,8 @@ python -m pip check
 
 ## 配置与结果
 
+形状中 B 是批次序列数、T 是每条序列的位置数、C 是每个位置的特征数；heads 是头数，每头维度为 C/heads。Q/K 决定关注权重，V 提供被加权的信息；具体矩阵计算见[形状与术语说明](../../../docs/week4.md#attention-shapes)和[Day1 手算](../../../docs/week4.md#day-1)。
+
 统一 `[B,T,C]` 输入，自写布尔 Mask 的 True=屏蔽；causal 与 padding 合并后逐 query 检查，任一行没有可关注 key 时明确抛出 ValueError。本轮使用保留首个有效 token 的右侧 padding；padding query 输出不要求为零。B=2、T=8、C=32、heads=4、FFN=128 为起始检查配置。参考运行关闭 dropout，使用相同权重、精度、输入与 Mask。记录每项最大误差、容差、是否使用 CPU/GPU；张量检查结果直接打印并在周末总结。
 
 Attention 返回供检查的 dropout 前权重；权重 dropout 由 Attention 管理，FFN 隐藏 dropout 由 FeedForward 管理，两条残差输出 dropout 由 EncoderBlock 管理，避免重复放置。位置编码在构造表之前校验 embed_dim 为正偶数。

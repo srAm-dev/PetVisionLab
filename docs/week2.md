@@ -885,11 +885,15 @@ Linear          [B,10]
 
 构造函数声明层，forward 只做输入到 logits 的计算。优化器、数据加载和 loss 留在训练入口。今天可以先把上述固定尺寸写在类中，用 `MLP()` 创建模型。Day 4 [第四步](#mnist-configurable-interfaces)先把固定尺寸改成构造参数，默认值分别为 784、(256,128)、10，验证改造有效后再写 YAML；之后创建和重建模型都使用这些配置参数。此结构参数量应为 235146，第四步再检查。
 
+B 是本批图片张数；Flatten 默认保留这一维，把每张图的 `1*28*28=784` 个像素排成一个向量。Linear 把输入特征按权重组合成指定数量的新特征，ReLU 逐元素计算 `max(0,x)`，形状不变。logits 是最后一层输出的原始类别分数，可以为负，也不要求和为 1。
+
 #### 第二步：手算一次交叉熵
 
 这段是理解损失的独立练习；先在 Python 终端中 `import torch` 后运行，打印 loss.item() 核对结果。将正确类的 logit 从 0 改成 2，再计算一次，确认损失下降。本步使用手写的三个 logits；下一步才检查实际 MLP 的十类输出。
 
 logits=`[0,0,0]` 时三类概率均为 1/3，标签为第 0 类时 loss=`-log(1/3)≈1.098612`。提高正确类 logit 后，loss 应下降。
+
+若 z_j 表示第 j 类的 logit，softmax 得到 `p_j=exp(z_j)/sum_k(exp(z_k))`；分母把所有类别的指数相加，exp 是自然指数函数。单样本交叉熵是 `-ln(p_target)`，target 是真实类别编号，ln 是自然对数。把本例第 0 类改为 2 后，正确类概率为 `exp(2)/(exp(2)+1+1)≈0.7870`，loss 约 0.239545。先用这个例子理解公式，正式代码仍把 logits 直接交给 cross_entropy，不手动重复 softmax。
 
 ```python
 logits = torch.tensor([[0.0, 0.0, 0.0]])
@@ -1091,6 +1095,16 @@ def evaluate(model, loader, criterion, device):
 ```
 
 两个函数统一返回字典 `{"loss": 平均损失, "accuracy": 总正确数/总样本数, "n_samples": 实际样本数}`，数值转为 Python float / int，方便后续写文件。
+
+| 参数 | 具体传入什么 | 函数怎样使用它 |
+| --- | --- | --- |
+| model | 已创建的 MLP 对象 | `model(images)` 产生 logits |
+| loader | 训练或验证 DataLoader | 循环取出图片和标签；本周一轮通常遍历一次 loader |
+| optimizer | 绑定 model.parameters() 的 Adam 对象 | 清梯度和更新参数，验证函数不需要它 |
+| criterion | CrossEntropyLoss 对象 | `criterion(logits, labels)` 计算损失 |
+| device | `torch.device("cpu")` 或 CUDA 设备 | 把图片和标签移到与模型一致的设备 |
+
+batch 是一次送进模型的一批样本，step 通常指一次优化器更新，epoch 是遍历一遍训练集。比如训练集 55000 张、batch_size=128、drop_last=False，一轮有 430 批，最后一批为 88 张；每批更新一次时，一轮就是 430 次更新。
 
 本步 criterion 使用 `torch.nn.CrossEntropyLoss(reduction="mean")`。每批用 `loss.item()` 取出损失数值，再乘该批实际样本数累计；循环结束后除以实际处理的样本总数。`n_samples` 在每批按标签数量累加，不直接取整个 dataset 的长度，这样后续 smoke 只遍历两批时也能正确统计。返回字段统一写 `n_samples`。
 
@@ -1872,6 +1886,19 @@ with result_path.open("w", encoding="utf-8") as file:
 已有 evaluate 只返回汇总指标，不返回图片。保持它的接口，在 evaluate.py 顶层新增 `collect_mistakes(model, loader, device, limit=8)`：切 eval，在 no_grad 下再次遍历同一个 test_loader；用 `predicted = logits.argmax(dim=1)` 和 `predicted != labels` 找错分位置，每条保存 CPU 图片、真实类、预测类和展示用 softmax 分数。收满 limit 后返回列表；没有错分则返回空列表。完整指标已由前面的 evaluate 统计过 10000 条，这次只采集展示样例，可提前结束，不能用展示批次重新覆盖 metrics。
 
 在 main 的 test 分支调用该函数，再用 `plt.subplots(2,4,figsize=(10,5))` 绘图；先关闭所有坐标轴，再把收集到的样例依次填入，少于 8 张时留空。mean/std 从 cfg["data"]["normalize"] 读取，用 `image.new_tensor(values).view(-1,1,1)` 分别转为与 CPU 图片同类型的通道 Tensor，再计算 `image*std+mean`；不要直接让图片乘 YAML 列表。MNIST 去掉单通道维后 imshow(cmap="gray", vmin=0, vmax=1)；标题写真实类、预测类与分数。保存到 `experiment_dir/figures/mistakes.png` 后关闭画布。若列表为空，在结果中记录错误样例数为 0，不生成误导图片；重跑时检查旧图是否属于本轮。
+
+这一步涉及的几行写法可以逐项理解：
+
+| 写法 | 含义与本步用途 |
+| --- | --- |
+| `(predicted != labels).nonzero(as_tuple=True)[0].tolist()` | 先得到错分的布尔标记，再取出一维标记中 True 的位置，转成 Python 列表；`[0]` 取的是索引元组中的整个 Tensor，不是只取首个错误 |
+| `axes.flat`、`ax.axis("off")` | 依次遍历 2×4 个子图并隐藏坐标轴；图片和标题仍可显示，未使用的子图保持空白 |
+| `zip(axes.flat, mistakes)` | 一次配对一个子图和一个真实错分样例，按较短序列结束，避免不足 8 张时越界 |
+| `image.new_tensor(values)` | 用列表里的值创建 Tensor，沿用 image 的 dtype/device，不复制图片内容 |
+| `.view(-1,1,1)` | 将每通道的参数排成 `[C,1,1]`，广播到图片 `[C,H,W]`；MNIST 的 C=1，RGB 的 C=3 |
+| `figure_path.unlink(missing_ok=True)` | 本次没有错分时删除该路径的旧图；文件不存在也不报错 |
+
+JSON 保存、样例收集与绘图都要缩进到 `if args.split == "test":` 内。`mistake_examples_count` 是实际展示数，最多 8，不是整个测试集的错分总数。
 
 #### 第三步：有限参考写出两个循环
 

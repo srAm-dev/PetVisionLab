@@ -65,6 +65,8 @@ python -m pytest tests/test_cv_training.py -q
 
 ## 配置与结果
 
+阅读约定：batch 是一次处理的一批图片，step 是一次参数更新，epoch 是遍历一遍训练集。loss 是按实际样本汇总的平均损失，accuracy 是正确数 / 总数；logits 是模型的原始类别分数。参数传入与统计示例见[Day4 训练步骤](../../../docs/week2.md#training-seed)。
+
 基线：seed=42，官方训练集 55,000/5,000，MLP 784→256→128→10，Adam lr=1e-3，batch=128，epochs=5，FP32。训练从新模型起步，按验证准确率选择 best；测试集只在配置冻结后使用。命令中的 output_dir、experiment_dir 和 split 文件路径在 YAML 中明确保存。
 
 MNIST 下载、固定划分与 DataLoader 见[Day 2 数据步骤](../../../docs/week2.md#mnist-data)，训练对象接线见[Day 4](../../../docs/week2.md#training-objects)，实际保存 / 加载操作见[Day 5](../../../docs/week2.md#checkpoint-io)。

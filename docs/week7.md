@@ -1,6 +1,6 @@
 # 第七周逐日学习指南：简化字节级 BPE、采样与中断续训
 
-> 更新日期：2026-10-25<br>
+> 更新日期：2026-10-27<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写字节级 BPE 与 Unicode 往返检查，加入 Temperature/Top-k 和完整恢复训练，整理字符/BPE 分开评估的语言模型报告。  
@@ -58,6 +58,18 @@ python -m pip check
 保留第六周的原文划分、字符 tokenizer 与两组模型，另外建立 BPE 词表和模型。 本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
 
 ## 固定条件与接口约定
+
+<a id="bpe-terms"></a>
+本周的 BPE 是 Byte Pair Encoding（字节对编码）。这里“训练 tokenizer”是统计相邻 token 并学习合并规则，不是用反向传播训练神经网络；GPT 的参数训练在 Day5 单独进行。
+
+| 名称 | 具体含义 |
+| --- | --- |
+| byte / 字节 ID | 一个字节取值 0..255；初始词表用这个数值作为 ID |
+| pair | 当前序列中相邻两个 token ID 组成的有序对，例如 (97,98)；顺序不可交换 |
+| merge | 把一个指定 pair 替换成新 ID 的规则；新 ID 对应原来两个 token 的 bytes 拼接 |
+| rank | 合并规则的学习顺序，从 0 开始；数值越小，编码时优先级越高 |
+| V / vocab_size | 基础字节和新合并 token 的总数；目标 512 包含最初的 256，不是额外加 512 |
+| temperature / top_k | 生成时调整分布的温度 / 保留的候选 token 数；不修改 tokenizer 规则或模型权重 |
 
 教学 BPE 从 UTF-8 的 256 个字节 ID 开始，新 merge token 从 256 递增；目标词表 512。先在短字符串手算，再只使用训练原文的前 100,000 个 Unicode 字符学习规则，记录该训练子集的 hash/长度；运行时间允许可用全训练原文，实际配置需明确。每次统计相邻 pair，按最高频选择，平频按字节/token ID 对的字典序决定；从左到右做非重叠替换，encode 按已保存 merge rank 应用。
 
@@ -145,6 +157,8 @@ class ByteBPETokenizer:
 count_pairs 和 merge_pair 可作为 tokenizer.py 内的辅助函数；decode 是 ByteBPETokenizer 的方法，需要使用该对象的词表，不能仅凭任意 ID 列表猜出 bytes。
 
 count_pairs 返回 `{(left_id, right_id): 次数}` 字典；merge_pair 返回替换后的新列表。没有 pair 时返回空计数字典，训练循环在取最大值前退出。平频规则可写为 `min(counts, key=lambda pair: (-counts[pair], pair))`；这行仅在 counts 非空时执行。
+
+这行 min 比较的是二元排序键：先比较 `-counts[pair]`，频率越高，负数越小，所以优先选中；频率相同再比较 pair 本身，先左 ID、再右 ID。例如 `(97,98)` 和 `(98,99)` 都出现一次，就选择 `(97,98)`。这叫字典序，不是对解码后的中文字母表排序。训练每轮替换后重新统计当前序列；encode 则只遵循已保存规则的 rank，不学习新规则。
 
 ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in range(256)}` 和空的有序 merge 列表；bytes([i]) 表示包含一个值为 i 的字节，不能写成创建 i 个零字节的 bytes(i)。训练每产生新 ID，就把左右 token 的 bytes 拼接后加入 vocab；vocab_size 用只读属性返回 `len(self.vocab)`，调用方读取 `tokenizer.vocab_size`，不加括号，与字符 tokenizer 的属性一致。decode 逐个查 vocab、拼接全部 bytes 后严格解码 UTF-8。
 
@@ -291,6 +305,8 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 
 temperature=2 时分布更平缓；top-k 只保留当前得分最高的 k 项。先变换 logits，再 softmax，再采样。
 
+temperature 是正数缩放参数，先计算 `scaled_logits=logits/temperature`：小于 1 放大分数差距，大于 1 缩小差距，等于 1 保持原分数。top_k=2 表示保留两个候选，不是生成两个 token；其余分数设为 -inf 后 softmax 概率为 0。最后按概率随机抽取一个 ID，例如用 `torch.multinomial(probabilities, num_samples=1)`；它不等同于每次都取最大概率的 argmax。温度不要与第六周表示序列长度的 T 混用。
+
 #### 第二步：将采样与模型前向分开
 
 修改已有 `scripts/generate.py`，将下方 sample_next_token 和温度 / 过滤辅助函数定义在文件顶层，模型加载与生成调用仍在 main 内。创建 `tests/test_sampling.py`，测试函数声明 monkeypatch 参数（例如 `def test_sampling_seed(monkeypatch):`），在函数内用 `monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))` 临时加入脚本目录，再 `from generate import sample_next_token` 并导入你定义的过滤函数；Path 从 pathlib 导入。沿用入口保护，导入函数不加载模型或生成样例，不永久修改训练入口的 sys.path。
@@ -385,6 +401,8 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 #### 第二步：分清状态的用途
 
 模型参数决定当前预测；optimizer 的动量/矩估计决定下一步如何更新；scheduler 决定学习率；随机状态决定下一批采样和 dropout。tokenizer 与 split 标识决定 ID 和数据含义。
+
+这里 RNG 是随机数生成器。seed 用于设置随机序列的起点，state 记录已经抽取若干次之后的当前位置；恢复到第 20 步时只重新设 seed，会从头取随机数，不能接上第 21 步。AdamW 的 exp_avg 是过去梯度的一阶矩估计，exp_avg_sq 是过去梯度平方的二阶矩估计；即使模型权重相同，丢失这些状态也可能让下一次更新不同。scheduler 是学习率调度器，GradScaler 用于某些混合精度训练中的梯度缩放；当前 FP32 小检查未启用它们，不需要为本步额外实现。
 
 在第六周推理 checkpoint 的基础上增加这些字段：
 

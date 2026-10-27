@@ -40,6 +40,8 @@ python -m pip check
 
 ## 配置与结果
 
+BPE 学习相邻 token 的合并规则；pair 是有序 ID 对，merge rank 是规则的学习顺序。温度调整生成概率的集中程度，top-k 限制候选数；它们不改变训练好的词表。术语和例子见[本周约定](../../../docs/week7.md#bpe-terms)与[采样步骤](../../../docs/week7.md#day-3)。
+
 BPE 起始 256 个字节，目标词表 512，训练子集只取 train 原文前 100,000 个字符，记录 hash、实际合并数与训练时间。BPE GPT 复用第六周结构/2000 步预算，从新词表对应的新模型训练；experiment_dir 为本周 `runs/bpe`，checkpoint 为 `outputs/mini_gpt_bpe`。续训检查单独使用 CPU 小模型 40 与 20+20 步，记录最大差异。采样组合比较始终使用同一 checkpoint 与 prompt；两组同时改变温度与 top-k，只描述组合效果。
 
 Day 4 的 `test_resume.py` 自带小模型配置和教学 token 数据，在 pytest 临时目录保存/读取 checkpoint，独立于正式 BPE 配置和输出。Day 5 才创建 mini_gpt_bpe.yaml 并启动正式训练；按[执行顺序](../../../docs/week7.md#bpe-resume-order)，先从零跑，确实中断且 `0 < last.step < training.steps` 时才使用恢复命令。已达到累计目标则直接评估，不需要再次训练或人为中断。恢复时保留 best_val_loss/best_step、原 best 文件和训练统计累计值，history 只追加恢复点之后的验证行，避免覆盖更优结果或重复记录。

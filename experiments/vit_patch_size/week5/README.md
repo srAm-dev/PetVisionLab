@@ -40,6 +40,8 @@ python -m pip check
 
 ## 配置与结果
 
+P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS 分类 token，所以 P=4/8 的序列长度为 65/17。C 是每个 token 的特征长度，不是 RGB 通道数；完整形状与参数解释见[本周符号表](../../../docs/week5.md#vit-shapes)，F1 统计见[Day4](../../../docs/week5.md#day-4)。
+
 小 ViT：C=128、depth=2、heads=4、FFN=512、dropout=0.1、AdamW lr=3e-4、weight_decay=0.01、20 epochs、batch=64、seed=42。两组 token 长度分别为 65/17。固定复用第三周 CIFAR 索引；各组 experiment_dir 使用 `experiments/vit_patch_size/week5/runs/patch4` 或 `patch8`，checkpoint 位于 `outputs/vit_patch4` / `outputs/vit_patch8`。若短运行测时后统一调整预算，保留实际配置。best 按验证 accuracy 选择，持平保留较早一次，last 为最后一轮。两组记录独立初始化还是复制公共层；复制时显式排除形状不同的 Patch/位置参数，不能直接套用第三周对所有共有键形状一致的加载规则。随机增强与 dropout 的实现和单种子局限见逐日指南。
 
 复用边界见[Day 2 模块组合](../../../docs/week5.md#encoder-reuse)：ViT 复用第四周 EncoderBlock 的类，创建两个新的 Block；CLS、可学习位置和堆叠后的最终 LayerNorm 由 ViT 管理。forward 中位置相加一次、最终 LayerNorm 一次，Block 内部 norm1/norm2 保留；Attention 为双向。

@@ -1,6 +1,6 @@
 # 第四周逐日学习指南：手写 Attention 与 Transformer Encoder
 
-> 更新日期：2026-10-25<br>
+> 更新日期：2026-10-27<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-2)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：实现可复用多头 Attention、Mask、LayerNorm、FFN、位置编码和 Encoder，通过形状、归一化、梯度、未来隔离和官方参考对照。  
@@ -54,7 +54,21 @@ python -m pip check
 
 ## 固定条件与接口约定
 
+<a id="attention-shapes"></a>
+本周把输入看作一批“向量序列”。token 是序列中的一个位置：后续可以对应一个文字单位或图像 Patch，本周先用随机向量练习，不要求真实文本。
+
+| 符号 / 参数 | 含义 | 起始例子 |
+| --- | --- | --- |
+| B | 一批序列的条数 | 2 条序列 |
+| T | 每条序列的 token 数 | 每条有 8 个位置 |
+| C / embed_dim | 每个 token 的特征向量长度 | 每个位置有 32 个数，不是 32 个类别 |
+| heads / num_heads / h | 注意力头数 | 4 个头 |
+| head_dim / d / d_k | 一个头的特征长度，本轮 Q/K/V 一致 | `C/heads=32/4=8` |
+| FFN hidden / ffn_hidden_dim | 前馈网络中间层的特征长度 | 128，即 4C；不是 token 数 |
+
 教学模块统一输入 `[B,T,C]`，起始 B=2、T=8、C=32、heads=4、head_dim=8、FFN hidden=128；要求 C 能被 heads 整除。参考检查 dropout=0、相同 dtype、相同权重和输入。Encoder 使用 pre-LN：`x=x+Attention(LN(x))`，再 `x=x+FFN(LN(x))`；与原论文 post-LN 的位置区别要能说明。参考 `nn.TransformerEncoderLayer` 时设置 batch_first=True、norm_first=True、activation='gelu'，对齐 eps、bias 和 FFN 维度。
+
+LN 是 LayerNorm，FFN 是 Feed-Forward Network（前馈网络）。pre-LN 表示先归一化再进入 Attention/FFN，post-LN 表示在子层输出与残差相加之后归一化。`batch_first=True` 表示批次轴放第一位，采用 `[B,T,C]`；`norm_first=True` 对应 pre-LN。dropout 是训练时随机置零部分元素的操作，dropout=0 表示关闭，避免随机性干扰数值对照。
 
 自写布尔 Mask 统一约定 True=屏蔽，在 softmax 前填 -inf；causal mask 为 `[T,T]` 严格上三角，padding mask 为 `[B,T]`，广播到 key 维。`nn.MultiheadAttention` 布尔 Mask 的 True 也是屏蔽；`F.scaled_dot_product_attention` 则是 True=允许关注，对照时需要转换。本轮接口只接收上述布尔 Mask，浮点加性 Mask 不在教学接口范围。合并后每个 query 都必须有至少一个可关注 key（包括 padding query），否则明确拒绝；padding query 的输出不要求自动为零。
 
@@ -109,6 +123,8 @@ python -m pip check
 
 取一个 query，令 Q 全零、K 任意，V 三行为 `[1,0]`、`[3,2]`、`[5,4]`。scores 全为 0，softmax 后每个 key 权重为 1/3，输出应为 `[3,2]`。
 
+Q（query，查询）表示当前要汇集信息的位置，K（key，键）用于与 Q 比较得到匹配分数，V（value，值）提供真正被加权相加的内容。这里的 K 是一个张量名称，不是第三周的卷积核大小。每个 Q 向量与每个 K 向量做点积，得到一行分数；对这一行做 softmax，再用权重对 V 的各行加权。例子只有一个 query、三个 key/value，每个向量含两个数，所以输出是一个含两个数的向量：`[(1+3+5)/3,(0+2+4)/3]=[3,2]`。
+
 ```text
 Q                [1,2]
 K / V            [3,2]
@@ -132,6 +148,8 @@ output = weights @ V
 ```
 
 打印 scores.shape、weights.shape、output.shape。softmax 输出每行非负、和约为 1；不要沿 query 维归一化。
+
+对一般批次，Q 为 `[B,T_q,d]`、K/V 为 `[B,T_k,d]`，T_q 是查询数、T_k 是可供关注的位置数；自注意力中两者都为 T。`K.transpose(-2,-1)` 只交换最后两轴，得到 `[B,d,T_k]`，不交换 batch 轴；矩阵乘法得到 `[B,T_q,T_k]`。`dim=-1` 指最后一轴，即固定一个 query 后沿所有 key 归一化。再乘 `[B,T_k,d]` 的 V，输出为 `[B,T_q,d]`。单头例子中 d=2，缩放项就是 sqrt(2)，不是 sqrt(T)。
 
 #### 第三步：理解缩放而非只背公式
 
@@ -199,6 +217,8 @@ Q @ K.transpose(-2,-1)[2,2,3,3]
 ```
 
 transpose 后内存可能不连续，合并时用 contiguous().view 或 reshape，不能只改形状而漏掉头/序列轴的交换。
+
+`reshape(B,T,heads,head_dim)` 把原先 C 个特征分成 heads 组，不会自动把头轴挪到序列轴之前；所以还需要 `transpose(1,2)`。合并时反过来：先从 `[B,heads,T,head_dim]` 用 `transpose(1,2)` 回到 `[B,T,heads,head_dim]`，再 `reshape(B,T,C)`。直接把前者 reshape 成 `[B,T,C]` 虽可能不报错，但会混淆不同头和位置的排列。
 
 #### 第二步：明确模块接口
 
@@ -311,6 +331,8 @@ python -m pytest tests/test_attention.py -q
 
 本项目 True 表示屏蔽，T=4 时为：
 
+Mask 是标记“哪些位置不允许关注”的布尔表。causal（因果）Mask 用来阻止读取未来位置；padding 是把不同长度的序列补到相同长度，padding Mask 标记那些补出来、没有真实内容的 key。表中的行是当前 query，列是候选 key，位置编号从 0 开始；下表 F/T 分别是 False/True。
+
 ```text
 query\key  0 1 2 3
 0          F T T T
@@ -407,6 +429,8 @@ python -m pytest tests/test_attention.py -q
 
 输入 `[1,3]`，均值为 2，按 C 求平均的方差为 1；gamma=1、beta=0 时输出约为 `[-1,1]`，eps=1e-5 会使数值略有偏差。
 
+本例只有两个特征，因此 C=2：均值 `(1+3)/2=2`，方差 `((1-2)^2+(3-2)^2)/2=1`。gamma（γ）是可学习缩放，beta（β）是可学习偏移，均为长度 C 的向量；上面的 1/0 表示它们的每个元素分别初始化为 1/0。eps（ε）是加到方差上的小正数 `1e-5=0.00001`，防止除零。`correction=0` 表示方差除以 C，不用 C-1；`keepdim=True` 保留统计后的长度 1 维度，方便与 `[B,T,C]` 输入广播计算。
+
 ```text
 mean = x.mean(dim=-1, keepdim=True)
 var  = ((x - mean) ** 2).mean(dim=-1, keepdim=True)
@@ -493,10 +517,14 @@ python -m pytest tests/test_layernorm.py tests/test_encoder.py -q
 
 #### 第一步：按位置公式生成编码
 
+下面 PE 是 positional encoding（位置编码）；pos 是 token 位置，取 0、1、2……；C 是特征长度；i 是通道对的编号，取 `0..C/2-1`。每对通道用同一分母，偶数下标 2i 放正弦，奇数下标 2i+1 放余弦。10000 是这套编码选用的固定尺度，`^` 在下面数学式中表示乘方，Python 应写 `**`。
+
 ```text
 PE(pos,2i)   = sin(pos / 10000^(2i/C))
 PE(pos,2i+1) = cos(pos / 10000^(2i/C))
 ```
+
+例如 C=4，有 i=0、1 两对通道，分母分别为 1 和 100。位置 pos=1 的编码是 `[sin(1),cos(1),sin(0.01),cos(0.01)]`，角度以弧度计算；位置 pos=0 则为 `[0,1,0,1]`。最终把每个位置的编码加到该位置的 token 特征上，不是拼接出更多特征。
 
 本周只支持偶数 C。位置 0 的偶数通道为 0、奇数通道为 1，可以作最小数值检查；不同 token 位置应获得不同编码。
 

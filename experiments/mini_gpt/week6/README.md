@@ -33,6 +33,8 @@ python -m pip check
 
 ## 配置与结果
 
+V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允许输入的最大 token 数。一步 step 是一次批次更新；随机采样 2000 步不等于把整份语料遍历 2000 遍。NLL 是正确目标概率的负自然对数，PPL=exp(平均 NLL)；具体定义与形状见[本周符号表](../../../docs/week6.md#lm-shapes)。
+
 相同字符 tokenizer、原文划分、context=128、batch=16、seed=42、AdamW lr=3e-4、weight_decay=0.01、2000 steps、每 200 步验证。GPT 为 2 层/C128/4 heads/FFN512/dropout0.1；Bigram 为 V×V 转移 logits。各组 experiment_dir 为本周 `runs/bigram`、`runs/gpt`，checkpoint 位于项目根 `outputs/bigram_char`、`outputs/mini_gpt`。测试留到第七周；同 tokenizer 下才比较 token 级 loss/PPL。
 
 从文本 / tokenizer 文件读取到 token IDs、sample_batch 和语言训练函数的接线见[Day 2](../../../docs/week6.md#text-inputs)；train_step / evaluate_lm 放在 src/petvision/training/lm_trainer.py。last 在验证时点和最终步保存，恢复以文件中的 step 为准。

@@ -1,6 +1,6 @@
 # 第三周逐日学习指南：CNN、ResNet 与 BN / 残差对照
 
-> 更新日期：2026-10-25<br>
+> 更新日期：2026-10-27<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写 CNN、BasicBlock 和 CIFAR 版 ResNet18，完成 BN on/off 与同深宽残差 on/off 两类对照，保留统一划分供第五周复用。  
@@ -65,6 +65,21 @@ CIFAR-10 官方 50,000 条训练数据固定划分 45,000/5,000，种子 42，�
 
 CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool，最后 GAP→Linear(128,10)；BN 开关只替换归一化，同一对中卷积 bias 均保持 True。ResNet18 用 [2,2,2,2] 个 BasicBlock、通道 64/128/256/512，CIFAR stem=3×3,stride=1,padding=1，没有初始 maxpool。四组从零训练，起始 batch=64、AdamW lr=1e-3、weight_decay=1e-4、20 epochs、FP32；先短运行测时，再冻结两组对照的预算。显存不足可统一减小同一对的 batch，正式结果需注明预算变化。测试集保留到第五周。
 
+<a id="cnn-terms"></a>
+本周缩写先按下面理解，具体实现放在各天的步骤中：
+
+| 名称 | 本项目中的具体含义 |
+| --- | --- |
+| CNN / Conv | 卷积神经网络 / 卷积层；沿图片空间滑动窗口提取特征 |
+| BN | Batch Normalization，批归一化；本周用 BatchNorm2d 按通道处理卷积输出 |
+| Pool / GAP | 局部池化 / 全局平均池化；GAP 将每个通道的全部 H×W 个位置平均成一个数 |
+| BasicBlock / residual / shortcut | 基本残差块 / 残差连接 / 旁路；主分支算 F(x)，旁路提供与之相加的输入或投影结果 |
+| stem / stage / depth | 网络入口部分 / 同一阶段的一组块 / 深度；[2,2,2,2] 表示四个 stage 各有两个块 |
+| on / off / variant | 启用 / 关闭 / 实验变体；例如 cnn_bn_off 是关闭 BN 的那一组 |
+| FP32 / lr | 32 位浮点数 float32 / learning rate 学习率；`1e-3=0.001` |
+
+“冻结预算”指短检查后确定正式使用的 epoch、batch 等条件，并让同一对实验保持一致，不是冻结模型参数停止学习。“对齐”指按步骤把结构或初始参数逐项对应并核对数值，不能只因为设置相同 seed 就视为完成。
+
 ## 六天总览
 
 | 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
@@ -111,15 +126,99 @@ CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool�
 
 #### 第一步：先手算空间尺寸
 
-普通 dilation=1 时，输出尺寸为 `floor((H+2P-K)/S)+1`。对 H=32、K=3、P=1，S=1 得 32、S=2 得 16；再用一个 nn.Conv2d 的输出验证。
+本步做一个小练习：先计算图片经过卷积和池化后的形状，再用 PyTorch 检查。暂时使用随机图片，不需要下载 CIFAR-10 或训练模型。可新建临时脚本 `tmp/conv_shapes.py` 保存下方验证代码；后续的数据检查入口仍按第二步创建。
+
+**1. 先读懂输入形状。**
+
+CIFAR-10 的图片有 RGB 三个通道，高度和宽度都是 32 像素。一批图片的形状写作 `[B,C,H,W]`，这里就是 `[B,3,32,32]`：
+
+| 符号 | 含义 | 本例取值 |
+| --- | --- | --- |
+| B | batch size，一批图片的张数 | 验证代码取 4 |
+| C | channels，通道数 | 输入为 3，分别对应 RGB |
+| H | height，图片或特征图的高度 | 输入高度为 32 像素 |
+| W | width，图片或特征图的宽度 | 输入宽度为 32 像素 |
+
+注意：形状中的数字要按位置理解。`[B,32,32,32]` 的第一个 32 是通道数，后两个 32 才是高度和宽度。
+
+**2. 理解 H=32、K=3、P=1、S=1 分别是什么意思。**
+
+下面先计算高度方向，假设输入高宽相同，卷积核为正方形，高宽方向的 padding、stride 也相同：
+
+| 符号 | 含义 | 对应的 PyTorch 参数 | 本例的具体意思 |
+| --- | --- | --- | --- |
+| H | 输入高度 | 来自输入 Tensor 的形状 | H=32：输入有 32 行像素 |
+| K | 卷积核的空间边长 | `kernel_size=3` | K=3：卷积窗口覆盖 3×3 的空间区域 |
+| P | 每一侧的填充宽度 | `padding=1` | P=1：上下左右各补 1 圈零；高度从 32 临时补到 34，宽度也补到 34 |
+| S | 窗口移动的步幅 | `stride=1` | S=1：窗口每次沿当前方向移动 1 格；S=2 则每次移动 2 格 |
+
+本步使用默认的 `dilation=1`，表示卷积核的相邻采样点之间不留间隔。输出高度的公式为：
 
 ```text
-输入                 [B,3,32,32]
-Conv(3→32,K3,P1)     [B,32,32,32]
-MaxPool(K2,S2)       [B,32,16,16]
+H_out = floor((H + 2×P - K) / S) + 1
 ```
 
-解释通道变化与空间尺寸变化分别由什么参数控制。卷积输出通道数不会自动等于类别数，类别映射由最后的分类头完成。
+`floor` 表示向下取整，例如 `floor(15.5)=15`。`2×P` 是因为高度方向上方和下方各填充 P 行；宽度方向同理。公式可以理解为：填充后的高度减去窗口高度，得到窗口还能移动的距离；除以步幅并向下取整，得到可移动的次数；再加上初始位置的一次，就得到输出位置数。
+
+把 **H=32、K=3、P=1、S=1** 代入：
+
+```text
+H_out = floor((32 + 2×1 - 3) / 1) + 1
+      = floor(31 / 1) + 1
+      = 32
+```
+
+输入宽度 W 也是 32，所以把公式中的 H 换成 W，得到 `W_out=32`。若仅把步幅改为 **S=2**：
+
+```text
+H_out = floor((32 + 2×1 - 3) / 2) + 1
+      = floor(15.5) + 1
+      = 16
+```
+
+宽度同样变为 16。这里的公式只计算空间尺寸，不计算输出通道数；输出通道数由 `out_channels` 单独指定。
+
+**3. 把参数和完整形状对应起来，再计算池化。**
+
+`nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1)` 接收 3 通道输入，输出 32 个特征通道；根据刚才的计算，高宽保持为 32。这里的 32 个通道不是 32 个类别，最终类别分数由后面的分类头产生。
+
+在它后面接 `nn.MaxPool2d(kernel_size=2, stride=2)`，池化会在每个通道内用 2×2 窗口取最大值，默认 padding=0、ceil_mode=False。高度计算为 `floor((32-2)/2)+1=16`，宽度同样为 16，通道数保持不变：
+
+```text
+输入                                  [B,3,32,32]
+Conv2d(3→32, K=3, P=1, S=1)           [B,32,32,32]
+MaxPool2d(K=2, S=2, P=0)              [B,32,16,16]
+```
+
+**4. 用随机输入验证手算结果。**
+
+把下面代码写进 `tmp/conv_shapes.py`：
+
+```python
+import torch
+from torch import nn
+
+images = torch.randn(4, 3, 32, 32)
+conv_s1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
+conv_s2 = nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1)
+pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+with torch.no_grad():
+    output_s1 = conv_s1(images)
+    output_s2 = conv_s2(images)  # 分别作用于原始图片，不串联两个卷积。
+    pooled = pool(output_s1)   # 池化接在 stride=1 的卷积后面。
+
+print("输入：", images.shape)
+print("stride=1 卷积：", output_s1.shape)
+print("stride=2 卷积：", output_s2.shape)
+print("stride=1 卷积后池化：", pooled.shape)
+
+assert output_s1.shape == (4, 32, 32, 32)
+assert output_s2.shape == (4, 32, 16, 16)
+assert pooled.shape == (4, 32, 16, 16)
+```
+
+在项目根目录运行 `python tmp/conv_shapes.py`。输出与手算一致、三个断言通过，并能解释 H/K/P/S 及通道数的含义，就完成了这一步。随后再做 CIFAR-10 下载与划分。
 
 <a id="cifar-data"></a>
 #### 第二步：下载 CIFAR-10，明确加载函数与预处理
@@ -242,6 +341,10 @@ Flatten + Linear128→10         [B,10]
 其中 GAP 指全局平均池化，将每个通道的空间位置取平均；Pool 使用 `nn.MaxPool2d(2,2)`，GAP 使用 `nn.AdaptiveAvgPool2d(1)`，随后 `torch.flatten(x,1)` 保留 batch 维。类名约定为 `CNN`，构造参数接收 num_classes 和 use_bn；第三周训练入口按 model.name 选择它并传入配置字段。
 
 `use_bn=False` 时以 Identity 替换 BN。两组 Conv 的 bias 都保持 True，确保这个设置不会随 BN 开关一起变化。
+
+落实到第一段代码，就是 `Conv2d(3,32,3,padding=1)` → `BatchNorm2d(32)` 或 `Identity()` → ReLU → `MaxPool2d(2,2)`。三层卷积均用 kernel_size=3、stride=1、padding=1，保持各自输入的高宽；只有前两次池化缩小尺寸。第三段输出 `[B,128,8,8]`，GAP 把每个通道的 64 个数平均，得到 `[B,128,1,1]`，展平为 `[B,128]` 后再分类。
+
+BN 输入为 `[B,C,H,W]` 时，每个通道用 B×H×W 个值统计均值和方差，输出形状不变。默认设置下 train 模式使用当前批次统计并更新 running_mean/running_var；eval 模式使用已积累的统计。gamma、beta 是每通道一对可学习的缩放和偏移参数；running statistics 是保存并随设备迁移的 buffer，不由优化器求梯度更新。Identity 原样返回输入，表示该位置不做 BN。
 
 按本结构计算：BN off 参数量为 94538，BN on 多 448 个 gamma/beta 参数，为 94986；running mean/variance 属于 buffer，不计入 parameters。若实现结构变化，重新列明差异。
 
@@ -396,6 +499,8 @@ with (experiment_dir / "run_summary.json").open("w", encoding="utf-8") as file:
 
 CUDA allocated 峰值包含已加载模型等当前 Torch 分配，不等于整张显卡使用量；CPU 对应值为 null。计时使用 [time.perf_counter](https://docs.python.org/zh-cn/3.12/library/time.html#time.perf_counter)，GPU 前后同步使用 [torch.cuda.synchronize](https://docs.pytorch.org/docs/stable/generated/torch.cuda.synchronize.html)。用于确定预算的单 epoch 短运行也按同样方法测量，但结果只打印，正式 summary 来自重新初始化后的完整运行。Day 6 的 train_seconds 从各自 run_summary.json 读取，不能靠回忆填写。
 
+GPU 运算可以异步提交，Python 执行到下一行时 GPU 可能还没算完；synchronize 会等待已提交运算完成，让起止计时包含实际计算。reset_peak_memory_stats 重置的是“峰值记录”，不释放模型或数据。max_memory_allocated 返回字节数，除以 `1024**2` 换算成 MiB；因此字段写 peak_allocated_mib，而不是没有单位的 memory。
+
 ### 运行与验收
 
 ```bash
@@ -447,6 +552,8 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml
 创建 `src/petvision/models/cv/resnet.py`，顶层写 `import torch` 和 `from torch import nn`，在其中定义 `BasicBlock(in_channels, out_channels, stride=1, use_residual=True)`。今天先实现单块，明天在同一文件增加 ResNet18；测试从 `petvision.models.cv.resnet` 导入 BasicBlock。
 
 主分支按两层 3×3 卷积写出，第一层负责 stride；第二层保持尺寸。BN 后的 ReLU 位置要与参考一致，第二层输出在残差相加前不先 ReLU。
+
+两层卷积都用 padding=1；第一层将 in_channels 变为 out_channels，使用传入 stride，第二层接收并输出 out_channels，stride=1。旁路 shortcut 在通道相同且 stride=1 时用 Identity；否则用 `Conv2d(in_channels,out_channels,1,stride=stride,bias=False)` 加 `BatchNorm2d(out_channels)`。这个 1×1 卷积称为 projection（投影）：它调整通道数，并按相同步幅缩小高宽，使两条路径能逐元素相加。主分支卷积也用 bias=False，与 Day4 的 ResNet 参考保持一致。
 
 ```text
 x ── Conv/BN/ReLU ── Conv/BN ── + ── ReLU
@@ -540,6 +647,8 @@ GAP + classifier   [B,10]
 ```
 
 每个 stage 仅第一个 block 在需要时 stride=2；其余块 stride=1。GAP 后使用 flatten(start_dim=1)，保留 batch 维。
+
+例如 stage2 的第一个块是 `BasicBlock(64,128,stride=2)`，把 `[B,64,32,32]` 变为 `[B,128,16,16]`；第二个是 `BasicBlock(128,128,stride=1)`，保持后者形状。stage1 不下采样，stage3/4 以同样方式在首块缩小高宽。ResNet18 的“18”通常按入口 1 层卷积、8 个块各 2 层卷积、最后 1 层 Linear 计数，不表示有 18 个 BasicBlock。
 
 #### 第二步：同步修改参考网络
 
