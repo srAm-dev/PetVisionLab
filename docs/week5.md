@@ -292,7 +292,7 @@ ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列�
 
 模型选择添加 vit，配置明确 image_size、patch_size、embed_dim、depth、heads、dropout；split_path 原样复用第三周文件。通过短运行后再冻结预算。
 
-创建 `configs/cv/vit_cifar10.yaml`。数据、增强与归一化延续第三周，以下为完整起始配置：
+创建 `configs/cv/vit_cifar10.yaml`。数据、增强与归一化延续第三周的 [v2 预处理](week3.md#cifar-v2-transforms)：训练入口和评估入口复用已有 CIFAR 分支及 `build_cifar10_loaders`，无需为 ViT 另建一套 transform。训练顺序为 v2.ToImage → v2.RandomCrop → v2.RandomHorizontalFlip → v2.ToDtype(torch.float32,scale=True) → v2.Normalize；验证和测试去掉两种随机增强。mean/std、裁剪 padding 和翻转开关继续读取下方 data 配置，输出为 float32 的 `[B,3,32,32]`，再由 ViT 切分 Patch。以下为完整起始配置：
 
 ```yaml
 model:

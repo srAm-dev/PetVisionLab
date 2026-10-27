@@ -46,6 +46,8 @@ P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS
 
 复用边界见[Day 2 模块组合](../../../docs/week5.md#encoder-reuse)：ViT 复用第四周 EncoderBlock 的类，创建两个新的 Block；CLS、可学习位置和堆叠后的最终 LayerNorm 由 ViT 管理。forward 中位置相加一次、最终 LayerNorm 一次，Block 内部 norm1/norm2 保留；Attention 为双向。
 
+数据处理复用第三周的 [torchvision.transforms.v2 流程](../../../docs/week3.md#cifar-v2-transforms)：ToImage 保留 uint8 像素，训练时加入随机裁剪和翻转，再用 ToDtype(torch.float32,scale=True) 缩放、Normalize 归一化；验证和测试省略随机增强。六个视觉变体使用相同的确定性评估预处理。
+
 统一指标接入 evaluate.py 的步骤见[Day 4](../../../docs/week5.md#classification-metrics)；冻结清单写在本 README，列出六个变体实际的配置、best 路径和验证结果。
 
 | 文件或目录 | 内容与产生时间 |

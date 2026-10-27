@@ -45,7 +45,7 @@ BN 是批归一化，residual 是残差连接；on/off 表示启用 / 关闭。v
 
 CIFAR-10 加载函数、两个 transform 与检查脚本的接线见[Day 1 数据步骤](../../../docs/week3.md#cifar-data)，沿用第二周的 JSON / DataLoader 方法，分别处理 45k/5k/10k 三份数据。
 
-配置中的 validation_size 和 num_workers 传给 build_cifar10_loaders，归一化 / 增强参数用于创建 transform；正式划分固定为 45000/5000。逐轮追加 history、耗时与峰值显存保存到 run_summary.json，具体见[资源记录步骤](../../../docs/week3.md#training-resources)。
+配置中的 validation_size 和 num_workers 传给 build_cifar10_loaders，归一化 / 增强参数用于创建 `torchvision.transforms.v2` 变换；正式划分固定为 45000/5000。训练采用 ToImage → RandomCrop → RandomHorizontalFlip → ToDtype(torch.float32,scale=True) → Normalize；验证和测试去掉随机裁剪与翻转。完整示例与数值范围见 [v2 预处理步骤](../../../docs/week3.md#cifar-v2-transforms)。逐轮追加 history、耗时与峰值显存保存到 run_summary.json，具体见[资源记录步骤](../../../docs/week3.md#training-resources)。
 
 初始状态按[训练前保存步骤](../../../docs/week3.md#initial-state)产生：Day 2 写 `outputs/cnn_bn_on/initial.pt`，Day 4 写 `outputs/resnet_on/initial.pt`，均在正式训练的第一次前向前保存，step=0。smoke/overfit 的模型不用于这些文件。
 

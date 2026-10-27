@@ -61,7 +61,7 @@ python -m pip check
 
 ## 固定条件与接口约定
 
-CIFAR-10 官方 50,000 条训练数据固定划分 45,000/5,000，种子 42，索引保存到 `experiments/cnn_vs_resnet/week3/cifar10_split.json`，第五周原样复用。训练用 RandomCrop(32,padding=4)、RandomHorizontalFlip、ToTensor、固定 mean/std=(0.5,0.5,0.5)；验证只用后两项。分别创建训练/验证 dataset 实例再套固定索引，避免共享随机增强。
+CIFAR-10 官方 50,000 条训练数据固定划分 45,000/5,000，种子 42，索引保存到 `experiments/cnn_vs_resnet/week3/cifar10_split.json`，第五周原样复用。从本周开始，自己构建的分类图像预处理统一使用 `torchvision.transforms.v2`；第八周预训练 CLIP/VLM 使用各自配套的 processor。训练顺序为 ToImage → RandomCrop(32,padding=4) → RandomHorizontalFlip → ToDtype(torch.float32,scale=True) → Normalize，固定 mean/std=(0.5,0.5,0.5)；验证和测试只用 ToImage → ToDtype → Normalize。分别创建训练/验证 dataset 实例再套固定索引，避免共享随机增强。
 
 CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool，最后 GAP→Linear(128,10)；BN 开关只替换归一化，同一对中卷积 bias 均保持 True。ResNet18 用 [2,2,2,2] 个 BasicBlock、通道 64/128/256/512，CIFAR stem=3×3,stride=1,padding=1，没有初始 maxpool。四组从零训练，起始 batch=64、AdamW lr=1e-3、weight_decay=1e-4、20 epochs、FP32；先短运行测时，再冻结两组对照的预算。显存不足可统一减小同一对的 batch，正式结果需注明预算变化。测试集保留到第五周。
 
@@ -101,6 +101,7 @@ CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool�
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [CIFAR-10 教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/blitz/cifar10_tutorial.html) | 加载 CIFAR-10、卷积网络输入与类别 | 查看图片与一个批次 |
+| [Transforms v2（官方英文）](https://docs.pytorch.org/vision/stable/transforms.html) | v2 推荐用法、图像类型与像素范围 | 按本页第二步建立训练 / 验证预处理 |
 | [Conv2d 文档（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.nn.Conv2d.html) | kernel、stride、padding 与输出形状 | 手算一次卷积尺寸 |
 
 ### 时间与操作
@@ -221,28 +222,45 @@ assert pooled.shape == (4, 32, 16, 16)
 在项目根目录运行 `python tmp/conv_shapes.py`。输出与手算一致、三个断言通过，并能解释 H/K/P/S 及通道数的含义，就完成了这一步。随后再做 CIFAR-10 下载与划分。
 
 <a id="cifar-data"></a>
+<a id="cifar-v2-transforms"></a>
 #### 第二步：下载 CIFAR-10，明确加载函数与预处理
 
 今天把第二周的 MNIST 数据加载流程扩展到 **CIFAR-10**：三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 `src/petvision/data/datasets.py` 新增 `build_cifar10_loaders(data_dir, split_path, batch_size, seed, train_transform, val_transform, num_workers=0, validation_size=5000)`，返回 train_loader、val_loader、test_loader。两个 transform 由调用者传入，便于正式训练使用增强、过拟合检查改用确定性变换；validation_size 和 num_workers 都由配置传入，不能只接收 batch_size。
 
-先在 `scripts/inspect_cifar10.py` 的 main 中建立本日条件：data_dir 为 `datasets/raw`，split_path 为本周 `cifar10_split.json`，batch_size=64、seed=42。在顶层导入 torchvision.transforms，main 中创建：
+先在 `scripts/inspect_cifar10.py` 的 main 中建立本日条件：data_dir 为 `datasets/raw`，split_path 为本周 `cifar10_split.json`，batch_size=64、seed=42。在顶层导入 torch 和 `from torchvision.transforms import v2`，main 中创建以下两个变换；下方导入语句仍放在文件顶层：
 
 ```python
-from torchvision import transforms
+import torch
+from torchvision.transforms import v2
 
-train_transform = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+train_transform = v2.Compose([
+    v2.ToImage(),
+    v2.RandomCrop(32, padding=4),
+    v2.RandomHorizontalFlip(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
 ])
-val_transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+val_transform = v2.Compose([
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
 ])
 ```
 
-`RandomCrop` 先在四周填充再随机裁回 32×32；`RandomHorizontalFlip` 随机左右翻转；后两项沿用第二周的张量转换和数值归一化，但 mean/std 各有三个值，对应 RGB 三个通道。
+这条流程处理 CIFAR10 返回的 RGB PIL 图片，逐项含义如下：
+
+| 操作 | 具体作用与输出 |
+| --- | --- |
+| `v2.Compose([...])` | 按列表顺序执行各个变换 |
+| `v2.ToImage()` | 转为 `[3,32,32]` 的图像 Tensor（tv_tensors.Image 是 Tensor 的子类）；本题仍为 uint8、0–255，不缩放像素 |
+| `v2.RandomCrop(32,padding=4)` | 上下左右各补 4 像素，从 40×40 中随机裁回 32×32；只用于训练 |
+| `v2.RandomHorizontalFlip()` | 默认以 0.5 的概率左右翻转；只用于训练 |
+| `v2.ToDtype(torch.float32,scale=True)` | 将本题 uint8 图像转为 float32，并从 0–255 缩放到 0–1；只转换 dtype 而省略 scale=True 不会完成这次数值缩放 |
+| `v2.Normalize(mean,std)` | 按通道计算 `(x-mean)/std`；这里三个通道都使用 0.5，所以范围变为约 [-1,1] |
+
+张量转换分成 ToImage 和 ToDtype 两步，详见 [ToImage](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.v2.ToImage.html)、[ToDtype](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.v2.ToDtype.html)。不使用已弃用的 [v2.ToTensor](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.v2.ToTensor.html)。第二周已完成的 MNIST 实验保留当时的实现与记录；本周新增 CIFAR 路径使用上述 v2 流程，后续 ViT 也复用它。引用教程若仍展示旧版写法，数据来源与模型讲解仍可参考，预处理按本页实现。
+
+先检查一张图片：ToImage 后 dtype 为 uint8，ToDtype 后为 float32 且值在 [0,1]，Normalize 后在 [-1,1]。训练增强发生在 uint8 阶段，Normalize 前再转浮点数；不要在已经缩放的图片上重复除以 255。使用原有 DataLoader 即可将图片组成 `[B,3,32,32]` 批次，无需为本练习自定义 collate_fn。
 
 在数据函数内用传入的参数创建原始数据实例；首次下载通过 download=True 明确开启。训练 / 验证实例分别持有各自的 transform：
 
@@ -389,7 +407,7 @@ output_dir: outputs/cnn_bn_on
 
 同时把第二周“仅支持 mlp / mnist / adam”的入口校验改成实际已实现的选择分支；未知名称仍报错。只新增 CNN 创建代码而保留旧的拒绝条件，会在创建模型之前退出。当前 dtype 仍限定 float32；CIFAR 的 image_size 当前只支持 32，先明确校验，不能接收其他值却继续按 32 训练。
 
-把 Day 1 的固定 transform 改为读取 data.normalize 的 mean/std、augmentation.random_crop_padding 和 random_horizontal_flip：padding=0 时省略随机裁剪，flip=false 时省略翻转；其他训练设置按配置创建。val_transform 始终只包含 ToTensor 和 Normalize。下面是 main 中 CIFAR 分支的调用，两个 transform 已先建立：
+把 Day 1 的固定 transform 改为读取 data.normalize 的 mean/std、augmentation.random_crop_padding 和 random_horizontal_flip；在 train_cv.py 和 evaluate.py 顶层均导入 `from torchvision.transforms import v2`。两个变换仍用 v2.Compose：训练先 ToImage，再按配置加入 v2.RandomCrop / v2.RandomHorizontalFlip，最后 ToDtype(torch.float32,scale=True) 和 v2.Normalize。padding=0 时省略随机裁剪，flip=false 时省略翻转；flip=true 时使用 RandomHorizontalFlip 默认概率 0.5，不表示每张都翻转。val_transform 始终只包含 v2.ToImage、v2.ToDtype(torch.float32,scale=True) 和 v2.Normalize。下面是 main 中 CIFAR 分支的调用，两个 transform 已先建立：
 
 ```python
 data_cfg = cfg["data"]

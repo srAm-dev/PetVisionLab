@@ -185,7 +185,7 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.tx
 <a id="clip-inputs"></a>
 #### 第三步：创建 CLIP 对象并处理图文输入
 
-图像由 CLIP processor 调整尺寸和归一化，文本由配套 tokenizer 编码。不能把 CNN 的 ToTensor/Normalize 结果再当原图交给 CLIP processor 重复预处理。
+图像由 CLIP processor 调整尺寸和归一化，文本由配套 tokenizer 编码。本周使用预训练模型配套的 processor；第三、五周的 v2 分类预处理不适用于直接生成它的输入。创建原始 CIFAR10 数据集时设置 `transform=None`，取出的 RGB PIL 图片直接传给 processor，不先经过 v2.ToDtype / v2.Normalize，也不添加训练用随机增强，避免重复缩放和归一化。Day 3 的 VLM 同样把 RGB PIL 图片交给其配套 processor，由它按模型要求处理。
 
 ```text
 图片批次 → image encoder → image features [B,D]

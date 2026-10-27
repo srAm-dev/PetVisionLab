@@ -1,6 +1,6 @@
 # PetVision-Lab：Python / 数学基础 → CNN → ResNet → Transformer → ViT → Mini-GPT → LLM / VLM
 
-> **版本**：v1.16 · **更新日期**：2026-10-27<br>
+> **版本**：v1.17 · **更新日期**：2026-10-27<br>
 > **适用背景**：Python 实践与深度学习理论都需要补充，优先理解原理和亲手实现。  
 > **时间预算**：8 周，每周 30 小时，总计约 240 小时；每周 24 小时明确任务 + 6 小时补基础、调试和复盘。  
 > **算力分工**：本地笔记本 RTX 4060 用于基础练习、视觉模型和 Mini-GPT；第二周已保存的环境检查记录显示总显存为 8.00 GiB。计划使用云端 48GB 显存 GPU 运行后期 LLM / VLM，云端型号与可用显存届时实测。  
@@ -199,6 +199,7 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 **主资料**
 
 - [PyTorch CIFAR-10 教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/blitz/cifar10_tutorial.html)。
+- [torchvision Transforms v2（官方英文）](https://docs.pytorch.org/vision/stable/transforms.html)：第三周起自建分类模型使用 v2；教程中的旧版预处理写法按[第三周示例](week3.md#cifar-v2-transforms)调整。
 - [ResNet 原论文](https://arxiv.org/abs/1512.03385)、[李沐论文精读索引](https://github.com/mli/paper-reading)。
 - [torchvision ResNet18](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html) 与 [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)：用于结构和数值对照。
 
@@ -821,6 +822,8 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --resume outp
 本地与云端分别记录环境；推理测量记录预热、batch、输入尺寸 / token 数与 GPU 同步方式，避免把加载耗时混入模型推理耗时。
 
 ### 10.4 数据划分与 Git 约定
+
+第三、五周的 CIFAR 分类预处理统一采用 `torchvision.transforms.v2`：ToImage → 训练时的随机裁剪与翻转 → ToDtype(torch.float32,scale=True) → Normalize；验证和测试省略随机增强。ToImage 不缩放像素，ToDtype 在本题中把 uint8 的 0–255 转为 float32 的 0–1，再按配置归一化。第八周预训练 CLIP/VLM 使用各自配套的 processor 处理原始图片，不叠加 CIFAR 分类预处理。第二周已完成的 MNIST 实现与实验记录保留原状。
 
 - MNIST 在官方训练集内固定划分训练 / 验证，官方测试集用于配置确定后的独立测试。
 - CIFAR-10 从官方训练集固定留出 5000 条验证数据，划分索引保存并供第 3–5 周所有视觉实验复用；测试集在第 5 周统一报告。
