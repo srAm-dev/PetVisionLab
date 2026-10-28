@@ -133,7 +133,7 @@ best 按验证准确率选择；本次最后一轮恰好最优，所以 best 和
 
 **第三步练习。** 草稿 `tmp/cv_trainer_rewrite.py` 使用新建 MLP 和两批合成数据，在 GPU 上各执行一次训练与验证。两次输出均为 `[8,10]`，loss 有限；训练后 6 个参数张量变化，验证后所有参数不变且输出不记录梯度。6 个张量对应三个 Linear 的 weight/bias，共含 235146 个标量参数；“张量变化”只要求其中至少一个元素变化。核心步骤由草稿重写，运行与断言部分在辅助下补齐，不据此宣称已完全独立掌握。tmp 被 Git 忽略，正式可复现检查以 tests 和 scripts 中的实现为准。
 
-Day 4 的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-configurable-interfaces)改造 MLP 和数据接口，验证默认值兼容及自定义参数生效，再写 YAML；第五步读取成字典，第六步将字段传给构造函数 / 数据函数。MLP 仍只接收 self 时不能使用 MLP(input_dim=...)；数据函数也需要先支持 validation_size、num_workers、mean、std。接口接通后再运行表中的 train_cv.py 检查模式。
+Day 4 当时的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-configurable-interfaces)改造 MLP 和数据接口，再写 YAML、读取配置并创建对象。跨周的数据加载接口迁移与检查结果统一记录在[第三周进度](../../cnn_vs_resnet/week3/README.md#progress)，操作方法见[第三周统一接口步骤](../../../docs/week3.md#unified-loader-interface)。上表中的命令不变，本周历史指标与配置保留原记录。
 
 完整 YAML 见[Day 4 配置示例](../../../docs/week2.md#mnist-config)，参数解析见[最小入口示例](../../../docs/week2.md#cli-config)。统一使用 `data.root`、`data.split_path`、`data.batch_size` 和 `training.learning_rate`；相对路径均从项目根目录解释。
 

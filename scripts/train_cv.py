@@ -7,6 +7,7 @@ import hashlib
 import matplotlib.pyplot as plt
 from itertools import islice 
 from torch.utils.data import Subset, DataLoader
+from torchvision import transforms
 from petvision.data.datasets import build_mnist_loaders
 from petvision.models.cv.mlp import MLP
 from petvision.training.cv_trainer import train_one_epoch, evaluate
@@ -82,15 +83,22 @@ def main():
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
+    normalize = cfg["data"]["normalize"]
+    eval_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=normalize["mean"], std=normalize["std"]),
+    ])
+    # 当前 MNIST 不做随机增强，训练与评估使用相同的确定性预处理。
+    train_transform = eval_transform
     train_loader, val_loader, _ = build_mnist_loaders(
         data_dir=cfg["data"]["root"],
         split_path=cfg["data"]["split_path"],
         batch_size=cfg["data"]["batch_size"],
         seed=cfg["training"]["seed"],
+        train_transform=train_transform,
+        eval_transform=eval_transform,
         validation_size=cfg["data"]["validation_size"],
         num_workers=cfg["data"]["num_workers"],
-        mean=cfg["data"]["normalize"]["mean"],
-        std=cfg["data"]["normalize"]["std"],
     )
     model_cfg = cfg["model"]
     model = MLP(

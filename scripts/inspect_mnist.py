@@ -2,16 +2,23 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
+from torchvision import transforms
 
 from petvision.data.datasets import build_mnist_loaders
 
 
 def main():
+    eval_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5,), std=(0.5,)),
+    ])
     train_loader, val_loader, test_loader = build_mnist_loaders(
         data_dir="datasets/raw",
         split_path="experiments/mnist_mlp/week2/mnist_split.json",
         batch_size=128,
         seed=42,
+        train_transform=eval_transform,
+        eval_transform=eval_transform,
     )
     print(len(train_loader.dataset), len(val_loader.dataset), len(test_loader.dataset))
     assert len(train_loader.dataset) == 55000

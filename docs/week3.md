@@ -1,6 +1,6 @@
 # 第三周逐日学习指南：CNN、ResNet 与 BN / 残差对照
 
-> 更新日期：2026-10-27<br>
+> 更新日期：2026-10-28<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写 CNN、BasicBlock 和 CIFAR 版 ResNet18，完成 BN on/off 与同深宽残差 on/off 两类对照，保留统一划分供第五周复用。  
@@ -61,7 +61,7 @@ python -m pip check
 
 ## 固定条件与接口约定
 
-CIFAR-10 官方 50,000 条训练数据固定划分 45,000/5,000，种子 42，索引保存到 `experiments/cnn_vs_resnet/week3/cifar10_split.json`，第五周原样复用。从本周开始，自己构建的分类图像预处理统一使用 `torchvision.transforms.v2`；第八周预训练 CLIP/VLM 使用各自配套的 processor。训练顺序为 ToImage → RandomCrop(32,padding=4) → RandomHorizontalFlip → ToDtype(torch.float32,scale=True) → Normalize，固定 mean/std=(0.5,0.5,0.5)；验证和测试只用 ToImage → ToDtype → Normalize。分别创建训练/验证 dataset 实例再套固定索引，避免共享随机增强。
+CIFAR-10 官方 50,000 条训练数据固定划分 45,000/5,000，种子 42，索引保存到 `experiments/cnn_vs_resnet/week3/cifar10_split.json`，第五周原样复用。从本周开始，新增的分类图像预处理统一使用 `torchvision.transforms.v2`，已有 MNIST 预处理保留原计算；第八周预训练 CLIP/VLM 使用各自配套的 processor。CIFAR 训练顺序为 ToImage → RandomCrop(32,padding=4) → RandomHorizontalFlip → ToDtype(torch.float32,scale=True) → Normalize，固定 mean/std=(0.5,0.5,0.5)；验证和测试只用 ToImage → ToDtype → Normalize。分别创建训练/验证 dataset 实例再套固定索引，避免共享随机增强。
 
 CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool，最后 GAP→Linear(128,10)；BN 开关只替换归一化，同一对中卷积 bias 均保持 True。ResNet18 用 [2,2,2,2] 个 BasicBlock、通道 64/128/256/512，CIFAR stem=3×3,stride=1,padding=1，没有初始 maxpool。四组从零训练，起始 batch=64、AdamW lr=1e-3、weight_decay=1e-4、20 epochs、FP32；先短运行测时，再冻结两组对照的预算。显存不足可统一减小同一对的 batch，正式结果需注明预算变化。测试集保留到第五周。
 
@@ -227,9 +227,62 @@ assert pooled.shape == (4, 32, 16, 16)
 
 <a id="cifar-data"></a>
 <a id="cifar-v2-transforms"></a>
-#### 第二步：下载 CIFAR-10，明确加载函数与预处理
+#### 第二步：统一加载接口，再准备 CIFAR-10 与预处理
 
-今天把第二周的 MNIST 数据加载流程扩展到 **CIFAR-10**：三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 `src/petvision/data/datasets.py` 新增 `build_cifar10_loaders(data_dir, split_path, batch_size, seed, train_transform, val_transform, num_workers=0, validation_size=5000)`，返回 train_loader、val_loader、test_loader。两个 transform 由调用者传入，便于正式训练使用增强、过拟合检查改用确定性变换；validation_size 和 num_workers 都由配置传入，不能只接收 batch_size。
+<a id="unified-loader-interface"></a>
+先把 MNIST 的预处理从加载函数中移到调用者，再按同一接口实现 CIFAR-10。按下面顺序修改加载函数、迁移调用处并执行检查；若已有实现，逐项核对即可。完成情况和实际检查结果记录在[第三周 README](../experiments/cnn_vs_resnet/week3/README.md#progress)。
+
+**1. 先确定两个函数共同接收什么、返回什么。**
+
+`build_mnist_loaders` 与 `build_cifar10_loaders` 使用相同的参数名称和顺序：
+
+```text
+data_dir, split_path, batch_size, seed, train_transform, eval_transform,
+validation_size=5000, num_workers=0
+```
+
+前四项继续指定数据位置、划分文件、批大小和种子。train_transform 只处理训练图片；eval_transform 同时处理验证和测试图片，应采用确定性操作。因此统一叫 eval_transform，原 CIFAR 草稿中的 val_transform 也改为这个名字。两个函数都按固定顺序返回 `train_loader, val_loader, test_loader`，迭代得到 `(images, labels)`；类别通道与图像大小仍由实际数据集决定。
+
+**2. 把 MNIST 的预处理创建移到调用前。**
+
+打开 `src/petvision/data/datasets.py`，原先 build_mnist_loaders 接收 mean/std 并在内部创建 Compose，现在改为接收两个已经创建好的 transform。加载函数只负责读取数据、管理划分和创建 DataLoader。mean/std 仍保留在 YAML 的 data.normalize 中，由调用脚本读取并交给 Normalize，不能从配置中删掉。
+
+MNIST 沿用原来的 `transforms.ToTensor()` → `transforms.Normalize(...)`。训练脚本与评估脚本从配置取 mean/std，两个独立检查脚本使用原来的 `(0.5,)`。先创建 eval_transform；当前 MNIST 没有随机增强，可以让 train_transform 指向同一个确定性 Compose，再通过两个具名参数传入加载函数。这里统一的是加载接口，MNIST 本次不同时迁移到 v2，以便核对旧权重与预处理保持一致；新增 CIFAR 路径按下文使用 v2。
+
+**3. 为训练和验证分别创建 Dataset，再套各自索引。**
+
+在 MNIST 加载函数中依次创建 train_base、val_base、test_set：前两者都读取官方训练集，但分别绑定 train_transform 和 eval_transform；test_set 读取官方测试集并绑定 eval_transform。随后让 train_set 使用 `Subset(train_base, train_indices)`，val_set 使用 `Subset(val_base, val_indices)`。
+
+关键是两个 Subset 的底层 Dataset 必须不同。不能继续让验证引用 train_base，也不能创建 Subset 后修改共享底层对象的 transform，否则训练增强可能进入验证。两个 Dataset 读取同一份本地训练文件，不代表重新划分两套训练数据；仍使用原先保存的索引。
+
+**4. 逐个迁移四处实际调用，不只修改函数定义。**
+
+| 调用文件 | 在调用前做什么 | 传入什么 |
+| --- | --- | --- |
+| `scripts/train_cv.py` | 读配置中的 normalize，创建 MNIST 确定性 Compose | train_transform 与 eval_transform；当前两者可相同 |
+| `scripts/evaluate.py` | 完成配置核对后，按相同 normalize 创建评估 Compose | 两个位置都传 eval_transform；只使用返回的 val/test loader |
+| `scripts/inspect_mnist.py` | 创建 ToTensor 与 mean/std=(0.5,) 的 Normalize | 两个位置都传该确定性 Compose，继续检查与画图 |
+| `scripts/check_mnist_training.py` | 创建同样的确定性 Compose | 两个位置都传该 Compose，保证固定 64 样本检查不引入随机增强 |
+
+各脚本顶层导入 `from torchvision import transforms`，main 中先创建变换，再调用加载函数。删除调用中的旧 `mean=...`、`std=...`，其余路径、seed、validation_size、num_workers 沿用原值。旧签名不再保留兼容分支：漏传两个 transform 会报缺少参数，继续传 mean/std 会报不支持的关键字，应回到调用处修正。
+
+**5. 检查接口迁移没有改变划分、批次和已有验证结果。**
+
+在 `tests/test_datasets.py` 中编写接口检查，使用不下载数据的替身 Dataset，给训练与评估传入明显不同的变换，检查训练变换不影响验证 / 测试；再更换预处理、重新调用加载函数，检查原 split 文件、索引和取样顺序保持不变。同时核对图片 / 标签形状、dtype，以及已有划分与 validation_size 冲突时仍明确报错。原 `tests/test_cv_training.py` 继续检查模型、训练统计和 checkpoint。
+
+从项目根目录激活 petvision 后，先执行：
+
+```bash
+python -m pytest tests/test_datasets.py tests/test_cv_training.py -q
+python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke
+python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
+```
+
+smoke 应只训练两批、验证两批，不写正式训练产物。独立验证应覆盖 5000 条，准确率与迁移前同一 checkpoint 的验证记录一致；loss 按实际设备容差比较。实际数值从第二周 README 和对应运行记录读取，不在计划中固定为某次实验结果。不要为了迁移接口重跑正式五轮训练或测试集评估。需要查看图片或检查固定小样本时，继续使用第二周的 inspect_mnist.py / check_mnist_training.py 命令。
+
+**6. 按相同接口继续实现 CIFAR-10。**
+
+CIFAR-10 是三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 datasets.py 中定义或继续完善 `build_cifar10_loaders`，完成本节的数据实例与下一步的固定划分 / DataLoader；接口采用上面的公共参数。两个 transform 由调用者传入，正式训练可以增强，过拟合检查改用确定性评估变换；validation_size 和 num_workers 也从配置传入。
 
 先在 `scripts/inspect_cifar10.py` 的 main 中建立本日条件：data_dir 为 `datasets/raw`，split_path 为本周 `cifar10_split.json`，batch_size=64、seed=42。在顶层导入 torch 和 `from torchvision.transforms import v2`，main 中创建以下两个变换；下方导入语句仍放在文件顶层：
 
@@ -244,7 +297,7 @@ train_transform = v2.Compose([
     v2.ToDtype(torch.float32, scale=True),
     v2.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
 ])
-val_transform = v2.Compose([
+eval_transform = v2.Compose([
     v2.ToImage(),
     v2.ToDtype(torch.float32, scale=True),
     v2.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
@@ -273,8 +326,8 @@ from torch.utils.data import Subset
 from torchvision.datasets import CIFAR10
 
 train_base = CIFAR10(root=data_dir, train=True, download=True, transform=train_transform)
-val_base = CIFAR10(root=data_dir, train=True, download=True, transform=val_transform)
-test_set = CIFAR10(root=data_dir, train=False, download=True, transform=val_transform)
+val_base = CIFAR10(root=data_dir, train=True, download=True, transform=eval_transform)
+test_set = CIFAR10(root=data_dir, train=False, download=True, transform=eval_transform)
 ```
 
 先检查三个实例长度为 50000、50000、10000。train_base 与 val_base 读取相同训练图片，分别持有各自的 transform；它们还不是最后的 45k/5k 子集。类别名称取 `train_base.classes`，编号顺序与 targets 对应。
@@ -407,13 +460,13 @@ output_dir: outputs/cnn_bn_on
 
 `augmentation` 只用于训练 dataset，验证使用相同 normalize；过拟合检查关闭随机增强。`training.optimizer: adamw` 需要入口创建 AdamW，不能继续无条件使用第二周的 Adam。数据根目录、变换、学习率与输出路径都从当前配置读取，不能依靠上一次运行遗留的全局变量。
 
-修改已有 `scripts/train_cv.py`，顶层从 `petvision.models.cv.cnn` 导入 CNN，从 `petvision.data.datasets` 导入 build_cifar10_loaders。具体接线沿用[第二周对象创建顺序](week2.md#training-objects)：data.name=mnist 时保留原函数，data.name=cifar10 时先按配置创建两个 transform，再调用 Day 1 的 build_cifar10_loaders；model.name=cnn 时创建 CNN(num_classes=..., use_bn=...)。training.optimizer=adamw 时创建 torch.optim.AdamW 并传入配置的学习率、weight_decay。已有 `scripts/evaluate.py` 使用同一套模型 / 数据选择规则；过拟合检查把传给训练 dataset 的 transform 改为确定性 val_transform。
+修改已有 `scripts/train_cv.py`，顶层从 `petvision.models.cv.cnn` 导入 CNN，从 `petvision.data.datasets` 导入 build_cifar10_loaders。具体接线沿用[第二周对象创建顺序](week2.md#training-objects)：data.name=mnist 时保留原函数，data.name=cifar10 时先按配置创建两个 transform，再调用 Day 1 的 build_cifar10_loaders；model.name=cnn 时创建 CNN(num_classes=..., use_bn=...)。training.optimizer=adamw 时创建 torch.optim.AdamW 并传入配置的学习率、weight_decay。已有 `scripts/evaluate.py` 使用同一套模型 / 数据选择规则；过拟合检查把传给训练 dataset 的 transform 改为确定性 eval_transform。
 
 同时把第二周“仅支持 mlp / mnist / adam”的入口校验改成实际已实现的选择分支；未知名称仍报错。只新增 CNN 创建代码而保留旧的拒绝条件，会在创建模型之前退出。当前 dtype 仍限定 float32；CIFAR 的 image_size 当前只支持 32，先明确校验，不能接收其他值却继续按 32 训练。
 
 独立评估入口也要完成这条链路：校验模型与数据名称 → 核对 checkpoint 配置和 split hash → 按保存配置重建对应模型 → 加载 state_dict → 建立确定性 loader → 统计完整 split。保留第二周对 model_config、数据名称、validation_size、normalize、seed 和 split hash 的核对，并在 CIFAR 分支增加 image_size 核对；不能为了让新模型通过而删除这些校验。Day 6 展示误分类时，MNIST 保留单通道画法，CIFAR 则逆归一化后转为 `[H,W,3]`，不能继续直接使用 `squeeze(0)` 的灰度画法。
 
-把 Day 1 的固定 transform 改为读取 data.normalize 的 mean/std、augmentation.random_crop_padding 和 random_horizontal_flip；在 train_cv.py 和 evaluate.py 顶层均导入 `from torchvision.transforms import v2`。两个变换仍用 v2.Compose：训练先 ToImage，再按配置加入 v2.RandomCrop / v2.RandomHorizontalFlip，最后 ToDtype(torch.float32,scale=True) 和 v2.Normalize。padding=0 时省略随机裁剪，flip=false 时省略翻转；flip=true 时使用 RandomHorizontalFlip 默认概率 0.5，不表示每张都翻转。val_transform 始终只包含 v2.ToImage、v2.ToDtype(torch.float32,scale=True) 和 v2.Normalize。下面是 main 中 CIFAR 分支的调用，两个 transform 已先建立：
+把 Day 1 的固定 transform 改为读取 data.normalize 的 mean/std、augmentation.random_crop_padding 和 random_horizontal_flip；在 train_cv.py 和 evaluate.py 顶层均导入 `from torchvision.transforms import v2`。两个变换仍用 v2.Compose：训练先 ToImage，再按配置加入 v2.RandomCrop / v2.RandomHorizontalFlip，最后 ToDtype(torch.float32,scale=True) 和 v2.Normalize。padding=0 时省略随机裁剪，flip=false 时省略翻转；flip=true 时使用 RandomHorizontalFlip 默认概率 0.5，不表示每张都翻转。eval_transform 始终只包含 v2.ToImage、v2.ToDtype(torch.float32,scale=True) 和 v2.Normalize。下面是 main 中 CIFAR 分支的调用，两个 transform 已先建立：
 
 ```python
 data_cfg = cfg["data"]
@@ -423,13 +476,13 @@ train_loader, val_loader, test_loader = build_cifar10_loaders(
     batch_size=data_cfg["batch_size"],
     seed=cfg["training"]["seed"],
     train_transform=train_transform,
-    val_transform=val_transform,
+    eval_transform=eval_transform,
     num_workers=data_cfg["num_workers"],
     validation_size=data_cfg["validation_size"],
 )
 ```
 
-过拟合模式在调用前令 train_transform=val_transform；独立评估也使用确定性变换。检查三个 loader 的大小、实际 transform 和一个批次，而不是只打印 YAML。第五周 ViT 继续复用这条 CIFAR 分支。
+过拟合模式在调用前令 train_transform=eval_transform；独立评估也使用确定性变换。检查三个 loader 的大小、实际 transform 和一个批次，而不是只打印 YAML。第五周 ViT 继续复用这条 CIFAR 分支。
 
 #### 第三步：先检查再正式训练
 

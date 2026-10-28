@@ -3,6 +3,7 @@ import math
 
 import torch
 from torch.utils.data import DataLoader, Subset
+from torchvision import transforms
 
 from petvision.data.datasets import build_mnist_loaders
 from petvision.models.cv.mlp import MLP
@@ -13,11 +14,17 @@ from petvision.utils.seed import set_seed
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(42)
+    eval_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5,), std=(0.5,)),
+    ])
     train_loader, val_loader, _ = build_mnist_loaders(
         data_dir="datasets/raw",
         split_path="experiments/mnist_mlp/week2/mnist_split.json",
         batch_size=128,
         seed=42,
+        train_transform=eval_transform,
+        eval_transform=eval_transform,
     )
     criterion = torch.nn.CrossEntropyLoss()
     print("device:", device)

@@ -5,6 +5,45 @@
 
 本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
 
+<a id="progress"></a>
+## 当前进度（2026-10-28）
+
+Day 1 第二步的数据加载接口迁移已完成：build_mnist_loaders 接收外部创建的 train_transform / eval_transform，训练与验证使用独立 Dataset；train_cv.py、evaluate.py、inspect_mnist.py、check_mnist_training.py 四处调用已同步修改。MNIST 保留原来的 ToTensor → Normalize，归一化仍从原配置读取。操作说明见[统一接口步骤](../../../docs/week3.md#unified-loader-interface)。
+
+CIFAR 的 build_cifar10_loaders 已完成实现，模拟数据与真实数据检查均通过。inspect_cifar10.py 已接入加载函数、子集数量 / 批次检查、验证变换确定性检查和图片保存。后续继续按指南完成卷积形状练习与 CNN / ResNet 实现，四组对照实验尚未开始。
+
+### 接口迁移检查记录（2026-10-28）
+
+- 迁移时执行的 2 项数据接口检查和原有 6 项训练检查均通过，共 8 项；数据检查覆盖训练 / 评估变换隔离及固定划分复用。
+- train_cv.py 的 smoke 覆盖训练 / 验证各 256 条；check_mnist_training.py 在固定 64 条训练样本上达到 100% 准确率。
+- CPU 重载原 MNIST best，完整验证结果为 n_samples=5000、accuracy=0.9642、loss=0.11792092759907245，与此前 CPU 复核一致。
+- inspect_mnist.py 的形状、类型和像素范围检查通过；检查用图片重定向到临时目录，未覆盖原展示图。本次未重跑正式五轮训练或测试集评估。
+
+这些结果用于核对接口迁移，没有产生 CIFAR-10 的训练或评估指标。
+
+### CIFAR 加载函数检查（2026-10-28）
+
+代码审查和运行检查未发现 build_cifar10_loaders 的功能错误，本次未修改函数。使用模拟 CIFAR10 Dataset、合成 RGB 图片和临时划分文件调用实际加载函数，并使用 inspect_cifar10.py 中定义的两套 v2 变换，检查通过：
+
+- 默认返回 45000 / 5000 / 10000，训练与验证索引不相交且完整覆盖官方训练集的索引范围；训练随机取样，验证 / 测试顺序取样，均保留尾批。
+- 三个 loader 输出 `[64,3,32,32]` 的 float32 图片与 `[64]` 的 long 标签，像素范围为 [-1,1]，标签在 0..9。
+- 训练与验证底层 Dataset 独立；改变训练预处理不影响验证 / 测试，同一验证样本重复读取一致。
+- 重复调用复用原划分且不改写文件；相同 seed 的新 loader 具有相同取样顺序；validation_size=10000 时返回 40000 / 10000 / 10000。
+- 6 种非法 validation_size、已有文件的 seed / 大小冲突，以及 16 种损坏划分均被拒绝，已有文件未被覆盖。损坏案例覆盖元数据、索引类型、数量、范围、组内重复及组间重叠。
+
+另运行现有 `tests/test_datasets.py` 与 `tests/test_cv_training.py`，共 **8 passed**；其中现有数据测试针对 MNIST，CIFAR 检查是当次临时运行，不计入这 8 项。该阶段使用模拟数据，未写正式划分、训练指标或图片；之后的真实数据检查见下节。
+
+### 真实数据检查（2026-10-28）
+
+运行 `python scripts/inspect_cifar10.py`，真实数据读取与脚本断言通过：
+
+- 子集数量为 45000 / 5000 / 10000。
+- 图片为 `[64,3,32,32]`、float32，像素范围 [-1,1]；标签为 `[64]`、int64，范围 0..9。
+- 训练 / 验证底层 Dataset 独立，同一验证图片重复读取一致。
+- 已生成 [cifar10_split.json](cifar10_split.json) 与 [cifar10_batch.png](figures/cifar10_batch.png)。划分 seed=42，文件 SHA-256 为 `482ec710828a8da2f0fefda6091dc38c1bbbed0505a09325d2989fb5db4a2d27`。
+
+检查仅涉及数据与展示，未训练分类模型或计算测试集指标。
+
 <a id="environment"></a>
 ## 环境准备
 

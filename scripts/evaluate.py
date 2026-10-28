@@ -5,6 +5,7 @@ import torch
 import argparse
 from pathlib import Path
 import matplotlib.pyplot as plt
+from torchvision import transforms
 from petvision.models.cv.mlp import MLP
 from petvision.training.cv_trainer import evaluate
 from petvision.utils.checkpoint import load_checkpoint
@@ -96,15 +97,20 @@ def main():
     )
     model.load_state_dict(checkpoint["model_state"])
     model = model.to(device).eval()
+    normalize = cfg["data"]["normalize"]
+    eval_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=normalize["mean"], std=normalize["std"]),
+    ])
     _, val_loader, test_loader = build_mnist_loaders(
         data_dir=cfg["data"]["root"],
         split_path=cfg["data"]["split_path"],
         batch_size=cfg["data"]["batch_size"],
         seed=cfg["training"]["seed"],
+        train_transform=eval_transform,
+        eval_transform=eval_transform,
         validation_size=cfg["data"]["validation_size"],
         num_workers=cfg["data"]["num_workers"],
-        mean=cfg["data"]["normalize"]["mean"],
-        std=cfg["data"]["normalize"]["std"],
     )
     loader = val_loader if args.split == "val" else test_loader
     criterion = torch.nn.CrossEntropyLoss()
