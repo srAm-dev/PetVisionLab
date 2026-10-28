@@ -73,6 +73,8 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 
 32×32 图片：Patch=4 得到 64 个图像 token、含 CLS 长度 65；Patch=8 得到 16 个图像 token、含 CLS 长度 17。两组仅改变 Patch 相关结构，C、层数、划分、增强与训练预算一致；Patch 投影与位置参数量会改变，需记录。ViT 使用双向 Attention，不启用 causal mask。跨 CNN/ResNet/ViT 比较允许优化配置不同，但必须列出差异，不把准确率差异全归因于架构。
 
+这里“相同训练预算”具体指相同 epoch、batch 与样本数，并不表示相同计算量或耗时。每头 Attention 分数矩阵从 65×65 变为 17×17，元素数约相差 14.6 倍；整个模型还包含投影、FFN 等计算，不能据此断言训练就快 14.6 倍。报告应同时看验证指标、参数量和实测时间；某个 Patch 更优是本次设置下的观察，不是验收必须得到的结论。
+
 ## 六天总览
 
 | 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
@@ -106,7 +108,7 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 | 1h | 检查 Patch=4/8 和非法尺寸 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `src/petvision/models/cv/vit.py` 的 PatchEmbedding，使用 Conv2d(kernel_size=P,stride=P) 后 flatten 空间维并转置到 `[B,N,C]`，或显式展开后 Linear，明确选用哪一种。
 
@@ -218,7 +220,7 @@ python -m pytest tests/test_vit.py -q
 | 0.5h | 测时并固定首轮预算 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 完成 ViT：Patch→CLS/可学习位置→两层 pre-LN EncoderBlock→最终 LayerNorm→CLS 分类头，输出 `[B,10]`。复用第四周的 Block 类并创建本模型的新实例，保留手写 Attention 和 FFN。
 
@@ -271,6 +273,15 @@ logits = self.head(tokens[:, 0])
 #### 第二步：逐层检查尺寸
 
 P=4 时序列长 65，P=8 时长 17，Encoder 入口和出口均保持 `[B,T,128]`。最终 LayerNorm 后取 `x[:,0]` 得到 `[B,128]`，分类头输出 `[B,10]`。
+
+在 `tests/test_vit.py` 中按这个顺序完成检查，调试时可临时分段调用子模块：
+
+1. 创建 P=4、B=2 的随机输入，先只调用 patch_embed，确认得到 `[2,64,128]`；若这里不对，先检查卷积输出和 flatten / transpose。
+2. 将 CLS 扩展到 `[2,1,128]`，拼接在第 0 个位置，确认长度从 64 变为 65；再核对位置参数为 `[1,65,128]`，通过 batch 广播相加。
+3. 依次调用两个 Block，分别确认入口与出口的 T 都是 65，并确认没有传 causal mask；不要只检查最后一个 Block。
+4. 执行最终 LayerNorm，再取第 0 个位置送入分类头；确认取出的是 `[2,128]`，而不是把全部 65 个位置都送去作为独立分类结果。
+5. 再新建 P=8 的模型，从头重复检查，此时 Patch 数为 16、含 CLS 长度为 17。不能只替换输入而沿用 P4 的位置参数。
+6. 将两种模型都改用 B=1 输入再运行，确认 logits 仍为 `[1,10]`。通过后移除临时打印，保留形状断言，进入反向检查。
 
 ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列最前时将看不到后面的图像 Patch，这是需要检查的结构错误。
 
@@ -368,7 +379,7 @@ python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --overfit-sample
 | 0.5h | 整理验证曲线与配置快照 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `vit_patch8_cifar10.yaml`，与 Patch=4 使用独立 experiment_dir 和 output_dir；两组均从新模型训练，不能在另一 Patch checkpoint 上直接继续。
 
@@ -409,7 +420,11 @@ P8 attention 每头矩阵：17 × 17
 
 #### 第四步：读曲线而非只看最后一格
 
-比较起始、收敛速度、train/val gap 与 best epoch。先确认都达到约定预算，再解释 Patch 对本次任务的影响。
+1. 读回两个 history.csv，检查 epoch 连续、没有重复，两组都达到冻结的预算。先转换数值列，再绘图，避免 CSV 字符串被当作类别坐标。
+2. 分别找到两组最佳验证 accuracy 所在行，记录该行 epoch、val_loss 与 val_accuracy；同组的两个指标必须取自同一行。
+3. 用相同横轴画两组 train/val 曲线。先看训练是否都在下降，再看验证是否同步改善；若验证后期转差，回看该组 best 是否早于 last。
+4. 打开各组 run_summary.json，将实际训练秒数和参数量与曲线放在一起解释。相同 epoch 下较快不等于相同时间预算下准确率更高。
+5. 在 README 写出一个观察和一个限制，例如哪一组在本次预算下验证更好，以及单种子、参数量变化是否限制归因。没有完成两组时先标记待比较，不填预期结论。
 
 读取 patch4、patch8 各自的 history.csv，在同一张图上画两组 train/val 曲线，使用第一周的绘图与保存方法写入 `experiments/vit_patch_size/week5/figures/patch_comparison.png`，父目录先创建；在本周 README 链接这张图和两份配置。
 
@@ -445,7 +460,7 @@ python scripts/train_cv.py --config configs/cv/vit_patch8_cifar10.yaml
 | 1h | 整理验证表并冻结最终评估设置 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `src/petvision/evaluation/classification.py`，从真实类别和预测统计 10×10 混淆矩阵，计算 accuracy 和逐类 F1 后取 10 类平均；分母为零时按约定记 0。
 
@@ -573,7 +588,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 | 0.5h | 整理图表和结果索引 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 使用独立 `evaluate.py` 对六个 checkpoint 评估官方 CIFAR-10 测试集，将实际结果写入 `visual_test_results.csv`，每行保留 config、checkpoint、split=test 与版本。
 
@@ -646,7 +661,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 | 0.5h | 更新每周 README 与环境记录 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 在本周 README 汇总 CNN、ResNet、ViT 的真实测试表、三类对照结论和错误案例，链接第三周结果与固定划分。
 
@@ -660,7 +675,13 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 #### 第一步：报告按实验问题组织
 
-依次回答 BN 改变了什么、残差开关改变了什么、Patch 大小改变了什么，再汇总三种模型的冻结测试结果。每个结论链接对应配置、曲线与真实表格。
+打开本周 README，在周总结中按以下顺序写四段，不需要重新复制全部训练日志：
+
+1. BN 对照：从第三周结果表取 CNN on/off 两行，写明保持相同的条件、实际指标差异，并链接 BN 曲线。
+2. 残差对照：同样取 ResNet on/off 两行，补充 projection 与参与训练参数的差异；不能用 CNN 对比 ResNet 来代替这组实验。
+3. Patch 对照：引用本周 patch_results.csv、曲线和实测耗时，说明 P4/P8 的 token 数、参数量与结果如何变化。
+4. 跨模型比较：引用冻结后的 visual_test_results.csv，列出三类模型的实际优化设置与预算，再描述本次观察；这段与前三组内部对照分开。
+5. 每段末尾补一句局限或仍不确定的原因。写完逐个打开引用文件，确认数值来自该文件、split 正确，验证结果没有被写成测试结果。
 
 #### 第二步：有限参考重写 ViT 核心
 
@@ -672,7 +693,11 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 #### 第三步：核对可复现材料
 
-确认 CIFAR 固定索引、六个配置与 best、模型代码、版本、最终测试表、计时方式和误分类图能一一对应。
+1. 以 Day 4 的六行冻结清单为起点，逐行找到 config、best、test_metrics 和图表；权重位于忽略目录时仍写清本地路径。
+2. 对照 config 与 checkpoint，检查模型开关、Patch 大小和分类数匹配，再核对固定划分文件和预处理。
+3. 将每行测试样本数与混淆矩阵总和核对为 10000，将矩阵对角和除以 10000，与该行 accuracy 比较。
+4. 检查推理时间旁是否写明设备、dtype、batch、预热 / 重复次数和是否含搬运；缺测就标缺测，不能用其他模型的测量值补齐。
+5. 在 README 保留实际命令和环境版本，逐个验证相对链接。补文档只读取已有产物，不为重新排版再次训练或评估测试集。
 
 #### 第四步：记录真实局限
 

@@ -105,7 +105,7 @@ LN 是 LayerNorm，FFN 是 Feed-Forward Network（前馈网络）。pre-LN 表�
 | 1h | 核对形状、归一化与梯度 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `scripts/attention_basics.py`，取短序列 T=3、head_dim=2 的 Q、K、V，先手算 `scores=Q@K.T/sqrt(head_dim)`，沿最后的 key 维 softmax，再乘 V。
 
@@ -155,6 +155,8 @@ output = weights @ V
 
 观察 head_dim 变大时点积可能出现更大的数值，较大的 scores 差异会使 softmax 更集中。除以 sqrt(head_dim) 用于控制点积的尺度。
 
+一个直觉推导是：假设 q、k 的各分量独立、均值为 0、方差为 1，那么 d 个乘积的和 `q·k` 方差约为 d，标准差约为 sqrt(d)。因此除以 sqrt(d) 后，分数的方差回到约 1。实际学到的 Q/K 不严格满足这些假设，这只是解释缩放因子的出发点；它不保证权重均匀，也不表示权重就是预测正确的概率。
+
 先以小随机张量对输出求标量损失并反向，确认 Q/K/V 梯度存在且有限；正式模型中的 Q/K/V 将来自可学习投影。
 
 随机检查时直接创建 float64、`requires_grad=True` 的 Q/K/V 叶子 Tensor，形状均为 `[2,3,2]`。先断言 weights 的最后一维和为 1，再用 `output.square().mean()` 作标量目标，backward 后检查三者的 grad 非 None、同形状且有限。零 query 的例子用于核对数值；随机例子用于检查一般计算路径，零梯度本身不算错误。
@@ -191,7 +193,7 @@ python scripts/attention_basics.py
 | 1h | 复制权重，比较输出与梯度 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 完成 `MultiHeadSelfAttention`：分别 Linear 得到 Q/K/V，变为 `[B,heads,T,head_dim]`，每头计算注意力，合并回 `[B,T,C]` 后做输出投影。
 
@@ -234,6 +236,16 @@ def forward(self, x, attn_mask=None, key_padding_mask=None,
 类的构造接口约定为 `MultiHeadSelfAttention(embed_dim, num_heads, dropout=0.0, bias=True)`；embed_dim 对应 C，num_heads 对应 heads。默认 forward 只返回输出 Tensor；return_weights=True 时返回 `(output, weights)`，weights 为 `[B,heads,T,T]` 的 dropout 前权重，EncoderBlock 使用默认返回值。
 
 参数包含 q_proj、k_proj、v_proj、out_proj。C%heads 不为 0 时在构造阶段报错，避免后续 reshape 才出现模糊异常。
+
+写 forward 时，每完成下面一项就用上面的 `[2,3,8]` 小输入打印一次形状，先跑通不带 Mask 的版本：
+
+1. 从输入读取 B、T、C，检查最后一维与构造时的 embed_dim 一致；不能将某个演示里的 T=3 写死在类中。
+2. 将同一个 x 分别送入 q_proj、k_proj、v_proj，得到三个 `[B,T,C]`；它们是三套参数对同一输入的投影。
+3. 对 Q、K、V 各自执行“拆特征维，再交换头轴与序列轴”，得到 `[B,heads,T,head_dim]`。
+4. 用 Q 乘 K 最后两轴的转置，除以 sqrt(head_dim)，得到 scores。今天先不屏蔽位置，明天将 Mask 插在这里与 softmax 之间。
+5. 沿 scores 最后一轴做 softmax，保留这份 weights 供检查；再对它应用权重 dropout，乘 V，得到各头的加权结果。
+6. 将头轴交换回序列轴之后，再合并 heads 与 head_dim，恢复 `[B,T,C]`。最后调用 out_proj，不能在合并后直接返回而漏掉输出投影。
+7. 根据 return_weights 返回一个 Tensor 或二元组；分别实际调用两种模式，确认 EncoderBlock 默认拿到的是 Tensor。
 
 构造函数先检查 embed_dim、num_heads 为正整数，再检查能否整除，设置 `self.head_dim = embed_dim // num_heads`。四个投影均为 `nn.Linear(embed_dim, embed_dim, bias=bias)`；权重 dropout 用 `nn.Dropout(dropout)` 注册。forward 先保存原始 softmax 权重 weights，再用 dropout(weights) 与 V 相乘；return_weights=True 返回原始 weights。因此训练时用于加权的 dropout 权重不必行和为 1，检查归一化仍针对 dropout 前的权重。
 
@@ -313,7 +325,7 @@ python -m pytest tests/test_attention.py -q
 | 1h | 核对官方参考和边界行为 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 在 softmax 前应用 causal mask，禁止位置 i 关注 j>i；padding mask 屏蔽无效 key 列。明确广播到 `[B,heads,T,T]` 的步骤。
 
@@ -411,7 +423,7 @@ python -m pytest tests/test_attention.py -q
 | 1h | 检查数值、梯度及残差形状 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `normalization.py`，实现沿最后 C 维的均值、方差、可学习 gamma/beta；方差用 correction=0，eps=1e-5。与相同 eps、权重的 nn.LayerNorm 比较输出、输入梯度和参数梯度。
 
@@ -441,6 +453,8 @@ y    = (x - mean) / sqrt(var + eps) * gamma + beta
 
 统计范围是每个 token 的 C 个特征，不是整个 batch，也不是时间维。常量输入时归一化部分为 0，eps 防止除零。
 
+与第三周 BN 对照：BN2d 为每个通道统计 `B×H×W` 个值，默认保存运行统计；这里的 LayerNorm 为每个 token 统计 C 个值，不保存运行均值 / 方差。LayerNorm 自身在 train/eval 下使用相同规则，但含有 dropout 的整个 Block 仍会因模式切换而改变行为。
+
 #### 第二步：比较输出与梯度
 
 对齐 nn.LayerNorm 的 eps、gamma、beta 与 dtype。使用相同非平凡标量目标，例如输出与固定随机 probe 点乘求和，再比较 x、gamma、beta 的梯度。
@@ -455,12 +469,21 @@ y    = (x - mean) / sqrt(var + eps) * gamma + beta
 
 FFN 的中间尺寸 `[B,T,4C]`，出口回到 `[B,T,C]`，才能残差相加。对两个不同位置的输入做扰动，FFN 本身只影响对应位置。
 
+实现和检查按以下顺序进行：
+
+1. 在构造函数注册 C→hidden_dim 的 Linear、GELU、隐藏层 dropout 和 hidden_dim→C 的 Linear。先让 dropout=0，便于比较输出。
+2. 在 forward 按上述顺序调用，保持 B、T 两轴不动；Linear 自动处理最后一维，不需要将不同 token 拼成一个长特征向量。
+3. 输入 `[2,3,32]`，逐段确认特征宽度从 32 变为 128，再回到 32；若当前 hidden_dim 不是 128，按实际配置核对。
+4. 固定同一个 eval 模块，复制输入，只修改一个 token 的特征；比较修改前后输出，其他位置应相同。这个检查通过后再接入 Block，避免将 Attention 的跨位置作用与 FFN 混淆。
+
 #### 第四步：写出 pre-LN 的实际顺序
 
 ```text
 x1 = x  + attention(norm1(x), mask)
 x2 = x1 + ffn(norm2(x1))
 ```
+
+pre-LN 表示“子层之前归一化”。若改成 post-LN，第一行会变为 `x1=norm1(x+attention(x,mask))`，第二行同理；这会改变计算和梯度传播，不能只移动代码后仍期待数值相等。上面的公式暂时省略 dropout，实际位置见下文；第四周参考层应设置 `norm_first=True` 来对应本指南的 pre-LN。
 
 EncoderBlock 构造参数约定为 `embed_dim、num_heads、ffn_hidden_dim、dropout=0.0`；分别创建 norm1、Attention、norm2、FFN。forward 接收 x、attn_mask=None、key_padding_mask=None，传给 Attention 后只返回新的 x Tensor。第五周和第六周会按这个接口创建不同尺寸的新 Block。
 
@@ -503,7 +526,7 @@ python -m pytest tests/test_layernorm.py tests/test_encoder.py -q
 | 1h | 组合检查与参考对照 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `positional_encoding.py`，实现正弦/余弦编码，检查偶数 C、不同 T、设备迁移；常量编码用 register_buffer 管理。
 
@@ -546,6 +569,14 @@ for block in self.blocks:
 ```
 
 Encoder 入口加一次位置编码，不能每过一层再重复加同一份。可学习位置嵌入留给 ViT/GPT 按各自结构选择。
+
+组装时分三次运行，逐步增加复杂度：
+
+1. 先只创建位置编码模块，输入全零 `[2,8,32]`，确认输出与位置表前 8 行相同；再输入非零张量，确认做的是相加，输出仍为 `[2,8,32]`。
+2. 创建 depth=1 的 Encoder：注册位置编码、一个新 Block 和最终 LayerNorm；forward 加一次位置后调用 Block，把两个 Mask 参数原样传入，最后归一化并返回。
+3. 跑通单层形状和反向后，将构造改为按 depth 循环创建独立 Block 并放入 ModuleList，forward 按容器顺序逐层更新 x。不要重复引用同一个 Block。
+4. 分别用 T=1 和 T=8 运行 depth=2，确认形状不变、参数可反向；再用 Day 3 的后缀扰动检查完整 Encoder，而不是只检查第一层 Attention。
+5. 最后再执行下一步的参考数值对照；若多层失败，先比较第一层出口，第一层正确后才排查第二层与最终归一化。
 
 保持 EncoderBlock 本身不添加位置编码、不执行堆叠后的最终 LayerNorm；它只负责自己的 pre-LN Attention/FFN 和残差。教学 Encoder 负责正弦位置编码、Block 堆叠与最终归一化；第五周 ViT 和第六周 GPT 可复用 Block 类，分别创建新实例并管理各自的位置参数与最终归一化。
 
@@ -597,7 +628,7 @@ python -m pytest tests/test_encoder.py -q
 | 0.5h | 整理本周 README |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 运行 Attention、LayerNorm、Encoder 的全部检查；保留真实最大误差和检查命令在周 README，不额外为每个检查生成 CSV。
 
@@ -619,7 +650,14 @@ python -m pytest tests/test_encoder.py -q
 
 创建 `experiments/transformer_encoder/week4/tensor_flow.md`，将下面的流程图与形状说明写进该文件，并在本周 README 添加相对链接 `tensor_flow.md`。
 
-使用 B=2、T=8、C=32、heads=4，把 QKV、scores、weights、合并输出和两个残差标到 tensor_flow.md。旁边标注 mask 在 softmax 前应用、LayerNorm 沿 C。
+使用 B=2、T=8、C=32、heads=4，按以下顺序画图并核对，不只画模块名称：
+
+1. 从输入 `[2,8,32]` 开始，画出位置相加和 norm1，标注这两处都不改变 shape。
+2. 从 norm1 输出分三路画 Q/K/V 投影，各为 `[2,8,32]`；拆头后各为 `[2,4,8,8]`，最后一个 8 是 head_dim。
+3. 画 QK 点积得到 `[2,4,8,8]` 的 scores；这里最后两个 8 分别是 query 数和 key 数，虽然数值与 head_dim 相同，含义不同。
+4. 在 scores 后标“缩放 → Mask → 沿 key 轴 softmax”，再画乘 V、合并头、输出投影，回到 `[2,8,32]`。
+5. 从 Block 原始输入画旁路接到第一次相加，再画 norm2 → FFN 的 32→128→32 → 第二次相加。每条旁路都标明来自哪个变量。
+6. 画出第二个 Block 与最终 LayerNorm，用实际模块的形状打印逐项核对。图中发现的漏步骤先回代码确认，再完成文档。
 
 #### 第三步：有限参考重写核心片段
 

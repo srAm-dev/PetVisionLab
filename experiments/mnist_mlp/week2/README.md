@@ -5,6 +5,8 @@
 
 本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
 
+**当前状态：主要实现与正式实验已完成，独立解释 / 重写仍需巩固。** 先看[最终结果](#final-results)和[周总结](#weekly-summary)；分步骤的早期检查保留在下方折叠记录中，其中“尚未训练”等描述仅指当时。
+
 <a id="environment"></a>
 ## 环境准备
 
@@ -55,7 +57,7 @@ python -m pytest tests/test_cv_training.py -q
 | Day 1 | `python scripts/torch_basics.py` | Tensor 与 autograd 检查 |
 | Day 2 | `python scripts/inspect_mnist.py` | 固定划分与数据检查 |
 | Day 3–6 | `python -m pytest tests/test_cv_training.py -q` | 当前 6 项：形状 / 梯度 / 设备 / 统计、保存加载、best/last 选择 |
-| Day 4 第三步（按指南创建脚本后） | `python scripts/check_mnist_training.py` | 独立运行两批 smoke 与固定 64 样本拟合 |
+| Day 4 第三步 | `python scripts/check_mnist_training.py` | 已有脚本：独立运行两批 smoke 与固定 64 样本拟合 |
 | Day 4 | `python scripts/train_cv.py --help` | 核对配置参数与互斥检查模式 |
 | Day 4 | `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke` | 两批次 smoke |
 | Day 4 | `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --overfit-samples 64` | 固定小样本过拟合 |
@@ -72,6 +74,11 @@ python -m pytest tests/test_cv_training.py -q
 MNIST 下载、固定划分与 DataLoader 见[Day 2 数据步骤](../../../docs/week2.md#mnist-data)，训练对象接线见[Day 4](../../../docs/week2.md#training-objects)，实际保存 / 加载操作见[Day 5](../../../docs/week2.md#checkpoint-io)。
 
 Day 2 数据条件：`data_dir=datasets/raw`，`split_path=experiments/mnist_mlp/week2/mnist_split.json`，seed=42，batch_size=128，num_workers=0，drop_last=False；预处理依次为 ToTensor 与 Normalize(mean=(0.5,), std=(0.5,))。训练打乱批次顺序，验证和测试按固定顺序取样；划分不随每轮训练改变。
+
+<details>
+<summary>历史检查记录：Day 3–5 的实现与调试过程（2026-10-24 至 2026-10-27）</summary>
+
+以下记录保留各次检查当时的范围。临时检查数量不等于仓库现有 pytest 测试数量；当前保留 6 个测试函数，较早的临时接口检查并非都已加入 tests。
 
 Day 3 检查记录（2026-10-24）：运行 `python -m pytest tests/test_cv_training.py -q -s`，结果为 `3 passed`。CPU 前反向检查通过，设备测试在 RTX 4060 Laptop GPU（`cuda:0`）上通过。B=1/4 时 logits 分别为 `[1,10]` / `[4,10]`，损失为有限标量，所有可训练参数的梯度存在且有限；参数量为 235146。
 
@@ -103,6 +110,9 @@ Day5 复查（2026-10-27）：现有 6 项测试全部通过，设备测试使�
 
 本次只检查已有训练产物，没有重新训练。独立运行上表的 `evaluate.py ... --split val` 命令，在 GPU 上加载 best 并完整评估 5000 条验证样本，loss=0.1179209182560444、accuracy=0.9642，与第 5 轮日志完全一致。正式权重在 CPU 上经临时文件再次保存加载，固定随机输入的 logits 最大绝对差为 0；这是序列化一致性检查，不是额外训练结果。该次 Day5 检查没有评估官方测试集；之后的 Day6 结果见下方。
 
+</details>
+
+<a id="final-results"></a>
 ### Day6 最终结果与检查范围（2026-10-27）
 
 本次文档整理读取已有配置、history、checkpoint 和 test_metrics.json，确认配置一致，测试记录的 checkpoint epoch 与 best 对应，划分 SHA-256 相同；没有重新训练或重跑测试集。最终配置为 MLP 784→256→128→10、235146 个参数、seed=42、Adam lr=0.001、weight_decay=0、batch=128、5 epochs、float32。训练 / 验证来自官方训练集的固定 55000 / 5000 划分，测试使用官方独立 10000 张图片；预处理为 ToTensor → Normalize(mean=[0.5], std=[0.5])。
@@ -145,6 +155,14 @@ Day 4 的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-con
 
 本次已核对原始数据目录 datasets/raw 和权重目录 outputs 被 Git 忽略，且没有其中的文件被 Git 跟踪。小型配置、指标、图片及本周文档作为实验记录保留；临时草稿不作为正式交付文件。
 
+<a id="doc-review"></a>
+### 文档复核（2026-10-27，CPU）
+
+本次重新运行 `python -m pytest tests/test_cv_training.py -q`，结果为 **6 passed**；独立执行上表的 `evaluate.py ... --split val`，覆盖 5000 条，accuracy=0.9642、loss=0.11792092759907245。与原日志的准确率一致，loss 相差约 9.3e-9。检查使用现有 petvision 解释器和 torch 2.14.1+cu130，但当前检查进程的 `torch.cuda.is_available()` 为 False，因此设备测试和独立验证使用 CPU；这不改写此前 GPU 运行记录。
+
+本次未重新训练、未重跑测试集，未更新原指标、图表、权重或环境快照。指南中的 `test_mlp_configurable_dimensions` 是建议保留的检查，目前不在这 6 项测试中；相关能力此前只留有上方临时检查记录，不计为现有自动测试覆盖。
+
+<a id="weekly-summary"></a>
 ## 周总结
 
 - **完成情况**：第二周的数据划分、参数化 MLP、训练 / 验证、smoke、小批过拟合、五轮训练、best/last、独立加载验证、最终测试及误分类展示均已有实现或记录。单批次草稿已实际运行通过，本周结果与复现入口已整理。

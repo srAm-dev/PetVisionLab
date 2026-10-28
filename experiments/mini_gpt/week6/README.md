@@ -37,6 +37,8 @@ V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允�
 
 相同字符 tokenizer、原文划分、context=128、batch=16、seed=42、AdamW lr=3e-4、weight_decay=0.01、2000 steps、每 200 步验证。GPT 为 2 层/C128/4 heads/FFN512/dropout0.1；Bigram 为 V×V 转移 logits。各组 experiment_dir 为本周 `runs/bigram`、`runs/gpt`，checkpoint 位于项目根 `outputs/bigram_char`、`outputs/mini_gpt`。测试留到第七周；同 tokenizer 下才比较 token 级 loss/PPL。
 
+验收要求是实现与统计检查通过、比较可复现、结果解释有依据，不要求有限预算下 GPT 一定胜出。相同更新步数不代表相同计算量或两组都已收敛；若 GPT 未更优，记录检查证据和曲线分析，后续补充实验保留独立配置与结果。
+
 从文本 / tokenizer 文件读取到 token IDs、sample_batch 和语言训练函数的接线见[Day 2](../../../docs/week6.md#text-inputs)；train_step / evaluate_lm 放在 src/petvision/training/lm_trainer.py。last 在验证时点和最终步保存，恢复以文件中的 step 为准。
 
 两个训练函数统一返回 loss / n_target_tokens。即使最终 steps 不是 eval_interval 的整数倍，末步也执行完整验证并保存；每次只追加当前 row。各运行独立保存 figures/loss_curves.png，两组都完成后再生成周目录下的合并图，BPE 可复用同一入口。

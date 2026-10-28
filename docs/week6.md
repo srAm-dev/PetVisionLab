@@ -113,7 +113,7 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 | 1h | 检查边界、往返和 OOV |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `scripts/prepare_text.py` 与 `src/petvision/data/text.py`，将原文下载到 `datasets/raw/tinyshakespeare/input.txt`，记录来源、文件 hash 与字符数。固定 80/10/10 原文区间，保存三个 split 文本及 `experiments/mini_gpt/week6/split_manifest.json`，供第七周原样复用。
 
@@ -186,6 +186,15 @@ load 是类方法：它从 JSON 读回 chars，用 `cls(chars)` 创建同一种 
 
 为避免保存后 ID 改变，本轮可约定 `chars=sorted(set(train_text))`，已知字符 ID 为 `0..len(chars)-1`，UNK ID 为 `len(chars)`，实际 V 为 `len(chars)+1`。JSON 保存 `type="char"、version=1、chars、unk_id`，加载后按列表顺序还原映射，decode 遇到 UNK 可输出 `<unk>` 占位符。用训练文本 `ab\na` 检查已知编码 `[1,2,0,1]`，未见字符 `?` 编为 3，OOV=1；该未知字符的原值不能由 3 恢复。
 
+把上述接口逐个补齐，每完成一个就用这个短串检查：
+
+1. 构造函数按 chars 的顺序编号，建立两个方向的映射，再设置 unk_id 和 vocab_size；打印短串例子的映射，确认换行占一个独立 ID。
+2. encode 从左到右遍历字符串，每次查一个字符；存在就追加对应 ID，不存在就追加 unk_id。不要删掉空格或换行，也不要在这里临时扩充词表。
+3. decode 从左到右遍历 ID，已知 ID 查回字符，unk_id 转为约定占位符，最后连接成一个字符串；超出合法范围的 ID 明确报错。
+4. save 将格式版本、按顺序保存的 chars 和 unk_id 写入 JSON。文件里保留字符本身，由 JSON 库处理换行转义，不手工拆分行。
+5. load 先核对 type/version，再用保存的 chars 重建对象，核对 unk_id；不重新扫描 train.txt，也不改变列表顺序。
+6. 先检查已知短串的编码与往返，再单独加入 `?` 检查 UNK。最后对保存前后的两个对象编码同一输入，要求 ID 列表逐项相同。
+
 #### 第四步：检查保存后的同一性
 
 重新加载 JSON，编码同一短文本，ID 序列应一致；保存词表大小与文件 hash，后续 checkpoint 按这个标识加载。
@@ -223,7 +232,7 @@ python scripts/prepare_text.py
 | 1h | 做形状、错位、验证计数与小批更新检查 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 在 `src/petvision/data/text.py` 构造长度 T+1 的片段，输入为前 T 个 ID，目标为后 T 个 ID；打印一个短例子，逐位置说明预测的是下一个 token。
 
@@ -414,7 +423,7 @@ python -m pytest tests/test_language_model.py -q
 | 1h | 检查因果性、参数梯度和短训练 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `src/petvision/models/llm/mini_gpt.py` 与 `configs/llm/mini_gpt.yaml`：token embedding + position embedding→两层 pre-LN Block（传入 causal mask）→最终 LayerNorm→Linear(C,V)。
 
@@ -441,6 +450,14 @@ token/position embed  [B,T,128]
 在 mini_gpt.py 定义 `MiniGPT`，构造参数接收 vocab_size、context_length、embed_dim、depth、num_heads、ffn_hidden_dim 和 dropout。token embedding 用 `nn.Embedding(V,C)`，位置 embedding 用 `nn.Embedding(context_length,C)`；Block 的创建接口见[第四周](week4.md#day-4)。YAML 的 heads 由入口传给 num_heads，name 留在模型选择分支，不能原样把整个 model 字典传给构造函数。
 
 词表 head 的 V 来自 tokenizer，位置嵌入长度来自 context；二者不能混淆。位置 ID 是 0..T-1，输入 T 不得超过配置允许的上下文长度。
+
+先完成构造函数，再去第三步写 forward：
+
+1. 从已加载 tokenizer 取实际 V，记录 context_length 与 C；检查 C 能被 num_heads 整除，避免把词表大小当作特征维度。
+2. 注册 V×C 的 token embedding 和 context_length×C 的 position embedding。两者输出宽度相同，后面才能相加。
+3. 按 depth 次数分别创建新的 EncoderBlock，放入 ModuleList；每个 Block 使用相同结构配置，但拥有自己的参数。
+4. 创建最终 LayerNorm(C) 和 C→V 的输出 Linear。本轮不另加输入与输出权重共享机制，先保持结构易于检查。
+5. 用 named_parameters 确认两套 embedding、每个 Block、最终归一化和 head 都已注册；然后按图中的顺序写前向，训练 loss 留给训练器。
 
 #### 第二步：先检查一个位置能看到什么
 
@@ -525,7 +542,7 @@ python -m pytest tests/test_language_model.py -q
 | 0.5h | 检查加载后的验证结果 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 两组固定使用同一字符 tokenizer 和验证文本；单独新建模型、优化器与采样 Generator，避免继承另一组状态。
 
@@ -533,7 +550,7 @@ python -m pytest tests/test_language_model.py -q
 
 3. checkpoint 保存模型 state_dict、config、step、验证指标与 tokenizer 标识/hash；本周先保证加载推理，第七周补齐优化器和随机状态用于续训。
 
-4. 将 tokenizer、配置、参数量、实际训练耗时、峰值显存与两组曲线记录到 week6 实验目录；若 GPT 尚未优于 Bigram，先排查 Mask、错位和训练是否正常，再用机动时间补齐。
+4. 将 tokenizer、配置、参数量、实际训练耗时、峰值显存与两组曲线记录到 week6 实验目录；若 GPT 尚未优于 Bigram，先检查 Mask、错位、梯度和训练预算，记录排查证据，不以反复训练直到 GPT 胜出作为完成条件。
 
 ### 分步操作与自查
 
@@ -606,7 +623,11 @@ checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路�
 
 #### 第四步：读曲线并定位异常
 
-train 降而 val 升说明可能过拟合；两者都不降先查实现或优化。GPT 验证未优于 Bigram 时保留真实结果，优先核对泄漏、错位、预算和 checkpoint 是否匹配，不用测试集调整。
+1. 读回两个 history，核对 step 是否为约定验证时点、最后一次是否覆盖训练末步；每行 val_target_tokens 应与该词表下的完整验证长度减一一致。
+2. 检查曲线纵轴都是平均 token NLL，横轴都是已完成的更新次数。train_loss 是最近区间的训练统计，val_loss 是完整固定验证窗口统计，先把这两个范围写清。
+3. 两者都不下降时，先回到短文本拟合：确认 x/y 错开一位、参数梯度存在、optimizer 绑定当前模型并执行 step；不要先盲目加训练时长。
+4. train 持续下降而 val 后期上升时，标出转折区间与 best_step，讨论过拟合；用同一 best 重载验证，排除拿错权重的情况。
+5. GPT 未优于 Bigram 时，先核对两组 tokenizer / split hash、验证目标数和预算，再检查 GPT 的因果性。检查通过后保留真实对照，记录可能原因，不用测试集调参，也不要求为了胜出持续重跑。
 
 ### 运行与验收
 
@@ -641,7 +662,7 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 | 1h | 保存加载对照及固定样例 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `scripts/generate.py`，接收 `--checkpoint`、`--prompt`、`--max-new-tokens`、`--seed` 和 `--output`。从 checkpoint 重建模型、词表和 context，不手工另建不一致映射。`--output` 指定本次 JSONL 样例文件，每次完整输出追加为一条记录。
 
@@ -711,7 +732,10 @@ with output_path.open("a", encoding="utf-8") as file:
 
 #### 第四步：解释生成结果
 
-比较局部拼写、角色格式、重复和连贯性。Bigram/GPT 都是小语料教学模型，样例用于理解训练目标与架构，不将少数顺畅句子当整体能力证明。
+1. 从 samples.jsonl 读取两组同 prompt、seed、生成长度的记录，先核对 checkpoint 和 tokenizer 标识；不要凭终端窗口中最后一段文字判断来源。
+2. 保留完整输出，在其中各标一处局部拼写、角色格式或重复片段。没有明显例子就如实写“本次未观察到”，不要另换种子只挑顺畅结果。
+3. 分开描述“能看见字符组合规律”和“长句是否连贯”，再结合 Bigram 只看当前 token、GPT 使用前缀解释观察；不要从一个句子直接推断整体模型能力。
+4. 把样例观察与验证 loss 放在一起写入 README，注明小语料、有限预算的限制。生成检查还应保留 ID 数量和重载复现结果，不能用文字看起来合理代替这两项检查。
 
 ### 运行与验收
 
@@ -746,11 +770,11 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 | 0.5h | 更新本周 README |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 保存 `week6/results.csv`：model、tokenizer_hash、split=val、val_loss、参数量、steps、耗时；把两组验证 loss 与生成样例放在同一口径下解释。
 
-2. 确认 GPT 验证 loss 优于同字符 tokenizer 的 Bigram；若未达到，保留真实结果并顺延该关卡，说明尝试和下一步。
+2. 比较同字符 tokenizer 下 GPT 与 Bigram 的验证 loss；GPT 能利用更长前缀，但有限预算下不保证更优。实现或统计检查不通过时先修复；检查通过而 GPT 未胜出时，保留真实结果并解释局限，可以进入下一周。
 
 3. 有限参考下重写错位样本、下一 token 交叉熵和逐步生成核心，解释 causal Mask 为什么必要。
 
@@ -771,6 +795,8 @@ model、tokenizer_hash、val_loss、steps、params 和时间都对应实际运�
 #### 第二步：解释模型实际学到了什么
 
 把 loss 差异、生成例子与架构联系起来：Bigram 只依赖当前 token，GPT 使用因果前缀。也说明小数据、单种子与有限预算的限制。
+
+相同 tokenizer 和验证窗口保证两组指标可直接比较；相同 steps、batch 和 context 约束训练输入量，但两组参数量、计算量和收敛速度仍不同。这是一次基线比较，不能从一次输赢证明某种架构普遍更好。若 GPT 表现较差，先展示因果性、小批过拟合、完整验证和保存加载的检查结果，再结合曲线讨论欠拟合或过拟合；额外实验另存配置与结果，不覆盖首轮记录。
 
 #### 第三步：有限参考写出三个核心片段
 
@@ -797,7 +823,7 @@ python -m pytest tests/test_language_model.py -q
 ## 本周结束检查
 
 - [ ] 原文划分先于窗口构建，词表仅来自训练数据。
-- [ ] Bigram 与 GPT 在相同字符 tokenizer 下比较，GPT 验证 loss 更低。
+- [ ] Bigram 与 GPT 在相同字符 tokenizer 下完成验证比较，记录真实差异、实现检查和可能原因。
 - [ ] 因果信息隔离、保存加载与生成复现检查通过。
 - [ ] 配置、tokenizer、曲线、样例和结果口径在本周 README 中齐全。
 

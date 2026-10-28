@@ -102,7 +102,7 @@ CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 �
 | 1h | 保存结果与失败样例并解释分数 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `configs/cv/clip_zeroshot.yaml` 和 `scripts/run_clip.py`。沿用 CIFAR 验证索引，每类按固定种子选 20 张并保存实际索引；加载时使用 CLIP 对应 processor，不复用分类 CNN 的归一化。
 
@@ -177,6 +177,15 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.tx
 #### 第二步：先固定图片、类别与模板
 
 从已保存 CIFAR 验证索引中，每类按 seed=42 选 20 张。保存实际选择的 index；反复运行直接读取它们，避免样本变化造成指标变化。
+
+在 run_clip.py 的 main 中，加载模型之前先完成数据子集准备：
+
+1. 读取第三周 cifar10_split.json 的 val_indices，再读取原始 CIFAR10 的 targets 和 classes；先确认类名顺序与配置完全一致。
+2. 对类别 0..9 分别建立候选索引列表，列表中的每个索引必须既属于 val_indices，又具有当前类别标签。
+3. 创建一个 seed=42 的独立 Generator，依次在各类别候选中无放回选 20 个索引；每类候选不足 20 个时直接报错，不重复取样凑数。
+4. 合并十个列表，检查总数 200、无重复、每类 20 个，再把实际全局索引和来源标识保存到 subset_path。
+5. 文件已存在时，直接读取并重复上述完整性检查，不重新抽样。用其中第一个全局索引打开图片，核对人工看到的类别与 targets 对应。
+6. 按 classes 顺序将固定模板分别填入十个类名，打印这十句话。模型分数矩阵的第 k 列就对应这里第 k 句话，后面不改变顺序。
 
 先加载 `train=True` 的原始 CIFAR 图片及 targets，按第三周 val_indices 筛出候选索引；每类从候选中用固定 Generator 无放回选 20 个，保存到配置的 subset_path，记录 dataset、seed、原划分标识和全局 indices。断言 200 个索引无重复、全部属于 val、每类恰好 20；已有文件直接读取并核对条件。取图时使用这些全局索引，不能把 Subset 内的局部编号误当原始 image_id。
 
@@ -284,7 +293,7 @@ python scripts/run_clip.py --config configs/cv/clip_zeroshot.yaml
 | 2h | 实现 LLM 推理、记录输入输出与资源 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 同步源码和配置到云端项目，按下面第一步创建独立 Conda `petvision-vlm` 并安装依赖；创建 `environment-vlm.yml`，将云端 GPU、驱动、显存与 pip/Conda 快照单独保存。
 
@@ -487,7 +496,7 @@ python scripts/infer_llm.py --config configs/llm/llm_inference.yaml
 | 1h | 画结构并核对图像确实进入模型 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `configs/vlm/vlm_inference.yaml`、`scripts/infer_vlm.py`，按固定 revision 的模型卡使用 processor 与兼容模型类；读取本地真实图片和文本消息。
 
@@ -524,7 +533,7 @@ inference:
 output_file: experiments/vlm_qa/week8/vlm_outputs.jsonl
 ```
 
-同样先查询本模型 SHA 并填回 revision。先用兼容当前模型的 Transformers 版本创建模型与 processor；下面采用支持该模型的 AutoModelForImageTextToText 接口，256M 模型的 Idefics3 架构接口可对照 [Transformers 官方说明](https://huggingface.co/docs/transformers/model_doc/idefics3)。模型卡中旧版 AutoModelForVision2Seq 示例需要配套库版本，不混用。把实际模型类和库版本写入 manifest。
+同样先查询本模型 SHA 并填回 revision。先用兼容当前模型的 Transformers 版本创建模型与 processor；下面采用 [Idefics3 官方说明](https://huggingface.co/docs/transformers/model_doc/idefics3)中的 AutoModelForImageTextToText 接口。SmolVLM 是模型名称；该 256M 仓库的 [config.json](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct/blob/main/config.json) 声明 model_type=idefics3，因此不要仅按名称猜测具体 Python 类。实际运行以已固定 revision 的配置和所安装版本支持的接口为准，把实际模型类和库版本写入 manifest。
 
 在 infer_vlm.py 顶层导入 torch、PIL.Image、AutoProcessor、AutoModelForImageTextToText；main 读出 cfg 后加载，device / dtype 与昨天相同：
 
@@ -565,7 +574,9 @@ messages = [{
 ```python
 image = Image.open(args.image).convert("RGB")
 messages[0]["content"][1]["text"] = args.question
-prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+prompt = processor.apply_chat_template(
+    messages, tokenize=False, add_generation_prompt=True,
+)
 inputs = processor(text=prompt, images=[image], return_tensors="pt")
 for name, value in inputs.items():
     if isinstance(value, torch.Tensor):
@@ -584,6 +595,8 @@ print(answer)
 
 若所选兼容版本改用在 messages 中携带图片的接口，应整条替换为该版本模型卡的路径，不能省略图片预处理或混合两套占位符格式。
 
+这里显式设置 `tokenize=False`，让模板步骤只返回带占位符的文本；随后 `processor(text=..., images=...)` 一次完成文本编码与图像预处理。不要把已经编码的 token IDs 再作为 text 传入第二步。
+
 本节 AutoModelForImageTextToText 与单独 images 输入的组合可对照 [Idefics3 官方接口示例](https://huggingface.co/docs/transformers/model_doc/idefics3#transformers.Idefics3ForConditionalGeneration)。模型卡正文与不同版本文档可能展示其他 Auto 类；进入本周时同时核对已安装 Transformers 版本和实际模型 config，不把不同版本的导入、模板与 processor 调用拼成一段。这里提供待实现示例，是否通过以固定版本上的单图 smoke 为准。
 
 ```text
@@ -598,7 +611,13 @@ print(answer)
 
 #### 第二步：定位视觉特征进入文本模型的位置
 
-打印模型 config 和主要子模块，在实际视觉编码器输出、连接/压缩模块输出、进入语言模型的 embedding 处做一次小样本形状记录。
+先使用刚才单图检查中的同一张图片、同一个问题和 inputs，在临时调试分支中操作：
+
+1. 打印 config 中的架构信息和 model.named_modules() 的模块路径，先找出视觉编码器、连接 / 压缩模块、语言模型三个候选模块；不要仅凭文件名里含 vision 就认定它是特征出口。
+2. 阅读这些模块的 forward 调用关系，确认谁接收 pixel_values、谁接收视觉输出、图像特征在哪里与文本特征合并。记录实际模块路径，供下一步挂 hook。
+3. 先只观察视觉编码器：挂一个 hook，运行一次 `model(**inputs)`，查看返回类型，再从 Tensor、tuple 或 ModelOutput 中找到实际特征及 shape。
+4. 按同样方式观察连接模块输出，最后观察语言模型实际接收的 embedding；每增加一个观察点都运行一次，避免多个不确定字段同时报错而难以定位。
+5. 将“模块路径、字段名、shape、含义”记到下一步的表中，只保存小型元数据；完成后移除所有 hook，再确认单图生成仍能正常执行。
 
 不同版本可能有多视图、裁剪或 token 压缩，不预先假定 pixel_values 必为四维或固定图像 token 数。以当前 processor 和模型实际结果为准。
 
@@ -666,7 +685,7 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --image data
 | 0.5h | 核对记录完整性 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `images_manifest.csv`，记录至少 20 张可查看图片的 image_id、local_path、来源与 SHA256；图片放 datasets/raw/vqa。每张准备至少 2 题，在 questions.jsonl 写 qid、image_id、question、reference/criterion、question_type。
 
@@ -692,13 +711,30 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 
 至少 20 个唯一 image_id，每个至少两题。题目整体覆盖类别、颜色、数量、位置和信息不足；不同问法也要有可人工核查的标准。
 
-先用 csv.DictReader 读取图片清单、逐行 json.loads 读取问题；断言 image_id/qid 各自唯一，所有问题的 image_id 都在图片清单中，每张图片至少对应两题。逐图确认 local_path 可打开，并用 `hashlib.sha256(Path(local_path).read_bytes()).hexdigest()` 核对图片 bytes。标准可记录允许答案与部分正确条件，推理前固定并保存；正式生成后再判定。
+按“先一张图，再扩展清单”的顺序准备，避免写完 40 题才发现对应关系有错：
+
+1. 把第一张图片放到 datasets/raw/vqa/，在编辑器或看图工具中打开；给它一个固定 image_id，记下相对路径、实际来源和文件 bytes 的 SHA-256。
+2. 看着这张图写两道能够核查的问题，为两题分配不同 qid，但填写相同 image_id；reference 写实际可接受答案，不保留上面的“按实际图片填写”。
+3. 对每题先写判定依据：什么算 correct，哪些不完整回答算 partial，哪些内容图中无法判断。此时还不查看模型输出。
+4. 先让读取逻辑载入这一张图和两题，打印 qid → image_id → local_path，逐个打开路径确认关联正确；这只是清单开发检查，尚不满足正式评估规模。
+5. 按同样方式补足至少 20 张图和每图至少两题，检查五类问题是否覆盖。图片难以判断的题可以保留为“信息不足”，但标准必须事先明确。
+6. 完成全部清单校验后固定这版文件，再开始正式推理。清单缺文件、ID 冲突或 hash 不匹配时先修正输入；正式运行中发生的单题推理错误则按下一步保留记录。
+
+先用 csv.DictReader 读取图片清单、逐行 json.loads 读取问题；断言**图片清单中的 image_id 唯一、问题清单中的 qid 唯一**。问题清单里的 image_id 允许且需要重复：同一张图的两道问题有不同 qid，但共享 image_id。所有问题的 image_id 都必须在图片清单中，每张图片至少对应两题。逐图确认 local_path 可打开，并用 `hashlib.sha256(Path(local_path).read_bytes()).hexdigest()` 核对图片 bytes。标准可记录允许答案与部分正确条件，推理前固定并保存；正式生成后再判定。
 
 #### 第二步：一次生成保留全部原始结果
 
 修改已有 `scripts/infer_vlm.py`，添加 `--questions`（Path），读取该问题文件及 cfg["data"]["images_manifest"]。逐题通过 image_id 取得图片路径，复用 Day 3 已通过检查的单图推理函数；按 Day 3 第四步的互斥规则区分单图和批量模式。正式输出使用 cfg["output_file"]，本题为 `experiments/vlm_qa/week8/vlm_outputs.jsonl`，按第六周 JSONL 方法创建父目录并追加每题记录。
 
 每题独立构造上下文，不把前一道题的答案喂给下一道。结果记录 qid、image_id、raw_answer、模型版本、设置、耗时、峰值显存和 status。
+
+批量分支按以下顺序连接已有 infer_one，不另写第二套图像预处理：
+
+1. 读入并检查两个清单，用 image_id 建立查路径的字典；确定本轮唯一 run_id，加载模型和 processor 一次。
+2. 按问题清单顺序取一题，从字典找到图片路径，将路径和该题 question 传给 infer_one；reference 只用于之后评分，不作为模型输入。
+3. 成功时将本题实际回答、新增 IDs 和测量结果组成记录，附上 qid、image_id、run_id、模型 revision 与设置，立即追加一行 JSONL。
+4. 本题运行失败时同样追加一行，status 写 error 并保留错误原因，然后继续下一题；不要把失败题从统计分母删除。
+5. 全部结束后重新读取 JSONL，只筛本轮 run_id，核对每个 qid 恰好一条。缺行、重复行先查保存逻辑，不能用集合去重掩盖问题。
 
 某题读取/推理失败也写一条 error 结果，保留原因并继续检查剩余样本；不要删除失败行来提高看上去的成功率。
 
@@ -709,6 +745,8 @@ run_id 沿用 Day 2 的 uuid4 写法，在批量循环开始前生成一次。�
 #### 第三步：按预先标准人工判定
 
 创建 `experiments/vlm_qa/week8/judgments.csv`，写入下面的表头与所选 run_id 的全部人工判定。评分由你查看真实图片、预先标准和原始回答后填写，不让生成模型直接给自身输出评分。
+
+逐题操作时先按 qid 找到问题和本轮原始输出，再按 image_id 打开图片；依次查看预先 reference、raw_answer 和 status，最后填写判定、错误类型和一句理由。输出为 error 的题也填一行。遇到边界回答先按预先标准处理，无法判定就明确记录标准不足，不能看完模型结果后只为它临时放宽标准。全部填完再统计，避免只评了回答看起来正常的题。
 
 judgments.csv 为每个 qid 标 correct/partial/wrong 及错误类型和理由。颜色、数量等可明确核对；开放回答按提前写好的允许范围判定。信息不足题可要求明确承认无法确定。
 
@@ -753,7 +791,7 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 | 1h | 完成模型结构与失败分析 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 创建 `docs/final_report.md`，按基础训练、视觉对照、语言建模、CLIP/LLM/VLM 组织，链接各周 README 和真实结果，不重复复制全部日志。
 
@@ -826,7 +864,7 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 | 0.5h | 完成本周 README 与文档导航 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
-### 具体怎么做
+### 当天任务概览
 
 1. 从 NumPy 梯度、分类加载、因果 Mask、tokenizer 往返、VLM 单图中各选一个小检查；按现有说明抽查，避免为了收尾重跑全部大实验。
 
@@ -840,9 +878,11 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 
 #### 第一步：按说明抽查最小复现
 
-每个阶段选一个小入口：NumPy 梯度、分类加载、causal Mask、tokenizer 往返、VLM 单图。确认文档中的路径和参数仍与实际文件一致。
-
-抽查以证明材料可用为目标；已有大实验结果保留，只有发现实现错误或配置缺失时才重跑相关部分。
+1. 关闭依赖旧交互变量的调试会话，打开新终端，进入项目根目录并激活相应环境；本地阶段与云端 VLM 分别使用各自环境。
+2. 从各周 README 复制已记录的命令，依次选 NumPy 梯度检查、分类 best 加载验证、causal Mask 检查、tokenizer 往返和 VLM 单图 smoke；先核对所需文件确实存在。
+3. 每执行一项就检查退出是否成功、实际样本 / 张量是否与指南一致，以及它验证的内容。命令能启动但输出为空不算完成。
+4. 在最终报告记录实际命令、环境和简要结果。发现旧路径或参数时先修正文档；缺权重或环境无法恢复时标明缺口，不把本次未执行写成通过。
+5. 保留已有大实验产物；抽查使用测试函数、验证集或 smoke 模式，不因整理报告而重新训练全套模型或重复评估冻结测试集。
 
 #### 第二步：解释六个核心问题
 
@@ -854,7 +894,11 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 
 #### 第四步：形成下一轮可执行清单
 
-把仍未通过的基础关卡放在前面，再选择拓展方向。每项写清学习问题、最小实验和验收方式，避免只罗列更多模型名称。
+1. 从各周“仍需巩固”和本日抽查失败项提取待办，先区分基础关卡缺口与新的拓展想法，优先排列前者。
+2. 将每个待办改成一个具体问题，例如“不能解释 projection 为什么需要相同步幅”，而不是只写“继续学 ResNet”。
+3. 为问题写最小动作、输入和输出，例如“用两个指定形状运行主分支与旁路，打印相加前形状并画对应图”；同时写明在哪个文件练习。
+4. 写出能判断完成的标准和预估学习时段；若任务还包含多个不明确动作，继续拆分，不直接安排长时间训练。
+5. 先选择最前面的一个任务开始，其他项保留在 final_report 的下一轮计划中。更多模型、更多数据和微调根据这次缺口决定先后。
 
 ### 运行与验收
 
