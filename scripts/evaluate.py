@@ -6,10 +6,12 @@ import argparse
 from pathlib import Path
 import matplotlib.pyplot as plt
 from torchvision import transforms
+from torchvision.transforms import v2
 from petvision.models.cv.mlp import MLP
+from petvision.models.cv.cnn import CNN
 from petvision.training.cv_trainer import evaluate
 from petvision.utils.checkpoint import load_checkpoint
-from petvision.data.datasets import build_mnist_loaders
+from petvision.data.datasets import build_mnist_loaders, build_cifar10_loaders
 
 def collect_mistakes(model, loader, device, limit=8):
     mistakes = []
@@ -62,20 +64,20 @@ def main():
         cfg = yaml.safe_load(file)
     if not isinstance(cfg, dict):
         raise ValueError("配置文件顶层必须是字典")
-    if cfg["model"]["name"] != "mlp":
-        raise ValueError("本周 model.name 仅支持 mlp")
-    if cfg["data"]["name"] != "mnist":
-        raise ValueError("本周 data.name 仅支持 mnist")
     if cfg["training"]["dtype"] != "float32":
         raise ValueError("本周 training.dtype 仅支持 float32")
 
     checkpoint = load_checkpoint(args.checkpoint)
     saved_cfg = checkpoint["config"]
+    data_cfg = cfg["data"]
     if cfg["model"] != checkpoint["model_config"]:
         raise ValueError("模型配置与 checkpoint 不一致")
     for field in ("name", "validation_size", "normalize"):
-        if cfg["data"][field] != saved_cfg["data"][field]:
+        if data_cfg[field] != saved_cfg["data"][field]:
             raise ValueError(f"data.{field} 与 checkpoint 不一致")
+    if data_cfg["name"]=="cifar10":
+        if data_cfg["image_size"] != saved_cfg["data"]["image_size"]:
+            raise ValueError("data.image_size 与 checkpoint 不一致")
     if cfg["training"]["seed"] != saved_cfg["training"]["seed"]:
         raise ValueError("training.seed 与 checkpoint 不一致")
     split_sha256 = hashlib.sha256(
@@ -84,33 +86,55 @@ def main():
     if split_sha256 != checkpoint["split_sha256"]:
         raise ValueError("数据划分文件内容与 checkpoint 不一致")
 
-    # 先加载到 CPU，再按本次评估配置选择实际设备。
     device_name = cfg["training"]["device"]
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
     model_cfg = checkpoint["model_config"]
-    model = MLP(
-        input_dim=model_cfg["input_dim"],
-        hidden_dims=model_cfg["hidden_dims"],
-        num_classes=model_cfg["num_classes"],
-    )
+    if model_cfg["name"]=='mlp':
+        model = MLP(
+            input_dim=model_cfg["input_dim"],
+            hidden_dims=model_cfg["hidden_dims"],
+            num_classes=model_cfg["num_classes"],
+        )
+    elif model_cfg["name"]=='cnn':
+        model = CNN(
+            num_classes=model_cfg["num_classes"],
+            use_bn=model_cfg["use_bn"],
+        )
+    else:
+        raise ValueError(f"不支持的模型类型:{model_cfg['name']}")
     model.load_state_dict(checkpoint["model_state"])
     model = model.to(device).eval()
-    normalize = cfg["data"]["normalize"]
-    eval_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=normalize["mean"], std=normalize["std"]),
-    ])
-    _, val_loader, test_loader = build_mnist_loaders(
-        data_dir=cfg["data"]["root"],
-        split_path=cfg["data"]["split_path"],
-        batch_size=cfg["data"]["batch_size"],
+
+    if data_cfg["name"]=="mnist":
+        loader_builder = build_mnist_loaders
+        normalize = data_cfg["normalize"]
+        eval_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=normalize["mean"], std=normalize["std"]),
+        ])
+    elif data_cfg["name"]=="cifar10":
+        if data_cfg["image_size"] != 32:
+            raise ValueError("CIFAR-10 的 data.image_size 仅支持 32")
+        loader_builder = build_cifar10_loaders
+        normalize = data_cfg["normalize"]
+        eval_transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Normalize(mean=normalize["mean"], std=normalize["std"]),
+        ])
+    else:
+        raise ValueError(f"不支持的数据集:{data_cfg['name']}")
+    _, val_loader, test_loader = loader_builder(
+        data_dir=data_cfg["root"],
+        split_path=data_cfg["split_path"],
+        batch_size=data_cfg["batch_size"],
         seed=cfg["training"]["seed"],
         train_transform=eval_transform,
         eval_transform=eval_transform,
-        validation_size=cfg["data"]["validation_size"],
-        num_workers=cfg["data"]["num_workers"],
+        validation_size=data_cfg["validation_size"],
+        num_workers=data_cfg["num_workers"],
     )
     loader = val_loader if args.split == "val" else test_loader
     criterion = torch.nn.CrossEntropyLoss()
@@ -150,7 +174,10 @@ def main():
             mean = image.new_tensor(normalize["mean"]).view(-1, 1, 1)
             std = image.new_tensor(normalize["std"]).view(-1, 1, 1)
             image = image * std + mean
-            ax.imshow(image.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1)
+            if data_cfg["name"]=="mnist":
+                ax.imshow(image.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1)
+            else:
+                ax.imshow(image.permute(1, 2, 0).clamp(0, 1).numpy())
             ax.set_title(
                 f"true={mistake['true_label']}, pred={mistake['predicted_label']}\n"
                 f"score={mistake['score']:.2%}"

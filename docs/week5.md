@@ -27,7 +27,7 @@ PetVisionLab/
 ├── configs/cv/
 │   ├── vit_cifar10.yaml                   # Day 2：Patch=4
 │   └── vit_patch8_cifar10.yaml             # Day 3：Patch=8
-├── scripts/train_cv.py                     # Day 2：新增 ViT 选择
+├── scripts/train_cv.py                     # Day 2–3：新增 ViT 选择，运行两组实验
 ├── scripts/evaluate.py                     # Day 4–5：统一指标
 ├── tests/test_vit.py                       # Day 1–2：Patch、位置与反向
 ├── experiments/vit_patch_size/week5/
@@ -224,7 +224,7 @@ python -m pytest tests/test_vit.py -q
 
 1. 完成 ViT：Patch→CLS/可学习位置→两层 pre-LN EncoderBlock→最终 LayerNorm→CLS 分类头，输出 `[B,10]`。复用第四周的 Block 类并创建本模型的新实例，保留手写 Attention 和 FFN。
 
-2. 创建 `configs/cv/vit_cifar10.yaml`，在 `train_cv.py` 注册 ViT。记录第三周划分文件路径，训练和验证实例分别加载正确预处理。
+2. 创建 `configs/cv/vit_cifar10.yaml`，在训练和独立评估入口的模型选择处添加 ViT。记录第三周划分文件路径，训练和验证实例分别加载正确预处理。
 
 3. 补充 `tests/test_vit.py` 的前反向、CLS、位置参数梯度与保存加载检查；推理用 model.eval()。
 
@@ -299,7 +299,7 @@ ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列�
 
 #### 第四步：接入已有训练入口
 
-修改已有 `scripts/train_cv.py` 和 `scripts/evaluate.py`，顶层从 `petvision.models.cv.vit` 导入 ViT，在两处模型选择中添加相同的 vit 分支，按下方 model 字段创建该类；不要只修改训练入口而让独立评估无法重建 ViT。
+修改已有 `scripts/train_cv.py` 和 `scripts/evaluate.py`，顶层从 `petvision.models.cv.vit` 导入 ViT，在已有模型选择处添加 vit 分支，按下方 model 字段创建该类。两处构造参数保持一致，独立评估继续按 checkpoint 保存的 model_config 重建，具体职责见[第三周入口整理步骤](week3.md#cv-entry-refactor)。
 
 模型选择添加 vit，配置明确 image_size、patch_size、embed_dim、depth、heads、dropout；split_path 原样复用第三周文件。通过短运行后再冻结预算。
 

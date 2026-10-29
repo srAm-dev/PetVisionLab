@@ -1,0 +1,117 @@
+import torch
+from petvision.models.cv.cnn import CNN
+
+def test_cnn_forward_backward():
+    for batch_size in (1, 4):
+        for bn in (True, False):
+            # 每次新建模型，分别检查单张图片和一个小批次。
+            model = CNN(use_bn=bn).cpu()
+            images = torch.randn(batch_size, 3, 32, 32)
+            labels = torch.randint(0, 10, (batch_size,), dtype=torch.long)
+
+            # 前向：每张图片得到 10 个类别的 logits。
+            model.zero_grad()
+            logits = model(images)
+            assert logits.shape == (batch_size, 10)
+
+            # 损失：将 logits 与正确类别编号比较，得到一个有限标量。
+            loss = torch.nn.functional.cross_entropy(logits, labels)
+            assert loss.ndim == 0
+            assert torch.isfinite(loss).item()
+
+            # 反向：为参与计算的模型参数计算梯度。
+            loss.backward()
+            for name, parameter in model.named_parameters():
+                assert parameter.grad is not None, f"{name} 没有梯度"
+                assert torch.isfinite(parameter.grad).all().item(), f"{name} 梯度不有限"
+
+            print(f"batch={batch_size}, use_bn={bn}, logits={tuple(logits.shape)}, loss={loss.item():.6f}")
+
+def test_cnn_stage_shapes():
+    model = CNN().cpu().eval()
+    images = torch.randn(2, 3, 32, 32)
+
+    # 键是 model.net 中的层号，从 0 开始。
+    expected_shapes = {
+        3: (2, 32, 16, 16),  # 第一次池化后
+        7: (2, 64, 8, 8),    # 第二次池化后
+        10: (2, 128, 8, 8),  # 第三段卷积、BN、ReLU 后
+        11: (2, 128, 1, 1),  # 全局平均池化后
+        12: (2, 128),        # Flatten 后
+        13: (2, 10),         # 分类层后
+    }
+
+    with torch.no_grad():
+        for index, layer in enumerate(model.net):
+            images = layer(images)
+            shape = tuple(images.shape)
+
+            print(f"{index}: {type(layer).__name__} -> {shape}")
+
+            if index in expected_shapes:
+                assert shape == expected_shapes[index], (
+                    f"第 {index} 层形状错误："
+                    f"预期 {expected_shapes[index]}，实际 {shape}"
+                )
+
+def test_batchnorm_train_eval():
+    bn = torch.nn.BatchNorm2d(2).cpu()
+    images = torch.arange(64, dtype=torch.float32).reshape(2, 2, 4, 4)
+
+    # 1. 保存训练前的统计；clone 避免快照随原 buffer 一起改变。
+    mean_before = bn.running_mean.clone()
+    var_before = bn.running_var.clone()
+    batches_before = bn.num_batches_tracked.clone()
+
+    # 2. no_grad 关闭梯度记录，但 train 模式仍会更新运行统计。
+    bn.train()
+    with torch.no_grad():
+        train_output = bn(images)
+
+    assert train_output.shape == images.shape
+    assert torch.isfinite(train_output).all().item()
+    assert bn.num_batches_tracked.item() == batches_before.item() + 1
+    assert not torch.equal(bn.running_mean, mean_before)
+    assert not torch.equal(bn.running_var, var_before)
+    batch_mean = images.mean(dim=(0, 2, 3))
+    expected_mean = (1 - bn.momentum) * mean_before + bn.momentum * batch_mean
+    torch.testing.assert_close(bn.running_mean, expected_mean)
+
+    # 3. 保存训练后的统计，再检查 eval 前向不会继续更新它们。
+    mean_after = bn.running_mean.clone()
+    var_after = bn.running_var.clone()
+    batches_after = bn.num_batches_tracked.clone()
+    bn.eval()
+    with torch.no_grad():
+        eval_output_1 = bn(images)
+        eval_output_2 = bn(images)
+
+        # eval 使用保存的运行统计，再应用可学习的缩放和偏移。
+        expected_eval = (
+            (images - mean_after.view(1, 2, 1, 1))
+            / torch.sqrt(var_after.view(1, 2, 1, 1) + bn.eps)
+        )
+        expected_eval = (
+            expected_eval * bn.weight.view(1, 2, 1, 1)
+            + bn.bias.view(1, 2, 1, 1)
+        )
+
+    torch.testing.assert_close(eval_output_1, eval_output_2)
+    torch.testing.assert_close(eval_output_1, expected_eval)
+    assert torch.equal(bn.running_mean, mean_after)
+    assert torch.equal(bn.running_var, var_after)
+    assert torch.equal(bn.num_batches_tracked, batches_after)
+
+    # 4. weight/bias 是可训练参数，运行统计是无需梯度的 buffer。
+    parameters = dict(bn.named_parameters())
+    buffers = dict(bn.named_buffers())
+    assert set(parameters) == {"weight", "bias"}
+    assert set(buffers) == {"running_mean", "running_var", "num_batches_tracked"}
+    assert all(parameter.requires_grad for parameter in parameters.values())
+    assert all(not buffer.requires_grad for buffer in buffers.values())
+
+    print("parameters:", list(parameters))
+    print("buffers:", list(buffers))
+    print("running_mean:", mean_before.tolist(), "->", mean_after.tolist())
+    print("running_var:", var_before.tolist(), "->", var_after.tolist())
+    print("num_batches_tracked:", batches_before.item(), "->", batches_after.item())
