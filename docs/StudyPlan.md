@@ -1,6 +1,6 @@
 # PetVision-Lab：Python / 数学基础 → CNN → ResNet → Transformer → ViT → Mini-GPT → LLM / VLM
 
-> **版本**：v1.20 · **更新日期**：2026-10-28<br>
+> **版本**：v1.23 · **更新日期**：2026-10-30<br>
 > **适用背景**：Python 实践与深度学习理论都需要补充，优先理解原理和亲手实现。  
 > **时间预算**：8 周，每周 30 小时，总计约 240 小时；每周 24 小时明确任务 + 6 小时补基础、调试和复盘。  
 > **算力分工**：本地笔记本 RTX 4060 用于基础练习、视觉模型和 Mini-GPT；第二周已保存的环境检查记录显示总显存为 8.00 GiB。计划使用云端 48GB 显存 GPU 运行后期 LLM / VLM，云端型号与可用显存届时实测。  
@@ -209,13 +209,15 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 
 - [PyTorch CIFAR-10 教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/blitz/cifar10_tutorial.html)。
 - [torchvision Transforms v2（官方英文）](https://docs.pytorch.org/vision/stable/transforms.html)：第三周起自建分类模型使用 v2；教程中的旧版预处理写法按[第三周示例](week3.md#cifar-v2-transforms)调整。
-- [ResNet 原论文](https://arxiv.org/abs/1512.03385)、[李沐论文精读索引](https://github.com/mli/paper-reading)。
-- [torchvision ResNet18](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html) 与 [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)：用于结构和数值对照。
+- [《动手学深度学习》7.6 残差网络](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html)：ResNet 主材料，选择 PyTorch；Day 3 读 7.6.2「残差块」，Day 4 读 7.6.3「ResNet模型」，具体顺序与教材到项目的差异见[第三周阅读指引](week3.md#resnet-reading)。
+- [李沐：29 残差网络 ResNet](https://www.bilibili.com/video/BV1bV41177ap/)：配套教学视频，按需观看「ResNet」与「代码」分段。
+- [torchvision ResNet18](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html) 与 [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)：Day 4 自写网络形状检查通过后，按指定类和函数查阅，用于结构和数值对照。
+- [ResNet 原论文](https://arxiv.org/abs/1512.03385)、[李沐论文精读索引](https://github.com/mli/paper-reading)：实现后的补充选读，优先看残差块示意图和 18 层结构表。
 
 **编程作业**
 
 1. 在 CIFAR-10 上手写一个两到四层卷积的 CNN，检查每层输出形状；用 GAP 接分类头。
-2. 实现 `BasicBlock` 和 ResNet18，处理 stride=2、通道变化时的 `1×1` projection。
+2. Day 3 按教材的计算顺序实现始终执行残差相加的 `BasicBlock`，项目约定 use_1x1conv 默认 True，只控制 `1×1` projection，需要恒等旁路时显式传 False；Day 4 统一卷积 bias 与投影 BN，再按各块角色明确选择投影，组装 ResNet18。Day 5 才增加独立的 use_residual 做消融，具体接口与兼容要求见[残差开关步骤](week3.md#residual-ablation)。
 3. **CIFAR-10 输入层统一为 `3×3、stride=1、padding=1` 卷积，移除初始最大池化**；torchvision 参考版同步修改。默认参考实现的 `7×7、stride=2` 输入卷积及池化需要明确区分。
 4. 用参考实现检查结构、参数量和形状；在对齐权重、输入与运行模式后，检查可比输出。
 5. 完成下表两类单变量实验，保存 checkpoint、配置和验证曲线。
@@ -223,7 +225,7 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 | 实验 | 对照组 | 控制条件 |
 | --- | --- | --- |
 | BN 消融 | 同一 CNN 的 BN on / off | 相同数据划分、种子、优化器、增强与训练预算 |
-| 残差消融 | 同深度、同宽度网络的残差 on / off | 主分支结构与训练设置一致；关闭残差时不做 shortcut 相加，记录参数量及投影分支差异 |
+| 残差消融 | 同深度、同宽度网络的残差 on / off | 主分支结构与训练设置一致；off 保留投影模块，跳过旁路计算及相加，总参数量相同，说明投影参数不参与计算 |
 
 浅层 CNN 用于分类基线；对残差作用的解释来自同深度、同宽度对照。数据增强开关、卷积核大小和多随机种子重复属于拓展。
 
@@ -757,7 +759,7 @@ model:
   name: resnet18
   num_classes: 10
   stem: cifar                 # 3x3、stride=1，移除初始最大池化
-  residual: true
+  residual: true              # Day 5 新增可选开关；省略时默认 True
 
 data:
   name: cifar10
@@ -790,7 +792,7 @@ output_dir: outputs/resnet_on
 
 BN / 残差开关与 Patch=4/8 使用独立配置快照，记录差异；配置预算确定后，再运行正式对照。
 
-本例与第三周完整配置使用同一组字段；手写 ResNet 从零初始化，不设置尚无加载实现的 pretrained 开关。每个配置字段必须在对应入口被读取、传给对象或明确校验，不能只在 YAML 中出现。
+本例展示第三周 Day 5 接入消融后的字段；Day 4 的标准 ResNet 配置先省略 residual，后续入口按 True 重建，原配置与已保存 model_config 保持一致。手写 ResNet 从零初始化，不设置尚无加载实现的 pretrained 开关。每个配置字段必须在对应入口被读取、传给对象或明确校验，不能只在 YAML 中出现。
 
 第二周的小实验在循环内收集指标，循环结束后一次保存 history 和曲线。第三周起在每个 epoch、语言模型在每个验证时点追加一条新记录；表头只在新文件写一次，不把完整历史反复追加。第七周恢复训练继续已有日志，先核对恢复步数。训练耗时与峰值显存的生成及保存见[第三周资源记录步骤](week3.md#training-resources)。
 
@@ -1004,7 +1006,8 @@ Oxford-IIIT Pet 迁移实验另建拓展表；CLIP 预训练零样本结果另�
 | PyTorch | [基础教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/basics/intro.html) | W2：数据、模型、求导、优化与保存 |
 | PyTorch | [PyTorch 视频索引（中文译文，视频英文）](https://docs.pytorch.ac.cn/tutorials/beginner/introyt/introyt_index.html) / [PyTorch 安装说明（中文译文）](https://pytorch.ac.cn/get-started/locally/)（[官方命令向导](https://pytorch.org/get-started/locally/)） | W2：按需补充和配置环境 |
 | CNN | [CIFAR-10 教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/blitz/cifar10_tutorial.html) | W3 |
-| 论文 | [ResNet](https://arxiv.org/abs/1512.03385) / [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html) | W3：阅读、手写与 CIFAR 输入层对照 |
+| ResNet 入门 | [D2L 残差网络](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html) / [李沐配套教学视频](https://www.bilibili.com/video/BV1bV41177ap/) | W3：Day 3 读 7.6.2，Day 4 读 7.6.3；按[阅读指引](week3.md#resnet-reading)手写 |
+| ResNet 参考 | [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html) / [原论文](https://arxiv.org/abs/1512.03385) | W3：源码按指定范围用于结构与数值对照；论文在实现后选读 |
 | 论文 | [Attention Is All You Need](https://arxiv.org/abs/1706.03762) | W4：Attention、Encoder 与关键公式 |
 | 论文 / 代码 | [ViT](https://arxiv.org/abs/2010.11929) / [vit-pytorch](https://github.com/lucidrains/vit-pytorch) | W5 |
 | 中文讲解 | [李沐论文精读](https://github.com/mli/paper-reading) | W3 / W4 / W5 / W8：对应主题选读 |

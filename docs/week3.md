@@ -1,6 +1,6 @@
 # 第三周逐日学习指南：CNN、ResNet 与 BN / 残差对照
 
-> 更新日期：2026-10-29<br>
+> 更新日期：2026-10-30<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写 CNN、BasicBlock 和 CIFAR 版 ResNet18，完成 BN on/off 与同深宽残差 on/off 两类对照，保留统一划分供第五周复用。  
@@ -25,7 +25,7 @@ PetVisionLab/
 ├── src/petvision/
 │   ├── data/datasets.py                    # Day 1：新增 CIFAR-10 与独立预处理
 │   ├── models/cv/cnn.py                    # Day 2：CNN、BN 开关
-│   ├── models/cv/resnet.py                 # Day 3–4：BasicBlock、ResNet18
+│   ├── models/cv/resnet.py                 # Day 3–4：标准残差块与网络；Day 5：残差开关
 │   └── utils/history.py                    # Day 2：保存训练记录与绘制曲线
 ├── configs/cv/
 │   ├── cnn_cifar10.yaml                    # Day 2：BN on
@@ -35,7 +35,7 @@ PetVisionLab/
 ├── scripts/inspect_cifar10.py              # Day 1：数据、划分与形状
 ├── scripts/train_cv.py                     # Day 2–5：组织三种运行模式与结果保存
 ├── scripts/evaluate.py                     # Day 2：扩展 CNN 评估，保留权重与划分核对
-├── tests/test_resnet.py                    # Day 2–4：形状、反向、参考对照
+├── tests/test_resnet.py                    # Day 2–5：形状、反向、参考对照与残差开关
 ├── experiments/cnn_vs_resnet/week3/
 │   ├── README.md                          # 已提供
 │   ├── cifar10_split.json                 # Day 1：45k/5k 固定索引
@@ -88,9 +88,9 @@ CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool�
 | --- | --- | --- | --- | --- |
 | Day 1 | 卷积形状与 CIFAR-10 固定划分 | 4h | 1h | 45k/5k 索引与预处理检查 |
 | Day 2 | CNN、BatchNorm 与基线训练 | 4h | 1h | CNN 前反向与训练曲线 |
-| Day 3 | 手写 BasicBlock 与投影分支 | 4h | 1h | 同尺寸与下采样残差块 |
+| Day 3 | 手写 BasicBlock 与投影分支 | 4h | 1h | 始终执行残差相加的普通块与投影块 |
 | Day 4 | 组装 CIFAR 版 ResNet18 并对照参考 | 4h | 1h | ResNet18、参考层对齐检查 |
-| Day 5 | BN 与残差的单变量对照 | 4h | 1h | 四组训练、配置快照与验证记录 |
+| Day 5 | BN 与残差的单变量对照 | 4h | 1h | 残差开关、四组训练、配置快照与验证记录 |
 | Day 6 | 验证结果、错误分析与周总结 | 4h | 1h | 两类对照报告与第五周复用材料 |
 | Day 7 | 休息 | 0h | 0h | — |
 | 合计 | — | 24h | 6h | 30h |
@@ -761,29 +761,51 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml
 <a id="day-3"></a>
 ## Day 3：手写 BasicBlock 与投影分支
 
+<a id="resnet-reading"></a>
 ### 去哪里学、读到哪里
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [ResNet 原论文](https://arxiv.org/abs/1512.03385) | 第 3 节、残差块示意图与 identity shortcut | 画出 F(x)+shortcut(x) |
-| [torchvision ResNet 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html) | BasicBlock、downsample、forward | 手写形状对齐 |
+| [《动手学深度学习》7.6 残差网络](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html)（主材料） | 7.6.2「残差块」的结构图、PyTorch `Residual` 类与两个形状示例 | 画出两条路径，再手算本项目的输入输出 |
+| [李沐：29 残差网络 ResNet](https://www.bilibili.com/video/BV1bV41177ap/)（配套视频，按需观看） | 「ResNet」讲解与「代码」分段，重点看单个残差块 | 对照图文指出主分支、旁路和相加位置 |
+
+今天先学单个块，按下面顺序阅读；这些操作计入下方的 1h 阅读时间。图文能读懂时直接跟做，需要口头讲解时穿插视频对应部分。
+
+1. 打开教材的 7.6.2，代码标签选择 **PyTorch**。先看残差块示意图，找出输入、主分支、旁路和相加节点。在本项目中把主分支记作 `F(x)`，块的输出写成 `ReLU(F(x) + shortcut(x))`。
+2. 先读 `Residual.forward`，逐行跟踪主分支和旁路，确认相加发生在最后一次 ReLU 之前。再回到 `__init__`，找到 forward 用到的两层卷积、两个 BN 和可选的 1×1 卷积；把每个层对应到图上的位置。
+3. 对照本页第二步的例 A、例 B，在纸上分别写出两条路径的出口形状。先判断输入能否直接相加；不能时，再确定旁路的输出通道与 stride。
+4. 按下表把教材名称对应到项目接口，再开始第一步的实现。自查时先口头说明每个参数控制什么，再把具体形状代入。
+
+| 教材中的名称 | 本项目中的对应项 |
+| --- | --- |
+| `Residual` | `BasicBlock`，本日要实现的基本残差块 |
+| `input_channels` / `num_channels` / `strides` | `in_channels` / `out_channels` / `stride` |
+| `conv3` | 本项目命名为 `shortcut`，保存旁路上的 1×1 投影；不用投影时为 None |
+| `use_1x1conv` | 保留同名参数，只控制是否创建投影；项目默认 True，需要恒等旁路时显式传 False，教材的默认值为 False |
+| 教材始终执行残差相加 | Day 3–4 保持相同计算顺序；Day 5 再增加独立的 `use_residual` 开关 |
+
+公式中的 shortcut(x) 表示整条旁路的结果；代码中的 self.shortcut 只保存可选投影。它为 None 时，旁路结果直接使用 x，forward 不调用 None。
+
+今天按教材的计算顺序实现：投影分支只有 1×1 卷积，各卷积沿用默认的 `bias=True`，所有块都执行残差相加。项目将 `use_1x1conv` 默认设为 True，省略时会创建投影，即使输入 / 输出通道相同、stride=1 也一样。需要直接保留输入时显式传 False，此时输入与主分支输出必须同形状；通道或尺寸变化时使用 True，让旁路先完成投影。Day 4 再将卷积统一为 `bias=False`，并给投影补 BN，与 torchvision 对照；Day 5 再增加用于消融的 `use_residual`。按这个顺序，每次只引入当前任务需要的变化。
+
+7.6.1「函数类」可在理解基本块后选读；7.6.3「ResNet模型」留到 Day 4。残差块练习沿用本项目的 PyTorch 环境，教材的 `d2l` 训练封装和数据加载不引入项目。[原论文](https://arxiv.org/abs/1512.03385)作为实现后的补充阅读，先看残差块示意图和第 3 节感兴趣的部分；[torchvision 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)在 Day 4 的结构对照环节按指定范围查阅。
 
 ### 时间与操作
 
 | 时间 | 做什么 |
 | --- | --- |
-| 1h | 阅读残差公式与 BasicBlock |
+| 1h | 按上述顺序读图与教学实现，手算两条路径的尺寸 |
 | 2h | 实现普通块和 1×1 projection |
 | 1h | 检查形状、梯度和错误尺寸 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
 ### 当天任务概览
 
-1. 创建 `src/petvision/models/cv/resnet.py` 的 BasicBlock：3×3 Conv→BN→ReLU→3×3 Conv→BN，加 shortcut 后 ReLU。实现 `use_residual` 开关，关闭时主分支计算保持不变。
+1. 创建 `src/petvision/models/cv/resnet.py` 的 BasicBlock：3×3 Conv→BN→ReLU→3×3 Conv→BN，加旁路后 ReLU。今天所有块都执行残差相加。
 
-2. 当 stride=2 或通道数不同，残差 on 使用 1×1 Conv+BN projection；同尺寸使用 identity。先手算 `[2,64,32,32]→[2,128,16,16]` 的两条路径。
+2. 默认 `use_1x1conv=True`，使用 1×1 Conv projection；同通道、stride=1 且需要恒等旁路时显式传 False，旁路直接使用原输入。先手算 `[2,64,32,32]→[2,128,16,16]` 的两条路径。
 
-3. 分别测试同通道 stride=1、变通道 stride=2、batch=1、residual off。对参与前向的参数检查有限梯度，投影只在启用残差时参与计算。
+3. 分别测试普通块、只改变通道、只下采样、同时改变通道与尺寸，覆盖 batch=1/2。对参与前向的参数检查梯度存在且有限。
 
 4. 解释 identity 与 projection 各适用什么条件，故意构造一次不匹配的相加并阅读报错，再修复。检查只打印，不要求额外 CSV。
 
@@ -791,19 +813,19 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml
 
 #### 第一步：分别实现主分支和 shortcut
 
-创建 `src/petvision/models/cv/resnet.py`，顶层写 `import torch` 和 `from torch import nn`，在其中定义 `BasicBlock(in_channels, out_channels, stride=1, use_residual=True)`。今天先实现单块，明天在同一文件增加 ResNet18；测试从 `petvision.models.cv.resnet` 导入 BasicBlock。
+创建 `src/petvision/models/cv/resnet.py`，顶层写 `import torch` 和 `from torch import nn`，在其中定义继承 `nn.Module` 的 `BasicBlock(in_channels, out_channels, stride=1, use_1x1conv=True)`。接口沿用教材的投影开关，项目约定默认 True，步幅参数命名为 stride；调用时用关键字明确传入这两个参数。今天先实现单块，明天在同一文件增加 ResNet18；测试从 `petvision.models.cv.resnet` 导入 BasicBlock。
 
-主分支按两层 3×3 卷积写出，第一层负责 stride；第二层保持尺寸。BN 后的 ReLU 位置要与参考一致，第二层输出在残差相加前不先 ReLU。
+主分支按两层 3×3 卷积写出，第一层负责 stride；第二层保持尺寸。第二层 BN 的输出直接进入残差相加，最后再 ReLU，与教材的 forward 顺序一致。
 
 具体按“先注册层，再连接数据”的顺序完成：
 
-1. 在构造函数保存 use_residual，并创建第一层 Conv、BN、ReLU 和第二层 Conv、BN；各层只创建一次，不放进 forward。
-2. 根据输入 / 输出通道与 stride，选择 Identity 或投影分支，具体参数见下段。先在纸上分别写出两条路径的出口形状，确认能够逐元素相加。
-3. 在 forward 中保留原始输入 x，让另一变量依次经过 Conv1 → BN1 → ReLU → Conv2 → BN2，得到主分支输出。
-4. use_residual=True 时，将原始 x 送入 shortcut，再与主分支相加；不能把主分支的中间结果送入 shortcut。False 时跳过旁路计算和相加。
-5. 对相加后或关闭残差后的结果统一执行最后一次 ReLU，并返回。再用下一步的两个输入逐段打印形状，定位哪一层第一次偏离手算。
+1. 在构造函数创建两层 Conv 及对应的 BN；用 `nn.ReLU()` 创建激活模块的实例，保存为 self.relu，在两个激活位置复用。各层只创建一次，不放进 forward。
+2. `use_1x1conv=True` 时创建旁路 1×1 卷积，保存到 `self.shortcut`；False 时令其为 None。先在纸上分别写出两条路径的出口形状，确认能够逐元素相加。
+3. 在 forward 中用 `identity = x` 保留原始输入，让另一变量 out 依次经过 Conv1 → BN1 → ReLU → Conv2 → BN2，得到主分支输出。
+4. `self.shortcut is not None` 时，将原始 x 送入投影并更新 identity；否则 identity 保持为 x。两种情况都将 out 与 identity 相加，不能把主分支的中间结果送入投影。
+5. 对相加结果执行最后一次 ReLU 并返回。再用下一步的两个输入逐段打印形状，定位哪一层第一次偏离手算。
 
-两层卷积都用 padding=1；第一层将 in_channels 变为 out_channels，使用传入 stride，第二层接收并输出 out_channels，stride=1。旁路 shortcut 在通道相同且 stride=1 时用 Identity；否则用 `Conv2d(in_channels,out_channels,1,stride=stride,bias=False)` 加 `BatchNorm2d(out_channels)`。这个 1×1 卷积称为 projection（投影）：它调整通道数，并按相同步幅缩小高宽，使两条路径能逐元素相加。主分支卷积也用 bias=False，与 Day4 的 ResNet 参考保持一致。
+两层主分支卷积都用 padding=1；第一层将 in_channels 变为 out_channels，使用传入 stride，第二层接收并输出 out_channels，stride=1。投影使用 `Conv2d(in_channels, out_channels, 1, stride=stride)`，今天各卷积保持教材默认的 bias=True。这个 1×1 卷积称为 projection（投影）：它调整通道数，并按相同步幅缩小高宽，使两条路径能逐元素相加。旁路为 None 时表示恒等路径，仍然参与相加。
 
 ```text
 x ── Conv/BN/ReLU ── Conv/BN ── + ── ReLU
@@ -812,32 +834,44 @@ x ── Conv/BN/ReLU ── Conv/BN ── + ── ReLU
 
 #### 第二步：处理两个具体输入
 
-例 A：`[2,64,32,32]`、out_channels=64、stride=1，主分支与 shortcut 都为 `[2,64,32,32]`。
+例 A：输入 `[2,64,32,32]`，创建 `BasicBlock(64, 64, use_1x1conv=False, stride=1)`；主分支与原输入都为 `[2,64,32,32]`，直接相加。
 
-例 B：同样输入、out_channels=128、stride=2，主分支为 `[2,128,16,16]`；shortcut 的 1×1 Conv 也用 stride=2，输出必须一致。
+例 B：同样输入，创建 `BasicBlock(64, 128, use_1x1conv=True, stride=2)`；主分支为 `[2,128,16,16]`，shortcut 的 1×1 Conv 也用 stride=2，输出必须一致。
+
+再用 `BasicBlock(64, 128, stride=2)` 检查默认调用，省略开关后仍使用投影，输出形状与例 B 一致。例 A 的 False 需要显式保留，才能检查直接使用原输入的恒等旁路。
+
+下面是本文件 forward 的旁路与相加部分；先完成主分支计算，令 out 保存第二层 BN 的输出，再接上这段：
 
 ```python
-def forward(self, x):
-    # 先算主分支 out
-    ...
-    if self.use_residual:
-        out = out + self.shortcut(x)
-    return self.relu(out)
+identity = x
+if self.shortcut is not None:
+    identity = self.shortcut(x)
+out = out + identity
+return self.relu(out)
 ```
+
+`if` 只决定是否投影，`out + identity` 始终执行。故意把例 B 的 `use_1x1conv` 改成 False，观察直接相加的尺寸错误，再改回 True；关闭投影不会关闭残差。
 
 #### 第三步：写出能暴露错误的检查
 
 把下面各项添加到 Day 2 已创建的 `tests/test_resnet.py`，使用 `test_` 开头的函数名，保留已有 CNN 检查。
 
-分别覆盖 stride=1/2、通道相同/变化、batch=1/2、residual on/off。对输出求标量 loss 再反向，检查参与路径的梯度。
+对 batch=1/2 分别覆盖下面四种情况；输入均为 `[B,64,32,32]`。对输出求标量 loss 再反向，检查主分支和存在的投影分支参数都有有限梯度。
 
-若相加报尺寸错误，分别打印 out.shape 与 shortcut(x).shape；若关闭残差仍执行相加，开关测试应失败。检查时不要求未参与路径产生梯度。
+| out_channels | stride | use_1x1conv | 预期输出 |
+| --- | --- | --- | --- |
+| 64 | 1 | False | `[B,64,32,32]` |
+| 128 | 1 | True | `[B,128,32,32]` |
+| 64 | 2 | True | `[B,64,16,16]` |
+| 128 | 2 | True | `[B,128,16,16]` |
 
-增加一个能区分开关的确定性小例子：同尺寸 identity 块、x 全为 1，主分支两层卷积的权重、存在的卷积 bias 及 BN bias 均设为 0，并切 eval。主分支输出应为 0，residual on 输出应全为 1，off 应全为 0。随后另建普通随机块做有限梯度检查；上述置零例子专门验证相加路径，不用于要求每个梯度都非零。
+若相加报尺寸错误，分别打印 out.shape 和 identity.shape；有投影时继续检查 shortcut(x).shape。先确认调用时的 use_1x1conv，再核对两条路径的 stride。
+
+增加一个能确认残差确实参与相加的确定性小例子：同尺寸、显式传入 use_1x1conv=False 的块，x 全为 1，主分支两层卷积的权重、卷积 bias 及 BN bias 均设为 0，并切 eval。主分支输出应为 0，块的输出应全为 1。这个检查使用恒等旁路，保持显式的 False。随后另建普通随机块做有限梯度检查；置零例子专门验证相加路径，不用于要求每个梯度都非零。Day 5 再在这个例子上补残差关闭后的输出检查。
 
 #### 第四步：自己解释一次
 
-说明 residual off 的主分支仍有相同层数与宽度，projection 的参数是否保留由实现决定并需记录；浅层 CNN 不是该开关实验的另一组。
+说明不用投影时为什么仍然要相加，为什么通道或空间尺寸变化时需要投影，以及主分支和旁路分别怎样得到最终形状。此时先掌握标准块；关闭残差的比较放到 Day 5。
 
 ### 运行与验收
 
@@ -845,10 +879,10 @@ def forward(self, x):
 python -m pytest tests/test_resnet.py -q
 ```
 
-补充的 BasicBlock 检查应覆盖普通块、下采样块与残差关闭；例 B 的输出应为 `[2,128,16,16]`。若残差相加报错，先分别打印两条路径的形状，检查主分支第一层与 projection 的 stride 是否一致。
+补充的 BasicBlock 检查应覆盖上表四种情况；例 B 的输出应为 `[2,128,16,16]`。若残差相加报错，先分别打印两条路径的形状，检查投影是否启用，以及主分支第一层与 projection 的 stride 是否一致。
 
 - [ ] 两条路径相加前形状一致，下采样块输出正确。
-- [ ] 残差开关只改变 shortcut 路径与相加，主分支深度宽度一致。
+- [ ] use_1x1conv 只控制投影，标准块始终执行残差相加。
 - [ ] 能解释为什么 stride 或通道变化需要 projection。
 
 <a id="day-4"></a>
@@ -858,24 +892,35 @@ python -m pytest tests/test_resnet.py -q
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [torchvision ResNet 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html) | ResNet、_make_layer、resnet18 默认 stem | 同步修改参考输入层 |
-| [ResNet 原论文](https://arxiv.org/abs/1512.03385) | 18 层结构与不同 stage 下采样 | 核对 [2,2,2,2] |
+| [《动手学深度学习》7.6 残差网络](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html)（主材料） | 7.6.3「ResNet模型」的块分组、stage 首块下采样和组装过程，代码选择 PyTorch | 把 [2,2,2,2] 对应到本页的四个 stage |
+| [torchvision ResNet 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)（对照时查阅） | 自写网络形状通过后，按下方顺序查看指定类和函数 | 核对块结构、投影分支和参考输入层 |
+| [ResNet 原论文](https://arxiv.org/abs/1512.03385)（实现后选读） | 表 1 的 18 层结构与残差块示意图 | 对照自己的网络数出 18 层 |
+
+先按教材理解“多个块怎样组成 stage，四个 stage 怎样组成网络”，再按本页第一步实现。教材的 `b2` 到 `b5` 对应本项目的 stage1 到 stage4。教材完整示例使用单通道图像，并带 7×7、stride=2 的输入卷积和初始最大池化；项目使用 RGB CIFAR-10，入口继续按 **3→64 的 3×3、stride=1、padding=1 卷积，不接初始最大池化** 实现。训练与数据加载沿用项目已有入口。
+
+自写网络的形状和反向检查通过后，再打开官方源码，按下面的范围逐项核对：
+
+1. `BasicBlock.__init__` 与 `forward`：核对两层卷积、BN、ReLU 的位置和旁路相加；沿 `conv3x3`、`conv1x1` 查看卷积的 bias 设置。
+2. `ResNet._make_layer`：核对 stage 第一个块何时使用 stride=2，以及通道或 stride 变化时怎样创建 `downsample`。这里的 `downsample` 对应项目的投影旁路。
+3. `ResNet.__init__` 与 `_forward_impl`：核对四个 stage、池化和分类头的数据流；按本页第二步同步修改参考的输入卷积与 maxpool。
+
+`Bottleneck`、预训练权重枚举、注册装饰器及其他 ResNet 变体留作拓展。原论文可在实现和对照通过后或训练等待时选读。
 
 ### 时间与操作
 
 | 时间 | 做什么 |
 | --- | --- |
-| 0.5h | 复习 stage 数量与下采样位置 |
-| 2h | 组装网络并修改 torchvision 参考 |
+| 0.5h | 阅读教材的 stage 组织方式，核对 CIFAR 输入层差异 |
+| 2h | 统一块的 bias 与投影 BN，组装网络并修改 torchvision 参考 |
 | 1h | 权重、形状与数值对齐 |
 | 0.5h | smoke 和正式残差 on 训练 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
 
 ### 当天任务概览
 
-1. 完成 ResNet18：CIFAR stem 输出 `[B,64,32,32]`，四个 stage 空间尺寸依次 32、16、8、4，再 AdaptiveAvgPool→flatten→Linear(512,10)。
+1. 先将 Day 3 的块调整为卷积 bias=False、投影 1×1 Conv+BN，再完成 ResNet18：CIFAR stem 输出 `[B,64,32,32]`，四个 stage 空间尺寸依次 32、16、8、4，再 AdaptiveAvgPool→flatten→Linear(512,10)。
 
-2. 建立 `torchvision.models.resnet18(weights=None,num_classes=10)` 参考；将 conv1 换为 3×3,stride=1,padding=1，maxpool 换 Identity。结构对照时使用 residual on。
+2. 建立 `torchvision.models.resnet18(weights=None,num_classes=10)` 参考；将 conv1 换为 3×3,stride=1,padding=1，maxpool 换 Identity。今天自写和参考网络都保持标准残差相加。
 
 3. 逐项对齐 state_dict，包括 BN 的可训练参数与 running buffers；若键名不同则显式映射并检查覆盖率，不能忽略未匹配主分支。相同输入、eval、FP32 下比较 logits，起始容差 1e-5，并分别验证反向有限。
 
@@ -885,7 +930,9 @@ python -m pytest tests/test_resnet.py -q
 
 #### 第一步：按 stage 数量组织 ResNet18
 
-继续修改 `src/petvision/models/cv/resnet.py`，在 BasicBlock 之外定义 `ResNet18(num_classes=10, use_residual=True)`，按下表组合各 stage。扩展 `tests/test_resnet.py`，从该模块导入 ResNet18，形状与参考对照均在测试函数中执行，参考模型不会替代正式实现。
+先在 `src/petvision/models/cv/resnet.py` 中完成两项与 torchvision 的结构对齐：主分支和投影卷积都改为 `bias=False`；use_1x1conv=True 时，将 shortcut 改为由 1×1 Conv 和 BatchNorm2d 组成的 Sequential，False 时仍为 None。保留 Day 3 的接口与始终相加的 forward，重新运行已有块形状、反向和恒等旁路检查；检查中清零卷积 bias 前先判断它是否存在。
+
+块检查通过后，在同一文件定义 `ResNet18(num_classes=10)`，按下表组合各 stage。扩展 `tests/test_resnet.py`，从该模块导入 ResNet18，形状与参考对照均在测试函数中执行，参考模型不会替代正式实现。use_residual 在 Day 5 才加入。
 
 ```text
 stem               [B,64,32,32]
@@ -898,16 +945,18 @@ GAP + classifier   [B,10]
 
 每个 stage 仅第一个 block 在需要时 stride=2；其余块 stride=1。GAP 后使用 flatten(start_dim=1)，保留 batch 维。
 
+组装 ResNet18 时，每个块都明确传入 use_1x1conv：普通块传 False，需要改变通道或尺寸的块传 True。模块默认开启投影，网络结构则按各块的角色选择，从而与 torchvision 的参考结构一致。
+
 按以下顺序把表格变成模型，不要一次写完后只检查最终十分类输出：
 
 1. 在 ResNet18 构造函数创建 stem：3→64 的 3×3 Conv、stride=1、padding=1、bias=False，接 BN 和 ReLU；CIFAR 版本不接入口 maxpool。
-2. 创建 stage1 的两个 64→64、stride=1 的 BasicBlock。每创建一个块，都把本模型的 use_residual 传进去。
-3. 创建 stage2：首块 64→128、stride=2，次块 128→128、stride=1；按同一规则建立 stage3 的 128→256 和 stage4 的 256→512。
+2. 创建 stage1 的两个 64→64、stride=1 的 BasicBlock，均使用 use_1x1conv=False，旁路直接保留输入。
+3. 创建 stage2：首块 64→128、stride=2、use_1x1conv=True，次块 128→128、stride=1、use_1x1conv=False；按同一规则建立 stage3 的 128→256 和 stage4 的 256→512。
 4. 用 Sequential 或其他注册模块的容器保存每个 stage，避免只放在普通 Python 列表中。最后创建输出为 1×1 的全局平均池化和 512→num_classes 的 Linear。
 5. 在 forward 中按 stem、四个 stage、池化、展平、分类头依次调用。先输入一批随机图片，逐项核对上表；B=1 时也必须保留 batch 维。
 6. 形状全部正确后，再做交叉熵反向和下一步的参考权重对照。形状错误先回到对应 stage 修复，不开始正式训练。
 
-例如 stage2 的第一个块是 `BasicBlock(64,128,stride=2)`，把 `[B,64,32,32]` 变为 `[B,128,16,16]`；第二个是 `BasicBlock(128,128,stride=1)`，保持后者形状。stage1 不下采样，stage3/4 以同样方式在首块缩小高宽。ResNet18 的“18”通常按入口 1 层卷积、8 个块各 2 层卷积、最后 1 层 Linear 计数，不表示有 18 个 BasicBlock。
+例如 stage2 的第一个块是 `BasicBlock(64, 128, use_1x1conv=True, stride=2)`，把 `[B,64,32,32]` 变为 `[B,128,16,16]`；第二个是 `BasicBlock(128, 128, use_1x1conv=False, stride=1)`，保持后者形状。stage1 不下采样，stage3/4 以同样方式在首块缩小高宽。ResNet18 的“18”通常按入口 1 层卷积、8 个块各 2 层卷积、最后 1 层 Linear 计数，不表示有 18 个 BasicBlock。
 
 #### 第二步：同步修改参考网络
 
@@ -917,7 +966,7 @@ reference.conv1 = torch.nn.Conv2d(3, 64, 3, stride=1, padding=1, bias=False)
 reference.maxpool = torch.nn.Identity()
 ```
 
-自写 ResNet 的卷积 bias、BN eps、ReLU 位置和 shortcut 结构要与参考一致。此处的 bias=False 是 ResNet 的约定，前一天 CNN 的 BN 消融仍按固定 bias=True。
+自写 ResNet 的卷积 bias、BN eps、ReLU 位置和 shortcut 结构要与参考一致。此处的 bias=False 是 ResNet 的约定，Day 2 的 CNN BN 消融仍按固定 bias=True。
 
 #### 第三步：权重对齐后再比较数值
 
@@ -940,14 +989,13 @@ model:
   name: resnet18
   num_classes: 10
   stem: cifar
-  residual: true
 experiment_dir: experiments/cnn_vs_resnet/week3/runs/resnet_on
 output_dir: outputs/resnet_on
 ```
 
-这段是要替换的字段，不是独立完整配置。入口将 `model.residual` 传给各块的 `use_residual`；`stem: cifar` 对应上面的 3×3 输入卷积和移除 maxpool。形状对照、参考权重复制和短运行均在检查模型上进行，正式模型单独重新创建。
+这段是要替换的字段，不是独立完整配置。今天的网络始终启用残差，配置先只包含已实现的模型参数；Day 5 再增加可选的 model.residual。`stem: cifar` 对应上面的 3×3 输入卷积和移除 maxpool。形状对照、参考权重复制和短运行均在检查模型上进行，正式模型单独重新创建。
 
-在 `scripts/train_cv.py` 和 `scripts/evaluate.py` 顶层导入 ResNet18，在已有模型选择处新增 model.name=resnet18 分支，将 num_classes、residual 分别传给构造函数的 num_classes、use_residual；当前只支持 stem=cifar，其他值明确报错。训练和评估使用相同的构造参数，评估仍以 checkpoint 保存的 model_config 重建。具体职责见[入口整理步骤](#cv-entry-refactor)；CIFAR 数据函数、训练器和 AdamW 继续复用。
+在 `scripts/train_cv.py` 和 `scripts/evaluate.py` 顶层导入 ResNet18，在已有模型选择处新增 model.name=resnet18 分支，将 num_classes 传给同名构造参数；当前只支持 stem=cifar，其他值明确报错。训练和评估使用相同的构造参数，评估仍以 checkpoint 保存的 model_config 重建。具体职责见[入口整理步骤](#cv-entry-refactor)；CIFAR 数据函数、训练器和 AdamW 继续复用。
 
 ### 运行与验收
 
@@ -972,14 +1020,14 @@ python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [BatchNorm2d 文档（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.nn.BatchNorm2d.html) | 可训练仿射参数和运行统计 | 明确 BN 对照差异 |
-| [ResNet 原论文](https://arxiv.org/abs/1512.03385) | plain / residual 的比较思路 | 只从同深宽对照解释残差 |
+| [ResNet 原论文](https://arxiv.org/abs/1512.03385)（选读） | plain / residual 的比较思路；实验操作按本页步骤完成 | 只从同深宽对照解释残差 |
 
 ### 时间与操作
 
 | 时间 | 做什么 |
 | --- | --- |
 | 0.5h | 写下两组实验假设与控制条件 |
-| 2h | 补充两份配置、对齐初始化并运行 |
+| 2h | 接入并检查残差开关，补充配置、对齐初始化并运行 |
 | 1h | 核对训练日志和参数量 |
 | 0.5h | 整理配置快照与图表 |
 | 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
@@ -990,13 +1038,38 @@ python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml
 
 2. BN 对照使用同一 CNN，只将 BN 替换为 Identity；两组卷积 bias 和其他层保持一致，从 Day 2 保存的 initial.pt 复制并核对共有参数的初始值。
 
-3. 残差对照沿用同一主分支深度与宽度，关闭 shortcut 相加；若关闭组省略 projection，记录总参数量与参与训练参数的差异。从 Day 4 保存的 initial.pt 复制共有主分支初始权重，避免随机数消耗顺序导致初值不同。
+3. 在已通过参考对照的网络上增加独立的 use_residual，沿用同一主分支深度与宽度。关闭时跳过旁路计算和相加，保留投影模块的定义与 state_dict 键；从 Day 4 保存的 initial.pt 复制初始状态，核对默认开启时的行为保持一致。
 
 4. 完成两组 off 训练，与 on 组使用同样划分、优化器、epoch、batch 和增强。保留每组配置快照、history 和 best，不能把浅层 CNN 与 ResNet 的差异直接当残差结论。
 
 ### 分步操作与自查
 
-#### 第一步：把四份配置按两对整理
+<a id="residual-ablation"></a>
+#### 第一步：接入残差开关，再把配置按两对整理
+
+修改已完成的 `src/petvision/models/cv/resnet.py`，在标准块上增加实验开关。use_1x1conv 继续只控制是否需要投影，use_residual 单独控制是否计算旁路并相加；两者使用不同名称。
+
+1. 将块接口扩展为 `BasicBlock(in_channels, out_channels, stride=1, use_1x1conv=True, use_residual=True)`，在构造函数保存 self.use_residual。use_1x1conv 继续默认 True；保持主分支、ReLU 位置和各层名称不变。
+2. 将整网接口扩展为 `ResNet18(num_classes=10, use_residual=True)`。创建四个 stage 的全部八个块时，都把整网收到的 use_residual 传下去；各块原来的 use_1x1conv 和 stride 保持不变。
+3. 投影模块仍只根据 use_1x1conv 创建，与 use_residual 无关。这样 on/off 的模型参数和 buffer 键集合相同，Day 4 的状态可以继续加载；关闭时保留投影的参数，但跳过它的计算。
+4. forward 先照常计算主分支 out；仅在 use_residual=True 时准备 identity、按需投影并执行相加。False 时直接对主分支输出执行最后一次 ReLU。下方片段接在第二层 BN 之后，替换 Day 3 的旁路与相加部分。
+
+```python
+if self.use_residual:
+    identity = x
+    if self.shortcut is not None:
+        identity = self.shortcut(x)
+    out = out + identity
+return self.relu(out)
+```
+
+5. 修改 `scripts/train_cv.py` 和 `scripts/evaluate.py` 的 resnet18 构造分支：从各自使用的 model_config 中读取 `.get("residual", True)`，检查结果为布尔值，再传给 ResNet18 的 use_residual。缺省视为开启，使 Day 4 未填写该字段的配置与 checkpoint 仍可使用；训练和评估采用相同规则。
+6. 在已有 `tests/test_resnet.py` 补开关检查。保留 Day 4 的权重对齐与参考输出检查，确认 use_residual=True 时仍然通过，新增开关不产生参数或 buffer。对普通块和投影块分别检查 on/off 的输出形状与主分支有限梯度；off 时不要求投影参数有梯度，它们的 grad 应为 None，投影 BN 的运行统计也不应被更新。梯度检查使用新模型或先将旧梯度清为 None。另在本地交互环境创建默认开启的 ResNet18，用已有 checkpoint 工具读取 Day 4 的 initial.pt，将 model_state 完整加载并检查无缺失或多余 key；这项自查使用本地实验文件，pytest 检查继续用临时状态，避免依赖仓库外的权重。
+7. 扩展 Day 3 的置零例子：同尺寸、use_1x1conv=False、x 全为 1，主分支输出为 0 并切 eval。开启残差时输出全为 1，关闭时输出全为 0；再另建普通随机块检查有限梯度。运行 `python -m pytest tests/test_resnet.py -q`，通过后再准备 off 组训练。
+
+此方案保留投影模块，因此残差两组的总参数量相同；off 组的投影参数不参与前向和反向。run_summary.json 的 params 继续表示总参数量，比较时另说明这一计算路径差异。
+
+开关检查通过后，把已有 on 配置与待创建的 off 配置按两对整理：
 
 ```text
 BN 对照：    cnn_bn_on  ↔ cnn_bn_off
@@ -1014,13 +1087,13 @@ BN 对照：    cnn_bn_on  ↔ cnn_bn_off
 | `cnn_no_bn_cifar10.yaml` | `outputs/cnn_bn_on/initial.pt` |
 | `resnet_no_residual_cifar10.yaml` | `outputs/resnet_on/initial.pt` |
 
-复制对应 on 配置后，BN off 只将 `model.use_bn` 改为 false，残差 off 只将 `model.residual` 改为 false；分别添加上表的 `training.init_checkpoint`。两份配置的 experiment_dir 改为本周 `runs/cnn_bn_off`、`runs/resnet_off`，output_dir 改为 `outputs/cnn_bn_off`、`outputs/resnet_off`。不要覆盖原 on 组文件。
+复制对应 on 配置后，BN off 只将 `model.use_bn` 改为 false，残差 off 在 model 中添加 `residual: false`；分别添加上表的 `training.init_checkpoint`。Day 4 的 on 配置保持原样，省略 residual 即按 True 重建，保留它与已保存 model_config 的一致性。两份新配置的 experiment_dir 改为本周 `runs/cnn_bn_off`、`runs/resnet_off`，output_dir 改为 `outputs/cnn_bn_off`、`outputs/resnet_off`。不要覆盖原 on 组文件。
 
-先确认文件存在且 step=0，再创建 off 模型，逐 key 复制共有参数和适用的 buffer；共有层的 shape 与值都要检查。Identity 替换应保持其他层的命名稳定，键名不同时显式映射；只允许预期的 BN/projection 差异，其他漏配或形状不符应报错。
+先确认文件存在且 step=0，再创建 off 模型，逐 key 复制共有参数和适用的 buffer；共有层的 shape 与值都要检查。BN off 用 Identity 替换 BN 时应保持其他层命名稳定，只允许预期的 BN key 差异。残差 off 保留投影模块，因此与 on 组的模型状态键应完全相同，包含投影卷积和投影 BN；任何漏项或形状不符都应先修复。
 
-复制完成后，保存 off 组自己的 initial.pt，并与来源文件逐项核对共有参数；列出两边独有的 BN/projection key，不以 strict=False 没有报错代替检查。来源文件缺失时先补齐初始状态及对应基线，不能临时用训练后的 best/last 代替。
+复制完成后，保存 off 组自己的 initial.pt，并与来源文件逐项核对共有参数；列出 BN 对照中独有的 BN key，残差对照的独有模型状态 key 应为空。不以 strict=False 没有报错代替检查。来源文件缺失时先补齐初始状态及对应基线，不能临时用训练后的 best/last 代替。
 
-实际核对时先列出两个 state_dict 的共有 key、来源独有 key、目标独有 key。共有 key 必须 shape 相同，复制后用 `torch.equal` 检查完全一致；两边独有 key 逐项归入预期 BN 或 projection 差异，未能解释的条目应先修复。最终打印共有/独有 key 数与最大共有参数差，后者应为 0；训练前的 BN running buffers 也按同一规则处理。
+实际核对时先列出两个 state_dict 的共有 key、来源独有 key、目标独有 key。共有 key 必须 shape 相同，复制后用 `torch.equal` 检查完全一致；BN 对照的独有 key 逐项归入预期 BN 差异，残差对照检查全部模型状态一致。最终打印共有/独有 key 数与最大共有参数差，后者应为 0；训练前的 BN running buffers 也按同一规则处理。
 
 仅设置相同 seed 不一定保证共有层初值一致：新增/删除随机初始化层会改变后续随机数消费顺序。对齐后新建优化器，按 Day 2 约定重置训练随机状态，再取第一批数据。
 
@@ -1040,7 +1113,7 @@ BN 对照：    cnn_bn_on  ↔ cnn_bn_off
 4. 运行到约定预算后，检查 epoch 连续且行数正确，读取最后一行并核对 last；再按验证选择规则核对 best。某次中断未完成预算时先标记为未完成，不能与完整运行直接作结论。
 5. 将同一对的起始、中间和最后阶段放在一起看：训练 loss 是否下降、验证是否同步改善、train/val 差距是否增大。若有 NaN 或异常跳变，先定位发生的 epoch，再检查输入、梯度与优化设置。
 
-比较 BN 或残差时，结果不必一定支持预设假设；不支持也保存曲线，并记录单种子、小预算和 projection 差异带来的局限。
+比较 BN 或残差时，结果不必一定支持预设假设；不支持也保存曲线，并记录单种子、小预算及残差 off 跳过投影计算带来的局限。
 
 ### 运行与验收
 
@@ -1054,6 +1127,7 @@ python scripts/train_cv.py --config configs/cv/resnet_no_residual_cifar10.yaml
 Day 2 和 Day 4 的 on 组已经完成时直接复用，不为填写对照表再训练一次。off 组虽然读取了初始权重，仍从零进度、新优化器开始；这与第七周恢复训练的语义不同。
 
 - [ ] BN 和残差各有清楚假设、控制条件与参数量记录。
+- [ ] use_1x1conv 与 use_residual 的职责独立，默认开启残差时仍通过 Day 4 参考检查，旧配置与状态可加载。
 - [ ] on/off 的 initial.pt 均为 step=0，每对共有主分支初始化一致，输出目录与 checkpoint 不互相覆盖。
 - [ ] 四组均完成冻结预算，短运行与正式结果有明确区分。
 
@@ -1113,7 +1187,7 @@ BN 图只画同 CNN 两组的 train/val；残差图只画同深宽两组。横�
 
 #### 第三步：有限参考重写 BasicBlock
 
-先写形状，再写 forward；分别验证普通块和下采样块。能解释为什么第二个 3×3 Conv 后要先完成残差相加再激活。
+先写形状，再写标准残差块的 forward；分别验证 use_1x1conv=False 的普通块与 use_1x1conv=True、stride=2 的下采样块，均保留残差相加。能解释为什么第二个 3×3 Conv 后要先完成残差相加再激活。
 
 将草稿中的重写块实际实例化，输入例 A、例 B，打印输出形状并对标量目标 backward，检查活跃参数梯度有限；再与 Day 3 的已验证块对照 forward 顺序。已有 `test_resnet.py` 的通过只覆盖被它调用的实现，重写草稿也要做这两次小张量运行。
 

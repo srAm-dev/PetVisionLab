@@ -1,5 +1,6 @@
 import torch
 from petvision.models.cv.cnn import CNN
+from petvision.models.cv.resnet import BasicBlock
 
 def test_cnn_forward_backward():
     for batch_size in (1, 4):
@@ -115,3 +116,64 @@ def test_batchnorm_train_eval():
     print("running_mean:", mean_before.tolist(), "->", mean_after.tolist())
     print("running_var:", var_before.tolist(), "->", var_after.tolist())
     print("num_batches_tracked:", batches_before.item(), "->", batches_after.item())
+
+def test_basicblock():
+    # 输出通道、步幅、是否投影、预期的单样本输出形状
+    cases = [
+        (64, 1, False, (64, 32, 32)),
+        (128, 1, True, (128, 32, 32)),
+        (64, 2, True, (64, 16, 16)),
+        (128, 2, True, (128, 16, 16)),
+    ]
+
+    for batch_size in (1, 2):
+        for out_channels, stride, use_1x1conv, expected_shape in cases:
+            # 每组重新创建模型，避免之前的梯度和 BN 统计干扰。
+            model = BasicBlock(
+                in_channels=64,
+                out_channels=out_channels,
+                stride=stride,
+                use_1x1conv=use_1x1conv,
+            ).cpu()
+
+            images = torch.randn(batch_size, 64, 32, 32)
+            outputs = model(images)
+
+            assert outputs.shape == (batch_size, *expected_shape)
+            assert torch.isfinite(outputs).all().item()
+
+            # 构造标量目标，检查梯度能否通过整个块。
+            loss = outputs.square().mean()
+            assert torch.isfinite(loss).item()
+            loss.backward()
+
+            for name, parameter in model.named_parameters():
+                assert parameter.grad is not None, f"{name} 没有梯度"
+                assert torch.isfinite(parameter.grad).all().item(), (
+                    f"{name} 梯度不有限"
+                )
+
+def test_basicblock_identity_shortcut():
+    model = BasicBlock(
+        in_channels=64,
+        out_channels=64,
+        stride=1,
+        use_1x1conv=False,
+    ).cpu().eval()
+
+    images = torch.ones(2, 64, 32, 32)
+
+    with torch.no_grad():
+        # 将主分支的卷积输出置零。
+        for conv in (model.conv1, model.conv2):
+            conv.weight.zero_()
+            if conv.bias is not None:
+                conv.bias.zero_()
+
+        model.bn1.bias.zero_()
+        model.bn2.bias.zero_()
+
+        outputs = model(images)
+
+    torch.testing.assert_close(outputs, images)
+                 
