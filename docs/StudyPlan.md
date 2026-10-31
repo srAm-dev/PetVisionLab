@@ -1,9 +1,9 @@
 # PetVision-Lab：Python / 数学基础 → CNN → ResNet → Transformer → ViT → Mini-GPT → LLM / VLM
 
-> **版本**：v1.23 · **更新日期**：2026-10-30<br>
+> **版本**：v1.26 · **更新日期**：2026-10-31<br>
 > **适用背景**：Python 实践与深度学习理论都需要补充，优先理解原理和亲手实现。  
 > **时间预算**：8 周，每周 30 小时，总计约 240 小时；每周 24 小时明确任务 + 6 小时补基础、调试和复盘。  
-> **算力分工**：本地笔记本 RTX 4060 用于基础练习、视觉模型和 Mini-GPT；第二周已保存的环境检查记录显示总显存为 8.00 GiB。计划使用云端 48GB 显存 GPU 运行后期 LLM / VLM，云端型号与可用显存届时实测。  
+> **算力分工**：本地笔记本 RTX 4060 用于基础练习、视觉模型和 Mini-GPT；实际设备与显存记录在对应周 README。计划使用云端 48GB 显存 GPU 运行后期 LLM / VLM，云端型号与可用显存届时实测。<br>
 > **环境管理**：以 Conda 为主，本地使用命名环境 `petvision`；第一周以 Python 3.12、NumPy 和 Matplotlib 起步，后续按阶段补充依赖。  
 > **本轮目标**：建立独立实现、训练、调试和解释小型模型的能力，完成可复现的实验报告，并体验预训练 LLM / VLM 推理。完整 Encoder–Decoder、宠物迁移对照、模型微调与完整 App 进入八周之后的拓展路线。
 
@@ -51,6 +51,22 @@
 已有实现时，逐日指南用于回顾实现过程，不要用前几天的简化片段覆盖当前完整文件。每天先看“当天任务概览”确定任务，再在“分步操作与自查”中查做法；两部分描述同一组任务，不是两份作业。勾选框是学习自查清单，实际完成状态看各周 README；一次测试通过不能证明已经能够独立解释或重写。
 
 形状中的字母按当前任务解释：B 通常是批次大小，H/W 是图片或特征图高宽，T 是序列长度，C 是当前特征维度，V 是词表大小。P 在卷积公式中表示 padding，在 ViT 中表示 Patch 边长；N 在线性回归中表示样本数，在 ViT 中表示每图 Patch 数，在语言验证中表示 token 总数。逐日步骤会给出本地定义与具体数值，不能把同一个字母跨章节直接套用。数学式里的 `^` 表示乘方，Python 使用 `**`；`1e-3` 表示 0.001。
+
+<a id="implementation-reference"></a>
+**实现参考的优先级**：先读《动手学深度学习》（D2L）的对应章节，并按其中的 PyTorch 实现确定模型结构；中文版没有的章节使用英文原版。教材未完整实现的 GPT、字节级 BPE 和预训练模型推理，分别采用作者源码或官方模型卡 / API 文档。论文用于解释设计和完成后的拓展，不要求先读完论文才能动手。
+
+同一模块选定一份主要实现依据，按它核对归一化顺序、激活、bias、dropout、位置编码和参数共享。不能把不同参考的局部写法拼成一个未经说明的版本。“标准实现”在本计划中指下表明确选择的参考；不同模型本来就可能有不同的 Block。
+
+| 内容 | 主要实现依据 | 保持一致的结构与必要差异 |
+| --- | --- | --- |
+| 第 3 周 ResNet | [D2L 7.6](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html) | 7×7 stem、四阶段 [2,2,2,2]、单层 1×1 projection；项目保留 RGB CIFAR-10 / 96×96，BasicBlock 默认 use_1x1conv=True，普通块显式 False |
+| 第 4 周 Attention / Encoder | [D2L 多头注意力](https://zh.d2l.ai/chapter_attention-mechanisms/multihead-attention.html)、[Transformer](https://zh.d2l.ai/chapter_attention-mechanisms/transformer.html) | Attention 默认无 bias，ReLU FFN、AddNorm 的 post-LN、正弦位置编码；项目接收已嵌入的浮点序列，Mask 用布尔张量表示 |
+| 第 5 周 ViT | [D2L 英文 11.8](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html) | pre-LN ViTBlock、GELU、embedding / MLP dropout、CLS 分类头；项目使用 CIFAR-10 / 32×32、Patch=4/8 和较小模型 |
+| 第 6 周 Mini-GPT | [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py) | GPT-2 风格 pre-LN、GELU、可学习位置、规定的 dropout、共享输入/输出权重；项目使用小规模字符模型与独立训练/验证/测试划分 |
+| 第 7 周 BPE / 采样 | [D2L 子词嵌入](https://zh.d2l.ai/chapter_natural-language-processing-pretraining/subword-embedding.html)讲概念，[minbpe BasicTokenizer](https://github.com/karpathy/minbpe/blob/master/minbpe/basic.py)与 nanoGPT.generate 定实现 | UTF-8 字节起点、同频先遇到优先、encode 按 merge rank；top-k 按分数阈值保留并列项；项目补充严格往返和完整续训检查 |
+| 第 8 周预训练推理 | 所选 [CLIP](https://huggingface.co/openai/clip-vit-base-patch32)、[SmolLM2](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct)、[SmolVLM](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) 模型卡与对应版本官方文档 | 模型类、配套 processor、Chat Template 与权重 revision 成套使用；通过小样本后记录实际依赖版本 |
+
+本项目继续保留已有数据、统一训练接口、显式模型选择和单变量实验预算；这些适配与结构依据分别说明。跨周复用 Attention、LayerNorm 等基础模块，ViTBlock 与 GPTBlock 放在各自模型文件中，按所选参考组合，不为复用而强制套用第四周 EncoderBlock。使用作者源码做数值参考时，先在对应周 README 记录实际参考版本，再对齐参数、模式、Mask 和精度。
 
 ### 1.2 为什么安排为八周
 
@@ -211,21 +227,21 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 - [torchvision Transforms v2（官方英文）](https://docs.pytorch.org/vision/stable/transforms.html)：第三周起自建分类模型使用 v2；教程中的旧版预处理写法按[第三周示例](week3.md#cifar-v2-transforms)调整。
 - [《动手学深度学习》7.6 残差网络](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html)：ResNet 主材料，选择 PyTorch；Day 3 读 7.6.2「残差块」，Day 4 读 7.6.3「ResNet模型」，具体顺序与教材到项目的差异见[第三周阅读指引](week3.md#resnet-reading)。
 - [李沐：29 残差网络 ResNet](https://www.bilibili.com/video/BV1bV41177ap/)：配套教学视频，按需观看「ResNet」与「代码」分段。
-- [torchvision ResNet18](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html) 与 [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)：Day 4 自写网络形状检查通过后，按指定类和函数查阅，用于结构和数值对照。
+- [《动手学深度学习》ResNet 的 PyTorch 实现](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html)：Day 4 的结构参考，输入通道按 CIFAR-10 改为 3；[torchvision ResNet 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)作为拓展，比较 bias 与投影 BN 的实现差异。
 - [ResNet 原论文](https://arxiv.org/abs/1512.03385)、[李沐论文精读索引](https://github.com/mli/paper-reading)：实现后的补充选读，优先看残差块示意图和 18 层结构表。
 
 **编程作业**
 
 1. 在 CIFAR-10 上手写一个两到四层卷积的 CNN，检查每层输出形状；用 GAP 接分类头。
-2. Day 3 按教材的计算顺序实现始终执行残差相加的 `BasicBlock`，项目约定 use_1x1conv 默认 True，只控制 `1×1` projection，需要恒等旁路时显式传 False；Day 4 统一卷积 bias 与投影 BN，再按各块角色明确选择投影，组装 ResNet18。Day 5 才增加独立的 use_residual 做消融，具体接口与兼容要求见[残差开关步骤](week3.md#residual-ablation)。
-3. **CIFAR-10 输入层统一为 `3×3、stride=1、padding=1` 卷积，移除初始最大池化**；torchvision 参考版同步修改。默认参考实现的 `7×7、stride=2` 输入卷积及池化需要明确区分。
-4. 用参考实现检查结构、参数量和形状；在对齐权重、输入与运行模式后，检查可比输出。
+2. Day 3 按教材实现始终执行残差相加的 `BasicBlock`，卷积 bias=True、投影只用 1×1 Conv；项目约定 use_1x1conv 默认 True，需要恒等旁路时显式传 False。Day 4 按教材的 resnet_block、b1–b5 组织 ResNet18；Day 5 才增加独立的 use_residual 做消融，具体接口与兼容要求见[残差开关步骤](week3.md#residual-ablation)。
+3. ResNet 采用教材的 **7×7、stride=2、padding=3 入口卷积和初始最大池化**，保留 CIFAR 的 RGB 三通道，输入经过预处理缩放到 96×96；网络入口结构固定在 ResNet18 类中。data.image_size 按 CIFAR-10 原图填写 32，训练和评估均按模型名称添加 Resize，具体操作见[第三周输入步骤](week3.md#d2l-resnet-input)。
+4. 按教材结构核对阶段配置与参数量，在已有 tests/test_resnet.py 中检查自己整网的前反向和各阶段形状；训练与数据加载使用项目已有入口。
 5. 完成下表两类单变量实验，保存 checkpoint、配置和验证曲线。
 
 | 实验 | 对照组 | 控制条件 |
 | --- | --- | --- |
-| BN 消融 | 同一 CNN 的 BN on / off | 相同数据划分、种子、优化器、增强与训练预算 |
-| 残差消融 | 同深度、同宽度网络的残差 on / off | 主分支结构与训练设置一致；off 保留投影模块，跳过旁路计算及相加，总参数量相同，说明投影参数不参与计算 |
+| BN 消融 | 同一 CNN 的 BN on / off | 都使用 32×32；相同数据划分、种子、优化器、增强与训练预算 |
+| 残差消融 | 同深度、同宽度网络的残差 on / off | 都使用 96×96；主分支结构与训练设置一致，off 保留投影模块并跳过旁路计算及相加，说明投影参数不参与计算 |
 
 浅层 CNN 用于分类基线；对残差作用的解释来自同深度、同宽度对照。数据增强开关、卷积核大小和多随机种子重复属于拓展。
 
@@ -251,13 +267,14 @@ Q/K/V、Scaled Dot-Product Attention、多头拆分、Padding / Causal Mask、La
 
 **主资料**
 
-- [Attention Is All You Need](https://arxiv.org/abs/1706.03762)、[李沐论文精读索引](https://github.com/mli/paper-reading)。
-- [Karpathy — Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY)：按当前主题选看 Attention 部分。
+- [D2L 多头注意力](https://zh.d2l.ai/chapter_attention-mechanisms/multihead-attention.html)、[自注意力和位置编码](https://zh.d2l.ai/chapter_attention-mechanisms/self-attention-and-positional-encoding.html)、[Transformer](https://zh.d2l.ai/chapter_attention-mechanisms/transformer.html)：按第四周逐日步骤选读并实现。
+- [PyTorch MultiheadAttention](https://docs.pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html)、[TransformerEncoderLayer](https://docs.pytorch.org/docs/stable/generated/torch.nn.TransformerEncoderLayer.html)：作为参数映射后的数值参考。
+- [Attention Is All You Need](https://arxiv.org/abs/1706.03762)：实现后选读，不作为开工前置。
 
 **编程作业**
 
 1. 不调用 `nn.MultiheadAttention`，手写 QKV 投影、reshape、多头注意力、Mask、softmax 和输出投影。
-2. 手写简化 LayerNorm 并与 `nn.LayerNorm` 对照，搭建 FFN、位置编码和 Encoder Block。
+2. 手写简化 LayerNorm 并与 `nn.LayerNorm` 对照；按 D2L 搭建 Linear→ReLU→Linear FFN、AddNorm 和 post-LN EncoderBlock，再组合入口 sqrt(C) 缩放与正弦位置编码，末尾不另加最终 LayerNorm。
 3. 用图示标明 `[B,T,C]` 到多头 Q/K/V、注意力矩阵，再回到 `[B,T,C]` 的形状变化。
 4. 理解 Encoder 双向注意力与 GPT 因果注意力的区别；Cross-Attention 先做概念辨析，完整 Encoder–Decoder 实验见拓展路线。
 
@@ -277,22 +294,22 @@ Patch Embedding、CLS Token、Position Embedding、Encoder、分类头；CNN 与
 
 **主资料**
 
-- [ViT 原论文](https://arxiv.org/abs/2010.11929)、[李沐论文精读索引](https://github.com/mli/paper-reading)。
-- [vit-pytorch](https://github.com/lucidrains/vit-pytorch)：作为代码结构参考。
+- [D2L 11.8 Transformers for Vision（英文原版）](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html)：PatchEmbedding、ViTMLP、ViTBlock 和 ViT 主模型。
+- [ViT 原论文](https://arxiv.org/abs/2010.11929)：实现后选读；不同代码库的激活、dropout、初始化等差异不混入本周主实现。
 
 **编程作业**
 
-1. 复用第 4 周的 Encoder，实现可在 CIFAR-10 上训练的小型 ViT。
+1. 复用第 4 周 Attention 与 LayerNorm，在 vit.py 定义 D2L 风格的 ViTMLP / ViTBlock，实现 Patch→CLS/可学习位置→embedding dropout→pre-LN ViTBlock→取 CLS→LayerNorm＋Linear 分类头。
 2. 固定 32×32 输入，完成 **Patch=4 / 8** 两组实验：图像 token 分别为 **64 / 16**，加 CLS 后序列长度为 **65 / 17**。
 3. 保持隐藏维度、层数、训练划分、增强、优化器与训练预算一致，报告 Patch 改变带来的参数量和耗时变化。
 4. 汇总 CNN、ResNet、ViT 验证结果，配置确定后统一评估保留的 CIFAR-10 测试集。
-5. 整理 Accuracy、Macro-F1、参数量、训练时间、推理延迟、混淆矩阵及错误案例。
+5. 整理 Accuracy、Macro-F1、输入尺寸、参数量、训练时间、推理延迟、混淆矩阵及错误案例；CNN/ViT 使用 32×32，教材结构的 ResNet 使用 96×96，跨架构结论限定为各自完整配置的表现。
 
 **验收标准**
 
 - [ ] Patch 划分、CLS、位置编码长度及输出 `[B,10]` 检查正确。
 - [ ] Patch=4 / 8 都完成约定预算的训练，已有 BN、残差、Patch Size 三类对照。
-- [ ] 比较表明确数据划分、初始化与预算；所有主线视觉模型从零训练。
+- [ ] 比较表明确数据划分、输入尺寸、初始化与预算；所有主线视觉模型从零训练，各消融对内部保持相同分辨率。
 - [ ] 能解释实际结果与局限，在有限参考下重写核心 Patch / Encoder / 分类流程。
 
 Oxford-IIIT Pet 的多模型迁移对照、预训练 ViT / ResNet 对照和 timm 使用放入八周之后的拓展路线。
@@ -312,13 +329,13 @@ Oxford-IIIT Pet 的多模型迁移对照、预训练 ViT / ResNet 对照和 timm
 
 **主资料**
 
-- [Karpathy — Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY)。
-- [Neural Networks: Zero to Hero](https://github.com/karpathy/nn-zero-to-hero)。
+- [D2L 文本预处理](https://zh.d2l.ai/chapter_recurrent-neural-networks/text-preprocessing.html)、[语言模型和数据集](https://zh.d2l.ai/chapter_recurrent-neural-networks/language-models-and-dataset.html)：先理解词表、序列采样和错位目标。
+- [Karpathy — Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY)：理解构建过程；正式模型结构按作者 [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py)，不是照搬视频中的中间版本。
 
 **编程作业**
 
 1. 选择 Tiny Shakespeare 等小型文本，先固定训练 / 验证 / 测试原文划分，再构造样本，避免重叠窗口跨越划分边界。
-2. 从字符级 Bigram Baseline 写到 Mini-GPT，复用注意力与 Block，开启 Causal Mask。
+2. 从字符级 Bigram Baseline 写到 Mini-GPT，复用 Attention 与 LayerNorm，在 mini_gpt.py 定义 GPTBlock；使用 pre-LN、GELU、Causal Mask、可学习位置和最终 LayerNorm，并共享 token embedding / 无 bias 输出头权重。
 3. 本地先用小配置跑通：**2 层、hidden=128、4 heads、context=128、batch=16**；根据实测显存与耗时再调整。
 4. 实现训练、验证、保存加载和基础自回归 `generate()`。
 5. Bigram 与字符级 GPT 使用相同 tokenizer、词表、数据划分和验证口径。
@@ -338,15 +355,16 @@ BPE 训练与编解码、Context Window、Temperature、Top-k、模型状态与�
 
 **主资料**
 
-- [Karpathy — Let's build the GPT Tokenizer](https://www.youtube.com/watch?v=zduSFxRajkE)。
-- [nanoGPT](https://github.com/karpathy/nanoGPT)：参考训练和生成的工程组织。
+- [D2L 14.6.2 字节对编码](https://zh.d2l.ai/chapter_natural-language-processing-pretraining/subword-embedding.html)：先理解频率与合并规则。
+- [Karpathy — Let's build the GPT Tokenizer](https://www.youtube.com/watch?v=zduSFxRajkE)、[minbpe BasicTokenizer](https://github.com/karpathy/minbpe/blob/master/minbpe/basic.py)：字节级实现依据，不加入正则预切分或特殊 token。
+- [nanoGPT](https://github.com/karpathy/nanoGPT)：参考 GPT.generate 采样顺序与训练状态；项目补齐完整续训所需的随机流和累计记录。
 - [Hugging Face 困惑度评估说明（中文译文）](https://hugging-face.cn/docs/transformers/perplexity)：理解 tokenization 对 loss / PPL 比较的影响。
 
 **编程作业**
 
-1. 手写教学版字节级 BPE：训练 merge 规则、encode、decode；仅在训练文本上学习规则，并保存词表与 merge 顺序。
+1. 手写教学版字节级 BPE：训练时同频按当前序列中先遇到的 pair 选择，encode 按保存的 merge rank；decode 先拼 bytes，默认 errors="replace"，严格往返显式传 errors="strict"。只在训练文本上学习规则，并保存词表与 merge 顺序。
 2. 检查空字符串、空白、换行、中文、emoji 和混合文本的编解码往返。
-3. 给生成加入 Temperature 和 Top-k，在固定 prompt、种子下比较两组设置。
+3. 按 nanoGPT 给生成加入 Temperature 和 Top-k：k 按词表大小截断，只屏蔽低于第 k 高分阈值的项，阈值处并列项全部保留；固定 prompt、种子比较两组设置。
 4. 保存并恢复模型、优化器、训练进度、随机状态及所用 tokenizer；有 scheduler 时一并恢复。保留历史最佳验证值和日志统计累计值，确保恢复后不覆盖更优 best 或重复记录。
 5. 在 BPE 设置下完成一次小预算训练，记录编码长度、耗时和生成样例；更多 Context Length 对照列入拓展。
 
@@ -358,7 +376,7 @@ BPE 训练与编解码、Context Window、Temperature、Top-k、模型状态与�
 
 **验收标准**
 
-- [ ] `decode(encode(text)) == text` 覆盖空白和 Unicode 等边界。
+- [ ] BPE 的 `decode(encode(text), errors="strict") == text` 覆盖空白和 Unicode；任意生成的无效 UTF-8 另记原始 IDs 与替换展示策略。
 - [ ] 中断后能继续训练，优化器和进度得到恢复；在相同环境下与连续运行的小规模结果对照。
 - [ ] 相同模型、prompt、采样参数和随机种子下可以复现生成结果。
 - [ ] 报告分别说明 tokenizer、验证数据和 loss 口径，包含失败样例与复现命令。
@@ -623,7 +641,7 @@ PetVision-Lab/
 
 ### 职责划分
 
-- `models/` 管理网络结构；`training/` 管理优化与 checkpoint；`evaluation/` 管理指标和报告数据。
+- `models/` 管理网络结构；`training/` 管理训练与验证；`evaluation/` 管理指标和报告数据；`utils/` 放通用种子、checkpoint 和历史记录工具。
 - `adapters/` 封装外部模型差异；`pipelines/` 提供任务接口；后续 `apps/` 负责交互。
 - `experiments/` 按 `<主题>/weekN/` 保存便于审阅的小型材料；跨周复用的文件引用首次生成它的周目录。`outputs/` 保存大权重和临时产物。
 
@@ -653,9 +671,9 @@ PetVision-Lab/
 | 模块 | 输入 | 输出与约定 |
 | --- | --- | --- |
 | MNIST MLP | `[B,1,28,28]` | 展平后分类，返回 `[B,10]` logits |
-| CNN / ResNet / ViT | `[B,3,H,W]` | CIFAR-10 使用 H=W=32，返回 `[B,10]` logits |
-| Self-Attention / Encoder Block | `[B,T,C]` 与可选 Mask | 返回 `[B,T,C]`，约定 Mask 语义并测试 |
-| Mini-GPT | `[B,T]` token IDs | 返回 `[B,T,V]` logits；训练入口计算下一 token 的交叉熵 |
+| CNN / ResNet / ViT | `[B,3,H,W]` | CNN / ViT 使用 H=W=32，D2L stem 的 ResNet 使用 H=W=96；返回 `[B,10]` logits |
+| Self-Attention / EncoderBlock | `[B,T,C]` 与可选 Mask | 返回 `[B,T,C]`；项目布尔 Mask 的 True=屏蔽，Attention 默认 bias=False；本周 EncoderBlock 为 post-LN＋ReLU |
+| Mini-GPT | `[B,T]` token IDs | 独立 GPTBlock 使用 Attention(bias=True)，输入/输出权重共享；返回 `[B,T,V]` logits，训练入口计算下一 token 交叉熵 |
 | Tokenizer | 文本或 token IDs | `encode / decode`，规则与模型 checkpoint 配套保存 |
 
 训练入口负责：解析配置 → 固定种子与划分 → 建立数据 → 创建模型和优化器 → 训练 / 验证 → 保存结果。网络结构留在 `models/` 中。
@@ -752,20 +770,19 @@ YAML 只保存数值和名称，不会自动改造代码。第二周先按[接�
 
 字段层级从第二周开始统一：数据路径与批次放在 `data.root / split_path / batch_size`，优化设置放在 `training`，日志与权重分别使用顶层 `experiment_dir / output_dir`；相对路径均从项目根目录解释。完整 MNIST YAML 和参数读取示例见[第二周 Day 4](week2.md#mnist-config)。smoke/overfit 只打印检查结果，正式配置、history、曲线和 checkpoint 仅由正式训练分支写入。
 
-以下字段是逐周实现时的配置约定。第 3 周的 `configs/cv/resnet_cifar10.yaml` 示例：
+以下字段是逐周实现时的配置约定。ResNet18 的入口结构固定在模型类中；data.image_size 记录数据集原图尺寸，额外 Resize 的目标由对应模型预处理决定。第 3 周的 `configs/cv/resnet_cifar10.yaml` 示例：
 
 ```yaml
 model:
   name: resnet18
   num_classes: 10
-  stem: cifar                 # 3x3、stride=1，移除初始最大池化
   residual: true              # Day 5 新增可选开关；省略时默认 True
 
 data:
   name: cifar10
   root: datasets/raw
   split_path: experiments/cnn_vs_resnet/week3/cifar10_split.json
-  image_size: 32
+  image_size: 32              # CIFAR 原图尺寸；ResNet 预处理后为 96x96
   validation_size: 5000       # 从官方训练集固定划分，其余用于训练
   batch_size: 64
   num_workers: 0
@@ -834,7 +851,7 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --resume outp
 
 ### 10.4 数据划分与 Git 约定
 
-第三、五周的 CIFAR 分类预处理统一采用 `torchvision.transforms.v2`：ToImage → 训练时的随机裁剪与翻转 → ToDtype(torch.float32,scale=True) → Normalize；验证和测试省略随机增强。ToImage 不缩放像素，ToDtype 在本题中把 uint8 的 0–255 转为 float32 的 0–1，再按配置归一化。第八周预训练 CLIP/VLM 使用各自配套的 processor 处理原始图片，不叠加 CIFAR 分类预处理。第二周已完成的 MNIST 实现与实验记录保留原状。
+第三、五周的 CIFAR 分类预处理统一采用 `torchvision.transforms.v2`：ToImage → 训练时在原始 32×32 图片上的随机裁剪与翻转 → 按模型需要添加的 Resize → ToDtype(torch.float32,scale=True) → Normalize；验证和测试省略随机增强，保留对应模型需要的 Resize。data.image_size 对 CIFAR-10 均填写原图尺寸 32，CNN/ViT 实际使用 32×32，ResNet 两组经 Resize 后实际使用 96×96；操作位置与输入核对见[第三周输入步骤](week3.md#d2l-resnet-input)。ToImage 不缩放像素，ToDtype 在本题中把 uint8 的 0–255 转为 float32 的 0–1，再按配置归一化。第八周预训练 CLIP/VLM 使用各自配套的 processor 处理原始图片，不叠加 CIFAR 分类预处理。第二周已完成的 MNIST 实现与实验记录保留原状。
 
 - MNIST 在官方训练集内固定划分训练 / 验证，官方测试集用于配置确定后的独立测试。
 - CIFAR-10 从官方训练集固定留出 5000 条验证数据，划分索引保存并供第 3–5 周所有视觉实验复用；测试集在第 5 周统一报告。
@@ -917,16 +934,16 @@ Projector 独立单元测试、完整 Pipeline 异常处理和 App 测试属于�
 
 ### 11.2 主线视觉结果模板
 
-| Model / Variant | Dataset | Initialization | Accuracy ↑ | Macro-F1 ↑ | Params | Train time | Inference ms/img ↓ |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| CNN，BN on | CIFAR-10 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
-| CNN，BN off | CIFAR-10 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
-| ResNet18，残差 on | CIFAR-10 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
-| 同深宽网络，残差 off | CIFAR-10 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
-| 小型 ViT，Patch=4 | CIFAR-10 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
-| 小型 ViT，Patch=8 | CIFAR-10 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
+| Model / Variant | Dataset | Input size | Initialization | Accuracy ↑ | Macro-F1 ↑ | Params | Train time | Inference ms/img ↓ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CNN，BN on | CIFAR-10 | 32×32 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
+| CNN，BN off | CIFAR-10 | 32×32 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
+| ResNet18，残差 on | CIFAR-10 | 96×96 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
+| 同深宽网络，残差 off | CIFAR-10 | 96×96 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
+| 小型 ViT，Patch=4 | CIFAR-10 | 32×32 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
+| 小型 ViT，Patch=8 | CIFAR-10 | 32×32 | From scratch | 待实验 | 待实验 | 待统计 | 待统计 | 待统计 |
 
-表格注明指标来自验证还是测试；最终表使用配置确定后的独立测试结果。BN、残差、Patch 各自的消融要求内部条件一致；跨架构比较记录预算与参数量差异，限定结论范围。
+表格注明指标来自验证还是测试；最终表使用配置确定后的独立测试结果。BN、残差、Patch 各自的消融要求内部条件一致；跨架构比较记录输入分辨率、预处理、预算与参数量差异，限定结论范围。
 
 Oxford-IIIT Pet 迁移实验另建拓展表；CLIP 预训练零样本结果另列，注明初始化与任务条件。
 
@@ -956,8 +973,8 @@ Oxford-IIIT Pet 迁移实验另建拓展表；CLIP 预训练零样本结果另�
 
 ### 12.1 本地记录与云端计划
 
-- **本地**：[第二周环境记录](../experiments/mnist_mlp/week2/environment.txt)显示 NVIDIA GeForce RTX 4060 Laptop GPU，总显存 8.00 GiB，当时可用 6.93 GiB；可用显存随运行状态变化。2026-10-27 核对的驱动版本为 581.80，详见[第二周复现说明](../experiments/mnist_mlp/week2/README.md#environment)。
-- **云端**：计划使用 48GB 显存 GPU，第 8 周运行 LLM / VLM，后续承接微调；仓库尚无云端实测快照。
+- **本地**：使用 RTX 4060 Laptop GPU，实际总显存、可用显存、驱动和依赖按[第二周环境步骤](week2.md#environment)检查，记录在[第二周 README](../experiments/mnist_mlp/week2/README.md#environment)及环境快照；训练预算根据实测资源确定。
+- **云端**：计划使用 48GB 显存 GPU，第 8 周运行 LLM / VLM，后续承接微调；进入该周时核对实际硬件并保存环境快照。
 - 第 1 周在本地 Conda 环境 petvision 中使用 CPU；第 2 周在该环境内安装并验证兼容的 PyTorch GPU 包。
 
 下表为起始设置，实际 batch、精度和训练耗时以本机测量为准。
@@ -966,7 +983,7 @@ Oxford-IIIT Pet 迁移实验另建拓展表；CLIP 预训练零样本结果另�
 | --- | --- | --- |
 | 第 1 周 NumPy | 本地 CPU | 小型合成数据，先验证公式、形状和 loss |
 | 第 2 周 MNIST MLP | 本地 4060 | FP32、小模型；记录完整数据与训练流程 |
-| 第 3 周 CNN / ResNet | 本地 4060 | CIFAR-10、batch 32–64 起；先做短运行检查，再固定对照预算 |
+| 第 3 周 CNN / ResNet | 本地 4060 | CIFAR-10，CNN 32×32、ResNet 96×96，batch 32–64 起；先做短运行检查，再固定对照预算 |
 | 第 4 周 Attention / Encoder | 本地 CPU / 4060 | 小张量做数值与梯度测试，关闭 dropout 做参考对照 |
 | 第 5 周 ViT | 本地 4060 | 小型模型、32×32 输入、Patch=4/8；记录参数量、token 数和耗时 |
 | 第 6–7 周 Mini-GPT / BPE | 本地 4060 | 2 层、hidden=128、4 heads、context=128、batch=16 起 |
@@ -991,7 +1008,7 @@ Oxford-IIIT Pet 迁移实验另建拓展表；CLIP 预训练零样本结果另�
 
 每个主题选一个主讲解、一篇主文档 / 论文和一份参考实现，按任务选读。文档与代码可能更新，实际跟学时记录版本 / commit；链接可用性与所选模型依赖在进入对应阶段时核验。
 
-学习资料优先使用中文入口：有官方中文版本时优先选择官方中文；其他中文站的翻译在链接名中标注“中文译文”。论文、作者源码、原始数据和模型卡保留原始来源；英文视频的中文索引会单独注明视频语言。
+实现依据优先按[模型参考表](#implementation-reference)选择 D2L；教材未覆盖的部分再选作者源码或官方模型文档。学习资料优先使用中文入口：有官方中文版本时优先选择官方中文；其他中文站的翻译在链接名中标注“中文译文”。论文、作者源码、原始数据和模型卡保留原始来源；英文视频的中文索引会单独注明视频语言。
 
 中文资料用于理解与跟做，涉及安装和具体 API 时核对实际使用版本。PyTorch 安装命令从英文官方命令向导生成；中文安装说明用于理解选项。未确认有可用中文对应页的资料保留英文原文。
 
@@ -1007,23 +1024,25 @@ Oxford-IIIT Pet 迁移实验另建拓展表；CLIP 预训练零样本结果另�
 | PyTorch | [PyTorch 视频索引（中文译文，视频英文）](https://docs.pytorch.ac.cn/tutorials/beginner/introyt/introyt_index.html) / [PyTorch 安装说明（中文译文）](https://pytorch.ac.cn/get-started/locally/)（[官方命令向导](https://pytorch.org/get-started/locally/)） | W2：按需补充和配置环境 |
 | CNN | [CIFAR-10 教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/blitz/cifar10_tutorial.html) | W3 |
 | ResNet 入门 | [D2L 残差网络](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html) / [李沐配套教学视频](https://www.bilibili.com/video/BV1bV41177ap/) | W3：Day 3 读 7.6.2，Day 4 读 7.6.3；按[阅读指引](week3.md#resnet-reading)手写 |
-| ResNet 参考 | [官方源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html) / [原论文](https://arxiv.org/abs/1512.03385) | W3：源码按指定范围用于结构与数值对照；论文在实现后选读 |
-| 论文 | [Attention Is All You Need](https://arxiv.org/abs/1706.03762) | W4：Attention、Encoder 与关键公式 |
-| 论文 / 代码 | [ViT](https://arxiv.org/abs/2010.11929) / [vit-pytorch](https://github.com/lucidrains/vit-pytorch) | W5 |
+| ResNet 参考 | [D2L PyTorch 实现](https://zh.d2l.ai/chapter_convolutional-modern/resnet.html) / [原论文](https://arxiv.org/abs/1512.03385) | W3：以教材核对结构，测试自己的整网前反向与阶段形状；论文、[torchvision 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/resnet.html)用于实现后拓展 |
+| Attention / Encoder | [D2L 多头注意力](https://zh.d2l.ai/chapter_attention-mechanisms/multihead-attention.html) / [D2L Transformer](https://zh.d2l.ai/chapter_attention-mechanisms/transformer.html) | W4 主材料；post-LN、ReLU、AddNorm 与正弦位置编码 |
+| ViT | [D2L 英文 11.8](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html) | W5 主材料；ViTMLP、ViTBlock 与完整模型 |
+| 论文拓展 | [Attention Is All You Need](https://arxiv.org/abs/1706.03762) / [ViT](https://arxiv.org/abs/2010.11929) | W4–W5 实现后选读 |
 | 中文讲解 | [李沐论文精读](https://github.com/mli/paper-reading) | W3 / W4 / W5 / W8：对应主题选读 |
 
 ### 13.2 语言模型与多模态主线
 
 | 类型 | 资料 | 周次与用法 |
 | --- | --- | --- |
-| 视频 / 代码 | [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) / [Zero to Hero](https://github.com/karpathy/nn-zero-to-hero) | W4 选看片段，W6 主学 |
-| Tokenizer | [Let's build the GPT Tokenizer](https://www.youtube.com/watch?v=zduSFxRajkE) | W7 |
-| 工程参考 | [nanoGPT](https://github.com/karpathy/nanoGPT) | W7：训练、生成、checkpoint |
+| 文本基础 | [D2L 文本预处理](https://zh.d2l.ai/chapter_recurrent-neural-networks/text-preprocessing.html) / [语言模型和数据集](https://zh.d2l.ai/chapter_recurrent-neural-networks/language-models-and-dataset.html) | W6：词表、序列采样、错位目标 |
+| GPT | [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) / [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py) | W6：视频讲构建过程，正式结构按作者源码 |
+| Tokenizer | [D2L 子词嵌入](https://zh.d2l.ai/chapter_natural-language-processing-pretraining/subword-embedding.html) / [minbpe](https://github.com/karpathy/minbpe) / [Tokenizer 视频](https://www.youtube.com/watch?v=zduSFxRajkE) | W7：教材概念＋作者字节级实现 |
+| 工程参考 | [nanoGPT](https://github.com/karpathy/nanoGPT) | W7：采样阈值、训练、checkpoint，项目补完整续训 |
 | 评估 | [困惑度与 tokenizer（中文译文）](https://hugging-face.cn/docs/transformers/perplexity) | W7：明确 loss / PPL 比较口径 |
 | LLM | [Hugging Face LLM 中文课程](https://huggingface.co/learn/llm-course/zh-CN/chapter1/1) | W8：预训练模型、推理与 Chat Template |
 | 入门推理模型 | [SmolLM2-360M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) / [SmolVLM-256M-Instruct](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) | W8：先按模型卡跑通最小推理，再固定兼容依赖与实际 revision |
 | CLIP | [论文](https://arxiv.org/abs/2103.00020) / [官方实现](https://github.com/openai/CLIP) | W8：分类或检索 |
-| VLM | [nanoVLM](https://github.com/huggingface/nanoVLM) / [Smol Course VLM 介绍](https://github.com/huggingface/smol-course/blob/main/units/en/unit3/1.md) | W8：结构与推理，使用兼容代码 / 权重版本 |
+| VLM | [SmolVLM 模型卡](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) / [Idefics3 官方接口](https://huggingface.co/docs/transformers/model_doc/idefics3) | W8：按实际 model_type、兼容 API 与固定 revision 加载；nanoVLM / Smol Course 用于概念拓展 |
 
 ### 13.3 八周之后的拓展资料
 

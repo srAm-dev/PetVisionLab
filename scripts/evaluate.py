@@ -9,6 +9,7 @@ from torchvision import transforms
 from torchvision.transforms import v2
 from petvision.models.cv.mlp import MLP
 from petvision.models.cv.cnn import CNN
+from petvision.models.cv.resnet import ResNet18
 from petvision.training.cv_trainer import evaluate
 from petvision.utils.checkpoint import load_checkpoint
 from petvision.data.datasets import build_mnist_loaders, build_cifar10_loaders
@@ -102,6 +103,10 @@ def main():
             num_classes=model_cfg["num_classes"],
             use_bn=model_cfg["use_bn"],
         )
+    elif model_cfg["name"]=='resnet18':
+        model = ResNet18(
+            num_classes=model_cfg["num_classes"],
+        )
     else:
         raise ValueError(f"不支持的模型类型:{model_cfg['name']}")
     model.load_state_dict(checkpoint["model_state"])
@@ -121,6 +126,7 @@ def main():
         normalize = data_cfg["normalize"]
         eval_transform = v2.Compose([
             v2.ToImage(),
+            v2.Resize((96, 96), antialias=True) if cfg["model"]["name"] == "resnet18" else torch.nn.Identity(),
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(mean=normalize["mean"], std=normalize["std"]),
         ])

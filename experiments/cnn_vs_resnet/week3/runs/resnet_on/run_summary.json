@@ -1,0 +1,9 @@
+{
+  "params": 11184650,
+  "epochs": 100,
+  "train_seconds": 5452.225578079997,
+  "peak_allocated_mib": 2120.00390625,
+  "device": "cuda",
+  "dtype": "torch.float32",
+  "timing_scope": "train+validation+epoch_logging+checkpoint_io"
+}

@@ -1,6 +1,6 @@
 # 第七周逐日学习指南：简化字节级 BPE、采样与中断续训
 
-> 更新日期：2026-10-27<br>
+> 更新日期：2026-10-31<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写字节级 BPE 与 Unicode 往返检查，加入 Temperature/Top-k 和完整恢复训练，整理字符/BPE 分开评估的语言模型报告。  
@@ -69,11 +69,11 @@ python -m pip check
 | merge | 把一个指定 pair 替换成新 ID 的规则；新 ID 对应原来两个 token 的 bytes 拼接 |
 | rank | 合并规则的学习顺序，从 0 开始；数值越小，编码时优先级越高 |
 | V / vocab_size | 基础字节和新合并 token 的总数；目标 512 包含最初的 256，不是额外加 512 |
-| temperature / top_k | 生成时调整分布的温度 / 保留的候选 token 数；不修改 tokenizer 规则或模型权重 |
+| temperature / top_k | 生成时调整分布的温度 / 第 k 高分的过滤阈值；阈值处并列时保留数可能超过 k，不修改 tokenizer 规则或模型权重 |
 
-教学 BPE 从 UTF-8 的 256 个字节 ID 开始，新 merge token 从 256 递增；目标词表 512。先在短字符串手算，再只使用训练原文的前 100,000 个 Unicode 字符学习规则，记录该训练子集的 hash/长度；运行时间允许可用全训练原文，实际配置需明确。每次统计相邻 pair，按最高频选择，平频按字节/token ID 对的字典序决定；从左到右做非重叠替换，encode 按已保存 merge rank 应用。
+教学 BPE 从 UTF-8 的 256 个字节 ID 开始，新 merge token 从 256 递增；目标词表 512。先在短字符串手算，再只使用训练原文的前 100,000 个 Unicode 字符学习规则，记录该训练子集的 hash/长度；运行时间允许可用全训练原文，实际配置需明确。算法概念先读教材的子词嵌入；字节级实现按 minbpe 的 BasicTokenizer：每次从左到右统计相邻 pair，按最高频选择，平频保留当前序列中先遇到的 pair；从左到右做非重叠替换，encode 按已保存 merge rank 应用。本轮不加正则预切分或特殊 token；空输入提前停止、JSON 保存与显式严格解码参数是项目补充。
 
-BPE 模型从零初始化，使用独立 embedding 与输出词表，不把字符 checkpoint 当 BPE 模型直接继续。起始 GPT 结构与第六周相同，context=128、batch=16、2000 steps；token 数相同不代表原文字节预算相同，需分别记录。跨 tokenizer 对照只比较同一原文的编码长度、耗时、参数量与样例，token 级 loss/PPL 分开报告。
+BPE 模型从零初始化，按 BPE 的实际 V 新建 embedding 与输出词表，不把字符 checkpoint 当 BPE 模型直接继续；模型内部仍按第六周共享 token embedding / head 权重。起始 GPT 结构与第六周相同，context=128、batch=16、2000 steps；token 数相同不代表原文字节预算相同，需分别记录。跨 tokenizer 对照只比较同一原文的编码长度、耗时、参数量与样例，token 级 loss/PPL 分开报告。
 
 ## 六天总览
 
@@ -95,9 +95,10 @@ BPE 模型从零初始化，使用独立 embedding 与输出词表，不把字�
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [Tokenizer 作者课程](https://www.youtube.com/watch?v=zduSFxRajkE) | UTF-8、字节与最小 BPE 合并算法 | 手算相邻 pair 的变化 |
-| [minbpe 作者实现](https://github.com/karpathy/minbpe) | BasicTokenizer 与基本 merge 工具 | 理解教学版算法边界 |
-| [Hugging Face BPE 课程（官方中文）](https://huggingface.co/learn/llm-course/zh-CN/chapter6/5)、[Python Unicode 指南（官方中文）](https://docs.python.org/zh-cn/3.12/howto/unicode.html) | 最高频 pair 的迭代合并；str.encode 与 bytes.decode | 先用中文讲解理解算法，再核对作者代码 |
+| [D2L 14.6.2 字节对编码（主概念材料）](https://zh.d2l.ai/chapter_natural-language-processing-pretraining/subword-embedding.html) | 从符号对频率到合并规则 | 手算一次最高频合并；区分教材字符/词尾符号与本周 UTF-8 字节起点 |
+| [minbpe BasicTokenizer（本周实现依据）](https://github.com/karpathy/minbpe/blob/master/minbpe/basic.py)、[base.py](https://github.com/karpathy/minbpe/blob/master/minbpe/base.py) | train、encode、decode、get_stats 与 merge | 核对同频选择、非重叠替换、merge rank 和 errors="replace" |
+| [Python Unicode 指南（官方中文）](https://docs.python.org/zh-cn/3.12/howto/unicode.html) | str.encode 与 bytes.decode | 检查中文字节拼接与两种解码模式 |
+| [Tokenizer 作者课程](https://www.youtube.com/watch?v=zduSFxRajkE)（按需选看） | UTF-8、字节与最小 BPE 合并算法 | 对照手算中不清楚的步骤 |
 
 ### 时间与操作
 
@@ -138,7 +139,7 @@ UTF-8 中 a=97、b=98，初始序列为 `[97,98,97,98]`。相邻 pair 中 `(97,9
 
 `aaaa` 的相邻 aa 统计为 3 次，但一次从左到右非重叠合并会产生两个新 token。替换函数应边匹配边前移两个位置，不能重叠使用同一个字符。
 
-平频时按约定选字典序更小的 pair。用 abc 检查：ab 与 bc 同频，规则应让同样输入在每次训练中产生同样选择。
+平频时按 minbpe 选择当前序列中先遇到的 pair。用 `caba` 检查：ca、ab、ba 各出现一次，应先合并 ca，得到 `[256,98,97]`；若先合并 ab，就说明误用了字典序规则。
 
 对 `aaaa`，初始 ID 为 `[97,97,97,97]`；将 `(97,97)` 合并为 256 后，结果应为 `[256,256]`。计数 3 与替换 2 次描述的是不同操作，不能因为计数为 3 就输出三个 256。可分别断言 pair 次数、替换结果和解码结果，避免一种错误被另一种错误掩盖。
 
@@ -151,12 +152,12 @@ def merge_pair(ids, pair, new_id): ...
 
 class ByteBPETokenizer:
     def __init__(self): ...
-    def decode(self, ids): ...
+    def decode(self, ids, errors="replace"): ...
 ```
 
 count_pairs 和 merge_pair 可作为 tokenizer.py 内的辅助函数；decode 是 ByteBPETokenizer 的方法，需要使用该对象的词表，不能仅凭任意 ID 列表猜出 bytes。
 
-count_pairs 返回 `{(left_id, right_id): 次数}` 字典；merge_pair 返回替换后的新列表。没有 pair 时返回空计数字典，训练循环在取最大值前退出。平频规则可写为 `min(counts, key=lambda pair: (-counts[pair], pair))`；这行仅在 counts 非空时执行。
+count_pairs 返回 `{(left_id, right_id): 次数}` 字典；merge_pair 返回替换后的新列表。没有 pair 时返回空计数字典，训练循环在取最大值前退出。按 minbpe 写为 `max(counts, key=counts.get)`；这行仅在 counts 非空时执行。count_pairs 必须从左到右向普通 dict 插入首次出现的 pair，不能先转成 set 或按 ID 排序。
 
 先独立实现两个辅助函数，不要一开始就把统计和替换揉进训练循环：
 
@@ -166,9 +167,9 @@ count_pairs 返回 `{(left_id, right_id): 次数}` 字典；merge_pair 返回替
 4. 游标到末尾时返回新列表；如果最后只剩一个 ID，按未匹配处理保留下来。不要在原列表上边删除边遍历，避免跳过位置。
 5. 依次检查 `aaaa`、`aaa`、没有目标 pair 的序列，结果应分别体现两次替换、一次替换加一个原 ID、原样返回。确认输入列表没有被意外修改，再把这两个函数交给 train 和 encode 调用。
 
-这行 min 比较的是二元排序键：先比较 `-counts[pair]`，频率越高，负数越小，所以优先选中；频率相同再比较 pair 本身，先左 ID、再右 ID。例如 `(97,98)` 和 `(98,99)` 都出现一次，就选择 `(97,98)`。这叫字典序，不是对解码后的中文字母表排序。训练每轮替换后重新统计当前序列；encode 则只遵循已保存规则的 rank，不学习新规则。
+这里 max 比较每个 pair 的次数；出现相同最大值时，Python 保留迭代中先遇到的键。dict 保留插入顺序，因此从左到右统计就得到作者的同频规则。以 caba 为例，键依次为 `(99,97)、(97,98)、(98,97)`，三者同频时选第一项。训练每轮替换后重新统计当前序列；encode 则只遵循已保存规则的 rank，不学习新规则。
 
-ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in range(256)}` 和空的有序 merge 列表；bytes([i]) 表示包含一个值为 i 的字节，不能写成创建 i 个零字节的 bytes(i)。训练每产生新 ID，就把左右 token 的 bytes 拼接后加入 vocab；vocab_size 用只读属性返回 `len(self.vocab)`，调用方读取 `tokenizer.vocab_size`，不加括号，与字符 tokenizer 的属性一致。decode 逐个查 vocab、拼接全部 bytes 后严格解码 UTF-8。
+ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in range(256)}` 和空的有序 merge 列表；bytes([i]) 表示包含一个值为 i 的字节，不能写成创建 i 个零字节的 bytes(i)。训练每产生新 ID，就把左右 token 的 bytes 拼接后加入 vocab；vocab_size 用只读属性返回 `len(self.vocab)`，调用方读取 `tokenizer.vocab_size`，不加括号，与字符 tokenizer 的属性一致。decode 逐个查 vocab，先拼接全部 bytes，再调用 UTF-8 decode，并把 errors 参数传入；默认 errors="replace" 与 minbpe 一致。往返检查显式传 errors="strict"，生成展示使用默认策略；未知 ID 仍应报错。CharTokenizer 的 decode 接口无需改变。
 
 先对短整数列表逐项核对，再将这些函数组合进 tokenizer 类。空串和单 token 没有 pair，应正常返回。
 
@@ -176,7 +177,7 @@ ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in 
 
 例如 Python 字符串 `'x\t中🙂'` 中 `\t` 表示一个 Tab，整个字符串有 4 个 Unicode 字符、UTF-8 共 9 字节。某个 token 的 bytes 可能只是一个多字节字符的一部分，解码必须先拼完整 bytes。
 
-在 256 个基础字节词表上，`'中'.encode('utf-8')` 为 `[228,184,173]`；检查 decode 这三个 ID 得到「中」。单独的 228 不是完整 UTF-8 字符，严格 decode 应报告错误。再检查空列表解码为空串、单字节 97 解码为 a，明确测试的是 bytes 拼接后的结果。
+在 256 个基础字节词表上，`'中'.encode('utf-8')` 为 `[228,184,173]`；检查 decode 这三个 ID 得到「中」。单独的 228 不是完整 UTF-8 字符：`decode([228], errors="strict")` 应抛出 UnicodeDecodeError，默认 `decode([228])` 则得到替换字符 U+FFFD。再检查空列表解码为空串、单字节 97 解码为 a，明确测试的是 bytes 拼接后的结果。
 
 ### 运行与验收
 
@@ -265,14 +266,14 @@ JSON 中 merge 顺序就是规则优先级，加载时保留原顺序。词表�
 ```python
 cases = ['', ' ', '  a  ', '\t\n', '中文', '🙂', 'hello 中文🙂\n']
 for text in cases:
-    assert tokenizer.decode(tokenizer.encode(text)) == text
+    assert tokenizer.decode(tokenizer.encode(text), errors="strict") == text
 ```
 
 再保存、重新加载并对每条文本比较 ID 和解码。不要用 strip、忽略无效字节或归一化空白把检查变成伪通过。
 
 #### 第四步：区分往返检查和模型生成展示
 
-encode 得到的 ID 来自可严格编码为 UTF-8 的原文本，往返必须严格一致；模型任意生成的字节序列可能不完整，展示策略单独记录，不改变 tokenizer 的正确性要求。生成展示可先拼接完整原始 bytes，尝试严格解码；若失败，记录解码失败标记，再用 `raw_bytes.decode("utf-8", errors="replace")` 展示，同时保存原始 token IDs。tokenizer 的标准 decode 仍保持严格模式，不能为了展示而放宽往返检查。
+encode 得到的 ID 来自可严格编码为 UTF-8 的原文本，往返用 `decode(ids, errors="strict")` 检查，必须保持原文；默认 decode 的替换策略用于模型生成，与 minbpe 一致。生成时先保留完整 IDs 与拼接后的 raw_bytes，再尝试 strict 解码以记录 decode_ok；失败时用默认 decode 展示替换字符，同时保存 raw_bytes_hex。给同一组无效字节分别检查 strict 报错与默认替换，不能用 errors="ignore" 或 strip 掩盖问题。
 
 ### 运行与验收
 
@@ -294,7 +295,7 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [nanoGPT 作者代码](https://github.com/karpathy/nanoGPT) | 生成与采样相关代码 | 理解 logits 过滤流程 |
+| [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py) | GPT.generate 中 temperature、top-k 阈值和 multinomial | 按第 k 高分过滤，保留阈值处的并列项 |
 | [Tokenizer 作者课程](https://www.youtube.com/watch?v=zduSFxRajkE) | 生成 token 与字节解码关系 | 保留实际输出和 token IDs |
 
 ### 时间与操作
@@ -308,9 +309,9 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 
 ### 当天任务概览
 
-1. 扩展 `generate.py` 接收 `--temperature` 与可选 `--top-k`；先除以正数 temperature，再保留 top-k logits、其余填 -inf，softmax 后采样。
+1. 扩展 `generate.py` 接收 `--temperature` 与可选 `--top-k`；先除以正数 temperature，再将低于第 k 高分阈值的 logits 填 -inf，softmax 后采样；阈值处并列项全部保留。
 
-2. 创建 `tests/test_sampling.py`：temperature 必须是有限正数；合法 top-k 范围为 1..V，最高分唯一时 top-k=1 与 argmax 一致；过滤后概率和为 1，相同种子在固定环境下可复现。
+2. 创建 `tests/test_sampling.py`：temperature 必须是有限正数；top-k 为正整数并按 min(top_k,V) 处理，最高分唯一时 top-k=1 与 argmax 一致；过滤后概率和为 1，相同种子在固定环境下可复现。
 
 3. 先在同一个字符 GPT checkpoint 上，以相同 prompt 和 seed 比较 temperature=0.7/top-k=20 与 temperature=1.0/不启用 top-k；两组保存真实文本和配置到 samples.jsonl。
 
@@ -322,9 +323,9 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 
 原 logits=`[2,1,0,-1]`，temperature=0.5 后为 `[4,2,0,-2]`，top-k=2 后为 `[4,2,-inf,-inf]`，概率约 `[0.8808,0.1192,0,0]`。
 
-temperature=2 时分布更平缓；top-k 只保留当前得分最高的 k 项。先变换 logits，再 softmax，再采样。
+temperature=2 时分布更平缓；top-k 按第 k 高分设阈值，保留大于等于阈值的项。无并列时正好保留 k 项；有并列时可能更多。先变换 logits，再 softmax，再采样。
 
-temperature 是正数缩放参数，先计算 `scaled_logits=logits/temperature`：小于 1 放大分数差距，大于 1 缩小差距，等于 1 保持原分数。top_k=2 表示保留两个候选，不是生成两个 token；其余分数设为 -inf 后 softmax 概率为 0。最后按概率随机抽取一个 ID，例如用 `torch.multinomial(probabilities, num_samples=1)`；它不等同于每次都取最大概率的 argmax。温度不要与第六周表示序列长度的 T 混用。
+temperature 是正数缩放参数，先计算 `scaled_logits=logits/temperature`：小于 1 放大分数差距，大于 1 缩小差距，等于 1 保持原分数。本例 top_k=2 的阈值没有并列，因此保留两个候选；k 控制候选过滤，不是生成 token 的数量。其余分数设为 -inf 后 softmax 概率为 0。最后按概率随机抽取一个 ID，例如用 `torch.multinomial(probabilities, num_samples=1)`；它不等同于每次都取最大概率的 argmax。温度不要与第六周表示序列长度的 T 混用。
 
 #### 第二步：将采样与模型前向分开
 
@@ -338,22 +339,22 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 
 在生成脚本参数解析中添加 temperature（float，默认 1.0）与 top-k（int，默认 None），在生成循环中用 `next_id = sample_next_token(logits[:, -1, :], args.temperature, args.top_k)` 替换第六周直接 softmax / multinomial 的两行。生成长度、上下文裁剪和累计输出仍沿用原循环；不能只接收参数却继续使用旧采样路径。
 
-在脚本顶层导入 math，检查 `math.isfinite(temperature) and temperature > 0`，top_k 为 None 或 1..V 的整数。top-k=1 且最高分唯一时，总选这一项，可以作为确定性最小例子。
+在脚本顶层导入 math，检查 `math.isfinite(temperature) and temperature > 0`，top_k 为 None 或正整数；非 None 时令 effective_k=min(top_k,V)，与作者实现一致。top-k=1 且最高分唯一时，总选这一项，可以作为确定性最小例子。
 
-若多个 token 并列最高，[torch.topk](https://docs.pytorch.org/docs/2.14/generated/torch.topk.html) 不保证并列索引的稳定顺序，不能无条件断言它与 argmax 选中同一个 ID；固定采样 seed 也不能解决排序的并列规则。本周保留“最高分唯一”的检查前提。若自行约定 top-k=1 始终等于 argmax，则为该分支显式使用 argmax，并补充并列输入的检查。
+作者只使用 torch.topk 返回的第 k 高数值，不使用并列项的索引决定去留。以 `[2,1,1,0]`、top_k=2 为例，阈值为 1，输出应为 `[2,1,1,-inf]`，实际保留三项；top_k=1 遇到并列最高分也可能保留多项。因此只在最高分唯一时检查它与 argmax 一致。
 
-将「温度变换与过滤」整理成可单独检查的函数，返回过滤后的 logits；sample_next_token 再执行 softmax 与 multinomial。保留 top-k 的索引后，可先用 `torch.full_like(logits, float('-inf'))` 创建屏蔽表，再 scatter 写回被选中的值。用上面的四项例子分别检查过滤 logits 和概率，而不是只检查最后抽到了哪个 ID。
+将「温度变换与过滤」整理成可单独检查的函数，返回过滤后的 logits；sample_next_token 再执行 softmax 与 multinomial。沿最后一维取 effective_k 个最大值，只取其中最后一个值作为每行阈值，形状保留 `[B,1]`；用 masked_fill 将严格小于阈值的项填为 -inf。这里用 `<`，不能写 `<=`，也不按 topk 索引 scatter 成恰好 k 项。用上面的四项例子分别检查过滤 logits 和概率，而不是只检查最后抽到了哪个 ID。
 
 按下面顺序写函数体，先用四项手算例子调通，再接回生成循环：
 
 1. 确认输入是最后位置的 `[B,V]` logits，验证 temperature 和 top_k 参数；不要把 `[B,T,V]` 的整段输出直接交给这里。
 2. 用 temperature 除每个 logit，得到缩放后的新张量，保留原始输入便于比较。
-3. top_k 为 None 或 V 时保留所有项；否则沿每一行的词表轴选出 k 个值及索引，创建全 -inf 的同形状张量，把这 k 个值放回对应列。
+3. top_k 为 None 时跳过过滤；否则先取 effective_k=min(top_k,V)，用 topk 的第 effective_k 高数值作阈值，仅屏蔽严格小于阈值的项。top_k=V 或大于 V 时保留全部项。
 4. 返回过滤后的 logits，用 `[2,1,0,-1]`、temperature=0.5、top_k=2 检查结果恰为 `[4,2,-inf,-inf]`。
 5. sample_next_token 对过滤结果沿词表轴做 softmax，检查每行概率和约为 1，再每行抽取一个 ID，输出形状保持 `[B,1]`。
 6. 用 B=1 和 B=2 各调用一次，确认两行各自过滤和采样；最后接回 generate.py，每次生成只追加这一列 ID。
 
-测试覆盖 temperature=0/负数/NaN/无穷大、top_k=0/V+1/非整数的 ValueError，top_k=None 和 V 不删项；最高 logit 唯一时，top_k=1 的 ID 与 argmax 一致。相同 seed 的复现检查在每次采样前重新设 seed，比较一串结果完全相同，不要求两次连续消费同一随机流后仍得到同一结果。
+测试覆盖 temperature=0/负数/NaN/无穷大、top_k=0/负数/非整数的 ValueError；top_k=None、V、V+1 都不删项，并列阈值例子保留三项；最高 logit 唯一时，top_k=1 的 ID 与 argmax 一致。相同 seed 的复现检查在每次采样前重新设 seed，比较一串结果完全相同，不要求两次连续消费同一随机流后仍得到同一结果。
 
 #### 第三步：复现时固定全部条件
 
@@ -483,7 +484,7 @@ NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载
 在编写对照测试之前，先把恢复分支按下列顺序接通：
 
 1. 读取 resume 文件，核对 tokenizer、split hash、模型结构和训练设置，再读 completed_steps；配置的 steps 是累计目标，不是额外训练次数。
-2. 按保存结构新建模型，加载 model_state 并迁移到目标设备。随后创建绑定这个新模型参数的 AdamW，再加载 optimizer_state；不能复用绑定旧模型的优化器。
+2. 按保存结构新建模型，加载 model_state 并迁移到目标设备。确认 `model.head.weight is model.token_embedding.weight` 仍为 True；权重共享由 MiniGPT 构造函数建立，load_state_dict 使用默认 assign=False。随后创建绑定这个新模型参数的 AdamW，再加载 optimizer_state；不能复用绑定旧模型的优化器。
 3. 恢复 best_val_loss、best_step、训练统计累计值和日志进度，核对现有 history 没有超出该 checkpoint 的记录；冲突按前文规则归档处理。
 4. 创建训练采样 Generator，完成其他对象初始化后，最后恢复它和实际使用的各随机流。恢复之后直接进入下一次实际采样，不额外抽样打印“看看随机数”。
 5. 从 completed_steps+1 开始更新；如果已达到累计目标就退出训练。首次恢复更新后确认 step 恰好加一，日志仍按原验证间隔追加。
@@ -598,7 +599,7 @@ output_dir: outputs/mini_gpt_bpe
 
 将 train_gpt.py、generate.py 中第六周写死的 CharTokenizer.load 改为调用 load_tokenizer，再核对文件 hash；compare_tokenizers.py 也用同一入口分别读两个文件。不能只修改训练脚本，却让生成脚本仍把 BPE 文件当字符表读取。模型、优化器和 embedding/head 均新建，第六周的字符权重保留不动。
 
-同时改造生成后的解码分支：字符 tokenizer 继续 decode(all_ids)；BPE 用 vocab 中的 bytes 拼接完整输出，严格解码失败时按 Day 2 的展示规则处理，并记录 decode_ok、raw_bytes_hex 和原始 IDs。不能仍无条件调用严格 decode 后在无效 UTF-8 处终止整个生成脚本。严格往返测试仍调用 tokenizer.decode，不经过展示分支。若统计替换字符数，注明这是展示文本中的 U+FFFD 数量，并不能准确代表无效字节数量。
+同时改造生成后的解码分支：字符 tokenizer 继续 decode(all_ids)；BPE 用 vocab 中的 bytes 拼接完整输出，严格解码失败时按 Day 2 的展示规则处理，并记录 decode_ok、raw_bytes_hex 和原始 IDs。不能仍无条件调用严格 decode 后在无效 UTF-8 处终止整个生成脚本。严格往返测试显式调用 `tokenizer.decode(ids, errors="strict")`，不经过展示分支。若统计替换字符数，注明这是展示文本中的 U+FFFD 数量，并不能准确代表无效字节数量。
 
 <a id="bpe-resume-order"></a>
 正式 BPE 训练按以下顺序执行，具体命令见本节下方：

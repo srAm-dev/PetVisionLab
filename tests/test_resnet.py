@@ -1,6 +1,6 @@
 import torch
 from petvision.models.cv.cnn import CNN
-from petvision.models.cv.resnet import BasicBlock
+from petvision.models.cv.resnet import BasicBlock, ResNet18
 
 def test_cnn_forward_backward():
     for batch_size in (1, 4):
@@ -176,4 +176,57 @@ def test_basicblock_identity_shortcut():
         outputs = model(images)
 
     torch.testing.assert_close(outputs, images)
-                 
+
+def test_resnet_forward_backward():
+    for batch_size in (1, 2):
+        # 每次新建整网，分别检查单张图片和一个小批次。
+        model = ResNet18().cpu().train()
+        images = torch.randn(batch_size, 3, 96, 96)
+        labels = torch.randint(0, 10, (batch_size,), dtype=torch.long)
+
+        # 前向：每张图片得到 10 个类别的 logits。
+        model.zero_grad()
+        logits = model(images)
+        assert logits.shape == (batch_size, 10)
+        assert torch.isfinite(logits).all().item()
+
+        # 损失：使用分类标签计算有限的交叉熵标量。
+        loss = torch.nn.functional.cross_entropy(logits, labels)
+        assert loss.ndim == 0
+        assert torch.isfinite(loss).item()
+
+        # 反向：检查入口、各残差块、投影旁路和分类头的参数。
+        loss.backward()
+        for name, parameter in model.named_parameters():
+            assert parameter.grad is not None, f"{name} 没有梯度"
+            assert torch.isfinite(parameter.grad).all().item(), f"{name} 梯度不有限"
+
+        print(f"batch={batch_size}, logits={tuple(logits.shape)}, loss={loss.item():.6f}")
+
+def test_resnet_stage_shapes():
+    model = ResNet18().cpu().eval()
+    images = torch.randn(2, 3, 96, 96)
+
+    # 键是 model.net 中的模块索引，与计划中的 b1–b5 对应。
+    expected_shapes = {
+        0: (2, 64, 24, 24),   # b1：入口卷积、BN、ReLU、最大池化
+        1: (2, 64, 24, 24),   # b2：stage1，保持通道和尺寸
+        2: (2, 128, 12, 12),  # b3：stage2，首块下采样
+        3: (2, 256, 6, 6),    # b4：stage3，首块下采样
+        4: (2, 512, 3, 3),    # b5：stage4，首块下采样
+        5: (2, 512, 1, 1),    # 全局平均池化
+        6: (2, 512),          # Flatten
+        7: (2, 10),           # 分类层
+    }
+    assert len(model.net) == len(expected_shapes), "整网模块数量与预期不一致"
+
+    with torch.no_grad():
+        for index, layer in enumerate(model.net):
+            images = layer(images)
+            shape = tuple(images.shape)
+
+            print(f"{index}: {type(layer).__name__} -> {shape}")
+            assert shape == expected_shapes[index], (
+                f"第 {index} 层形状错误："
+                f"预期 {expected_shapes[index]}，实际 {shape}"
+            )

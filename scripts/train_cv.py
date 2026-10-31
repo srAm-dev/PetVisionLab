@@ -13,6 +13,7 @@ from petvision.utils.history import save_history, append_history, plot_history
 from petvision.data.datasets import build_mnist_loaders, build_cifar10_loaders
 from petvision.models.cv.mlp import MLP
 from petvision.models.cv.cnn import CNN
+from petvision.models.cv.resnet import ResNet18
 from petvision.training.cv_trainer import train_one_epoch, evaluate
 from petvision.utils.seed import set_seed
 from petvision.utils.checkpoint import save_checkpoint
@@ -187,11 +188,13 @@ def main():
             v2.ToImage(),
             v2.RandomCrop(32, padding=data_cfg["augmentation"]["random_crop_padding"]),
             v2.RandomHorizontalFlip() if data_cfg["augmentation"]["random_horizontal_flip"] else torch.nn.Identity(),
+            v2.Resize((96, 96), antialias=True) if cfg["model"]["name"] == "resnet18" else torch.nn.Identity(),
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(mean=normalize["mean"], std=normalize["std"])
         ])
         eval_transform=v2.Compose([
             v2.ToImage(),
+            v2.Resize((96, 96), antialias=True) if cfg["model"]["name"] == "resnet18" else torch.nn.Identity(),
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(mean=normalize["mean"], std=normalize["std"])
         ])
@@ -221,6 +224,10 @@ def main():
         model = CNN(
             num_classes=model_cfg["num_classes"],
             use_bn=model_cfg["use_bn"],
+        ).to(device)
+    elif model_cfg["name"]=='resnet18':
+        model = ResNet18(
+            num_classes=model_cfg["num_classes"],
         ).to(device)
     else:
         raise ValueError(f"不支持的模型类型:{model_cfg["name"]}")

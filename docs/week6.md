@@ -1,6 +1,6 @@
 # 第六周逐日学习指南：字符级 Bigram 与 Mini-GPT
 
-> 更新日期：2026-10-27<br>
+> 更新日期：2026-10-31<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：固定文本划分，完成同一字符 tokenizer 下的 Bigram 与小 GPT、验证曲线、保存加载和自回归生成，解释下一 token 预测。  
@@ -78,6 +78,8 @@ python -m pip check
 
 文本采用作者仓库 Tiny Shakespeare，下载后记录实际来源 URL、文件 SHA256 与解码/换行处理方式。按 Unicode 字符位置顺序切成 80%/10%/10% 的 train/val/test，先保存原文，再分别编码和造窗口；窗口不跨边界。字符词表只从 train 建立，额外保留 `<unk>` ID；验证或 prompt 的未见字符映射到 UNK（未知字符占位 ID），并报告 OOV（未收录字符）的数量，已知字符的 encode/decode 应往返一致。
 
+GPT 的正式结构以 [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py) 的 GPT-2 风格为参考：pre-LN、GELU、可学习位置嵌入、embedding dropout、最终 LayerNorm，以及 token embedding / 无 bias 输出头的权重共享。Attention 与 LayerNorm 沿用第四周基础模块，GPTBlock 在本周文件中定义。数据与小预算是项目配置，模型规模不复制作者的大模型默认值。
+
 Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batch=16、seed=42、AdamW lr=3e-4、weight_decay=0.01、2000 steps、每 200 步验证。GPT 为 2 层、C=128、4 heads、FFN=512、dropout=0.1；Bigram 为 vocab×vocab 转移 logits 的 Embedding。NLL 指负对数似然，即正确目标 token 的概率取负自然对数。验证在相同原文上按固定顺序统计有效目标 token 的总 NLL/总数，关闭 dropout；按[验证分窗规则](#eval-windows)覆盖 N-1 个目标，尾窗单独评估并记录计数。测试原文留到第七周配置冻结后使用。预算不足时先短运行测时，再同时固定两组实际预算。
 
 ## 六天总览
@@ -100,7 +102,8 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [Zero to Hero 作者代码](https://github.com/karpathy/nn-zero-to-hero) | GPT 课程的数据与字符编码部分 | 明确训练文本与字符 ID |
+| [D2L 文本预处理](https://zh.d2l.ai/chapter_recurrent-neural-networks/text-preprocessing.html) / [语言模型与数据集](https://zh.d2l.ai/chapter_recurrent-neural-networks/language-models-and-dataset.html)（主讲解） | 词表、字符与下一个 token 目标；保留项目的原文和划分规则 | 明确文本、ID、窗口与预测目标 |
+| [Zero to Hero 作者代码](https://github.com/karpathy/nn-zero-to-hero) | Tiny Shakespeare 的数据与字符编码部分 | 对照作者使用的数据入口 |
 | [Tiny Shakespeare 原文](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt) | 查看格式、换行和角色名，记录下载来源 | 先划分原文再编码 |
 | [Unicode 指南](https://docs.python.org/zh-cn/3.12/howto/unicode.html)、[hashlib](https://docs.python.org/zh-cn/3.12/library/hashlib.html)（官方中文） | UTF-8 编解码、sha256 与 hexdigest；JSON 读写复用第二周 | 区分原始 bytes、实际使用文本及各自 hash |
 
@@ -220,6 +223,7 @@ python scripts/prepare_text.py
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
+| [D2L 8.3 语言模型和数据集](https://zh.d2l.ai/chapter_recurrent-neural-networks/language-models-and-dataset.html)（主概念材料） | 自回归概率、序列采样、X/Y 错位 | 先手算下一个 token 目标；正式窗口按本周固定规则 |
 | [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) | 字符编码、batch 采样与 Bigram 部分，按主题观看 | 实现输入与目标错位 |
 | [Zero to Hero 作者代码](https://github.com/karpathy/nn-zero-to-hero) | 对应课程最小 Bigram 实现 | 理解 vocab×vocab logits |
 
@@ -411,8 +415,9 @@ python -m pytest tests/test_language_model.py -q
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) | Attention、残差、FFN、位置嵌入与完整模型部分 | 从 Bigram 扩展到 GPT |
-| [第四周指南](week4.md) | causal Mask、pre-LN Block 与未来隔离 | 复用已验证的核心 |
+| [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py)（正式结构参考） | MLP、Block、GPT.__init__、forward 和初始化；先忽略优化 / 预训练权重导入部分 | 按下方步骤组织小 GPT |
+| [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY)（教学视频） | 从 Bigram 逐步加入 Attention、位置嵌入和残差 | 理解构建过程；最终 GELU 与权重共享按上述作者实现 |
+| [第四周指南](week4.md#block-conventions) | Attention、LayerNorm、causal Mask 与未来隔离 | 复用已验证的基础模块 |
 
 ### 时间与操作
 
@@ -427,7 +432,7 @@ python -m pytest tests/test_language_model.py -q
 
 1. 创建 `src/petvision/models/llm/mini_gpt.py` 与 `configs/llm/mini_gpt.yaml`：token embedding + position embedding→两层 pre-LN Block（传入 causal mask）→最终 LayerNorm→Linear(C,V)。
 
-2. 复用第四周 Attention 与 FFN，GPT 无需完整 Encoder–Decoder 或 Cross-Attention；新增位置参数范围为 context=128。
+2. 复用第四周 Attention 与 LayerNorm，在 mini_gpt.py 定义独立 GPTBlock；使用 pre-LN、GELU 和作者规定的 dropout 位置，新增位置参数范围为 context=128。
 
 3. 扩展语言模型检查：改变输入后缀，在 eval/dropout=0 下前缀 logits 不变；目标 token 不输入当前位置；输入/输出形状分别为 `[B,T]` 与 `[B,T,V]`。
 
@@ -435,29 +440,37 @@ python -m pytest tests/test_language_model.py -q
 
 ### 分步操作与自查
 
-#### 第一步：画出自己的小 GPT
+#### 第一步：按作者定义 GPTBlock，再组装 MiniGPT
 
-创建 `src/petvision/models/llm/mini_gpt.py`，顶层写 `import torch` 和 `from torch import nn`，并从 `petvision.models.transformer.blocks` 导入 EncoderBlock。模型类写在此文件；继续向 `tests/test_language_model.py` 添加本日的形状、因果扰动和梯度检查，从 `petvision.models.llm.mini_gpt` 导入 MiniGPT。
+创建 `src/petvision/models/llm/mini_gpt.py`，顶层导入 torch、nn、math，以及第四周的 MultiHeadSelfAttention 和自写 LayerNorm。继续向已有 `tests/test_language_model.py` 添加本日检查。第四周 EncoderBlock 是教材的 post-LN＋ReLU，GPT 在这个文件中定义自己的 pre-LN Block。
+
+先定义 `GPTBlock(embed_dim, num_heads, ffn_hidden_dim, dropout=0.0)`：
+
+1. 创建独立的 norm1、norm2，eps=1e-5；两个归一化均保留 gamma、beta。
+2. 创建 MultiHeadSelfAttention，显式设 bias=True。它使用三套 Q/K/V Linear，作者把它们拼在一个 c_attn 中；计算等价，参数映射可沿用第四周的 Q/K/V 拼接方法。
+3. Attention 的 softmax 权重 dropout 保留在注意力模块内部；GPTBlock 再注册一次投影输出 dropout，对应作者 resid_dropout。第一条残差为 `x = x + attn_output_dropout(attention(norm1(x), mask))`。
+4. FFN 按 Linear(C,hidden_dim) → GELU → Linear(hidden_dim,C) → Dropout 组织，两个 Linear 使用 bias=True；这里按 nanoGPT 在第二个 Linear 后做一次 dropout，GELU 后不另加隐藏层 dropout。第二条残差为 `x = x + ffn(norm2(x))`。
+5. GPTBlock.forward 接收 x、attn_mask、key_padding_mask=None，将 Mask 传给 Attention，只返回新的 x。
+
+再定义 `MiniGPT(vocab_size, context_length, embed_dim, depth, num_heads, ffn_hidden_dim, dropout)`，按下面顺序建立对象：
+
+1. 从 tokenizer 取实际 V，记录 context_length 与 C，检查 C 能被 num_heads 整除。YAML 的 heads 由入口显式传给 num_heads。
+2. 注册 `token_embedding = nn.Embedding(V,C)` 和 `position_embedding = nn.Embedding(context_length,C)`，再注册 embedding_dropout。两种嵌入相加后做一次 dropout；GPT 不使用第四周文本 Encoder 的 sqrt(C) 缩放或正弦位置表。
+3. 按 depth 分别新建 GPTBlock，放入 ModuleList，各层参数独立。本周首轮 C=128、FFN=512、depth=2、heads=4。
+4. 创建最终 LayerNorm(C)，再创建 `head = nn.Linear(C,V,bias=False)`；在统一初始化之前令 `self.head.weight = self.token_embedding.weight`，共享同一个 Parameter。两者 shape 都为 `[V,C]`：输入时按 token ID 取行，输出时用这些行与隐藏状态计算词表 logits。位置嵌入单独保留。
+5. 按作者初始化：Embedding、Linear 的 weight 用均值 0、std=0.02 的正态分布，存在的 Linear bias 置零；LayerNorm 的 gamma/beta 保持 1/0。可在模型中定义初始化方法并用 apply 遍历。随后把各 GPTBlock 的 Attention 输出投影和 FFN 第二个 Linear 的 weight 标准差调整为 `0.02 / sqrt(2*depth)`，对应作者残差投影的初始化。
+6. 用 `model.head.weight is model.token_embedding.weight` 检查共享关系；named_parameters 默认对同一 Parameter 去重，因此不要求这份共享权重被列出两次。保存加载后也检查共享关系及固定输入输出；AdamW 直接使用 model.parameters()，不手动将共享权重重复加入参数组。
 
 ```text
-token IDs             [B,T]
-token/position embed  [B,T,128]
-2 个 causal Block     [B,T,128]
-最终 LayerNorm        [B,T,128]
-词表输出头            [B,T,V]
+token IDs                    [B,T]
+token + learned position     [B,T,C]
+embedding dropout            [B,T,C]
+depth 个 causal GPTBlock     [B,T,C]
+最终 LayerNorm               [B,T,C]
+共享输入权重的无 bias head   [B,T,V]
 ```
 
-在 mini_gpt.py 定义 `MiniGPT`，构造参数接收 vocab_size、context_length、embed_dim、depth、num_heads、ffn_hidden_dim 和 dropout。token embedding 用 `nn.Embedding(V,C)`，位置 embedding 用 `nn.Embedding(context_length,C)`；Block 的创建接口见[第四周](week4.md#day-4)。YAML 的 heads 由入口传给 num_heads，name 留在模型选择分支，不能原样把整个 model 字典传给构造函数。
-
-词表 head 的 V 来自 tokenizer，位置嵌入长度来自 context；二者不能混淆。位置 ID 是 0..T-1，输入 T 不得超过配置允许的上下文长度。
-
-先完成构造函数，再去第三步写 forward：
-
-1. 从已加载 tokenizer 取实际 V，记录 context_length 与 C；检查 C 能被 num_heads 整除，避免把词表大小当作特征维度。
-2. 注册 V×C 的 token embedding 和 context_length×C 的 position embedding。两者输出宽度相同，后面才能相加。
-3. 按 depth 次数分别创建新的 EncoderBlock，放入 ModuleList；每个 Block 使用相同结构配置，但拥有自己的参数。
-4. 创建最终 LayerNorm(C) 和 C→V 的输出 Linear。本轮不另加输入与输出权重共享机制，先保持结构易于检查。
-5. 用 named_parameters 确认两套 embedding、每个 Block、最终归一化和 head 都已注册；然后按图中的顺序写前向，训练 loss 留给训练器。
+位置 ID 为 0..T-1，输入 T 不超过 context_length；head 的 V 来自 tokenizer，不与上下文长度混用。训练 loss 继续由训练器根据 logits 和 targets 计算。
 
 #### 第二步：先检查一个位置能看到什么
 
@@ -475,11 +488,13 @@ def forward(self, token_ids):
     ...
 ```
 
-在训练器中根据 logits 和 targets 计算 loss，这样同一模型也能只前向做生成。第四周的 Block 接收布尔 Mask，本轮不新增一个没有实现的 causal=True 参数。在 MiniGPT.forward 中，取 B、T = token_ids.shape，检查长度后创建：
+在训练器中根据 logits 和 targets 计算 loss，这样同一模型也能只前向做生成。GPTBlock 将第四周注意力核心的布尔 Mask 接口传下去；本轮使用明确的上三角 Mask，不另加 causal=True 参数。在 MiniGPT.forward 中，取 B、T = token_ids.shape，检查长度后创建：
 
 ```python
 positions = torch.arange(T, device=token_ids.device)
-x = self.token_embedding(token_ids) + self.position_embedding(positions)[None, :, :]
+x = self.embedding_dropout(
+    self.token_embedding(token_ids) + self.position_embedding(positions)[None, :, :]
+)
 causal_mask = torch.ones((T, T), dtype=torch.bool, device=token_ids.device).triu(1)
 for block in self.blocks:
     x = block(x, attn_mask=causal_mask, key_padding_mask=None)
@@ -487,11 +502,18 @@ for block in self.blocks:
 
 上述 self.token_embedding、self.position_embedding 和 self.blocks 均在构造函数中建立；堆叠后接最终 LayerNorm 和词表输出层。每层收到同一个 causal_mask，当前样本不含 padding。ViT 不传 causal mask，GPT 不能沿用它的双向设置。
 
+在 tests/test_language_model.py 顶层补充 `from torch import nn` 和 GPTBlock 的导入，再增加一个 GPTBlock 数值参考：
+
+1. 取 C=32、heads=4、FFN=128、dropout=0、CPU float64，创建自写 GPTBlock。参考使用 `nn.TransformerEncoderLayer`，设置 batch_first=True、norm_first=True、activation="gelu"、layer_norm_eps=1e-5、bias=True、dropout=0；在关闭所有 dropout 时，这条 pre-LN 计算顺序与作者 Block 对应。
+2. 按第四周的 QKV 拼接方法对齐 Attention 的 weight / bias，再把 norm1/norm2 的 gamma/beta 和两个 FFN Linear 映射到参考 norm1/norm2、linear1/linear2。
+3. 两边输入数值相同的独立 `[B,T,C]` 叶子 Tensor，传相同布尔 causal mask；参考的 Mask 参数名为 src_mask。使用同一固定 probe 反向，比较输出、输入梯度和对应参数梯度，最大绝对差以 1e-6 为目标。
+4. 将自写 Block 的 dropout 改为 0.1，检查 Attention 权重、Attention 投影输出、FFN 输出三处 dropout 均已注册并随 train/eval 切换；另外检查 MiniGPT 的 embedding dropout。非零 dropout 不做两套实现的逐值随机输出比较。
+
 #### 第四步：先拟合短文本
 
 固定一小段训练文本反复更新，观察 train loss 能否明显下降。若不下降，先查目标错位、mask 方向、optimizer 参数和 step，再扩大文本与训练步数。
 
-可取 train 的前 33 个已编码 ID，构造一组 32 位置的 x/y，使用临时 GPT、dropout=0、固定这组输入约更新 100 次。记录初始与最终 loss，检查最终更低且有限，再检查 token/position embedding、各 Block、输出 head 的梯度存在且有限。这个例子直接放入已有语言模型检查或本地草稿执行，不写正式结果。
+可取 train 的前 33 个已编码 ID，构造一组 32 位置的 x/y，使用临时 GPT、dropout=0、固定这组输入约更新 100 次。记录初始与最终 loss，检查最终更低且有限，再检查 token/position embedding、各 Block、输出 head 的梯度存在且有限；共享的输入 / 输出权重按同一 Parameter 检查。这个例子直接放入已有语言模型检查或本地草稿执行，不写正式结果。
 
 从昨天的 Bigram YAML 复制出 `configs/llm/mini_gpt.yaml`，保留完整 data 和 training，将 model 替换为：
 
@@ -508,7 +530,7 @@ model:
 
 在 train_gpt.py 顶层导入 MiniGPT，model.name=bigram 时保留昨天的模型分支，name=mini_gpt 时根据本配置创建新的 MiniGPT；两者都调用同一组 train_step / evaluate_lm。
 
-同时将 experiment_dir 改为 `experiments/mini_gpt/week6/runs/gpt`，output_dir 改为 `outputs/mini_gpt`。GPT 复用 Block 的实现并创建新实例，自身管理 token embedding、可学习位置嵌入和最终 LayerNorm，不重复使用教学 Encoder 的正弦位置编码。
+同时将 experiment_dir 改为 `experiments/mini_gpt/week6/runs/gpt`，output_dir 改为 `outputs/mini_gpt`。GPT 创建自己的 GPTBlock 实例，复用 Attention 与 LayerNorm；token embedding、可学习位置嵌入、embedding dropout、最终 LayerNorm 和权重共享由 MiniGPT 管理。
 
 ### 运行与验收
 
@@ -516,10 +538,10 @@ model:
 python -m pytest tests/test_language_model.py -q
 ```
 
-加入 GPT 的形状、有限梯度和未来扰动检查：输入 `[B,T]`，输出 `[B,T,V]`；修改位置 k 之后的输入，前 k+1 个位置的 logits 应在容差内一致。小样本拟合只验证学习路径，正式两组训练在明天运行。
+加入 GPTBlock 参考输出/梯度，以及 GPT 的形状、有限梯度、共享权重及未来扰动检查：输入 `[B,T]`，输出 `[B,T,V]`；修改位置 k 之后的输入，前 k+1 个位置的 logits 应在容差内一致。小样本拟合只验证学习路径，正式两组训练在明天运行。
 
 - [ ] logits 只依赖当前与过去的输入，未来隔离通过。
-- [ ] 能解释 token embedding、position embedding 与输出词表维度。
+- [ ] 能解释 token embedding、position embedding、无 bias head 的词表维度和输入 / 输出权重共享。
 - [ ] 小模型可以前反向和拟合固定短文本。
 
 <a id="day-4"></a>

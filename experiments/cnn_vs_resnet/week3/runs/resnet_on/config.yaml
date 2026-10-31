@@ -1,0 +1,33 @@
+model:
+  name: resnet18
+  num_classes: 10
+data:
+  name: cifar10
+  root: datasets/raw
+  split_path: experiments/cnn_vs_resnet/week3/cifar10_split.json
+  validation_size: 5000
+  image_size: 32
+  batch_size: 512
+  num_workers: 0
+  augmentation:
+    random_crop_padding: 4
+    random_horizontal_flip: true
+  normalize:
+    mean:
+    - 0.5
+    - 0.5
+    - 0.5
+    std:
+    - 0.5
+    - 0.5
+    - 0.5
+training:
+  seed: 42
+  device: auto
+  dtype: float32
+  epochs: 100
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+experiment_dir: experiments/cnn_vs_resnet/week3/runs/resnet_on
+output_dir: outputs/resnet_on

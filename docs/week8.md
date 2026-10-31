@@ -1,6 +1,6 @@
 # 第八周逐日学习指南：CLIP、LLM / VLM 推理与八周总结
 
-> 更新日期：2026-10-27<br>
+> 更新日期：2026-10-31<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-4)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：本地完成 CLIP 零样本任务，云端运行小型 LLM 与 VLM，保存至少 20 张图×每图2问的完整结果、人工判定和结构图，整理最终报告。  
@@ -52,6 +52,16 @@ PetVisionLab/
 
 首选入门模型为 CLIP `openai/clip-vit-base-patch32`、LLM `HuggingFaceTB/SmolLM2-360M-Instruct`、VLM `HuggingFaceTB/SmolVLM-256M-Instruct`，均先按官方模型卡验证一次最小推理，再记录实际 commit/revision、模型类与依赖版本。它们是小模型起点，不要求耗尽 48GB 显存。若兼容性问题需更换模型，保留变更原因及新版本记录。
 
+本周超出 D2L 基础网络的手写范围，正式推理按所选权重的模型卡、config、processor 与对应版本的官方 API 文档执行；D2L 的 Attention / Transformer 用于理解概念。先按一个完整官方示例跑通，再接项目配置与结果保存，不将前几周的自写 Block、位置编码或 CIFAR 归一化套入预训练模型。
+
+| 对象 | 本周使用的接口与依据 | 核对重点 |
+| --- | --- | --- |
+| CLIP | [模型卡](https://huggingface.co/openai/clip-vit-base-patch32)的 CLIPModel＋CLIPProcessor | HF 权重与预处理成套；使用 logits_per_image 取得分类分数，不混用 openai/CLIP 库的 tokenize / clip.load |
+| LLM | [SmolLM2 模型卡](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct)的 AutoModelForCausalLM＋AutoTokenizer | 使用配套 Chat Template，保留整数 input_ids，只解码新增 token |
+| VLM | [SmolVLM 模型卡](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct)、[实际 config](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct/blob/main/config.json)与 [Idefics3 文档](https://huggingface.co/docs/transformers/model_doc/idefics3) | 按 model_type=idefics3 选受支持的 Auto 类；模板图像位置与 processor 的实际图片输入对应 |
+
+权重 revision 与 Transformers 版本分别固定：revision 只能固定仓库文件，不能固定 Python API。进入本周时先查看已安装版本，切到该版本官方文档，确认本节所用 Auto 类、模板参数与模型类型受支持；先通过单图 / 单 prompt 检查，再保存环境和实际模型类。模型卡的旧正文、新版自动示例和不同版本文档可能采用不同 Auto 类，选一条完整兼容路径，不把几段示例拼接。
+
 CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 张，以固定英文类别模板做零样本分类，使用模型自己的 processor。结果单列为预训练零样本条件。LLM/VLM 首次用 batch=1、greedy（do_sample=False）、max_new_tokens=128、固定 prompt 与精度；GPU 支持时可用 BF16，否则明确记录 FP32/FP16。VQA 在推理前写好至少 20 张图、每图 2 个问题与判定标准，覆盖类别、颜色、数量、位置和信息不足；每个问题独立上下文，不让前一题答案进入下一题。所选 SmolVLM 模型卡标注主要语言为英语，本轮优先用英文问题与判定标准；如增加中文题，单独报告语言条件和结果，避免把语言能力差异全部归因为视觉理解。
 
 ## 六天总览
@@ -90,7 +100,7 @@ CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 �
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [CLIP 原论文](https://arxiv.org/abs/2103.00020) | 双编码器、图文对比与零样本分类 | 画出图像/文本 embedding |
-| [CLIP 官方实现](https://github.com/openai/CLIP) | zero-shot 示例、特征归一化与相似度 | 理解候选类别打分 |
+| [CLIP 官方实现](https://github.com/openai/CLIP) | zero-shot 示例、特征归一化与相似度 | 理解算法；本周实际加载接口按下方 HF 模型卡 |
 | [CLIP 模型卡](https://huggingface.co/openai/clip-vit-base-patch32) | 模型加载与对应预处理 | 运行固定模型/revision |
 
 ### 时间与操作
@@ -484,7 +494,7 @@ python scripts/infer_llm.py --config configs/llm/llm_inference.yaml
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [SmolVLM 模型卡](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) | 图像+文本 messages、processor、最小推理 | 跑通一张真实图片 |
-| [SmolVLM 官方文档](https://huggingface.co/docs/transformers/model_doc/smolvlm) | 视觉模块、连接与语言生成接口 | 查看实际 config 与模块 |
+| [Idefics3 官方文档](https://huggingface.co/docs/transformers/model_doc/idefics3)、[SmolVLM 实际 config](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct/blob/main/config.json) | 按实际 model_type 查看视觉模块、连接与语言生成接口 | 核对兼容 API，再观察实际模块 |
 | [nn.Module hook（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.nn.Module.html#torch.nn.Module.register_forward_hook) | named_modules、register_forward_hook、register_forward_pre_hook、handle.remove | 临时记录实际模块形状 |
 
 ### 时间与操作
@@ -613,7 +623,7 @@ print(answer)
 
 先使用刚才单图检查中的同一张图片、同一个问题和 inputs，在临时调试分支中操作：
 
-1. 打印 config 中的架构信息和 model.named_modules() 的模块路径，先找出视觉编码器、连接 / 压缩模块、语言模型三个候选模块；不要仅凭文件名里含 vision 就认定它是特征出口。
+1. 打印 config 中的架构信息和 model.named_modules() 的模块路径，先找出视觉编码器、连接 / 压缩模块、语言模型三个候选模块；不要仅凭文件名里含 vision 就认定它是特征出口。同时从实际 text_config / 模块查归一化类型、位置编码、query / key-value 头数和 FFN 激活，把观察写入 tensor_flow.md；现代 LLM 的 RMSNorm、RoPE 或 GQA 等设计可能与第六周 GPT-2 风格不同，不自行替换成 MiniGPT 的结构。
 2. 阅读这些模块的 forward 调用关系，确认谁接收 pixel_values、谁接收视觉输出、图像特征在哪里与文本特征合并。记录实际模块路径，供下一步挂 hook。
 3. 先只观察视觉编码器：挂一个 hook，运行一次 `model(**inputs)`，查看返回类型，再从 Tensor、tuple 或 ModelOutput 中找到实际特征及 shape。
 4. 按同样方式观察连接模块输出，最后观察语言模型实际接收的 embedding；每增加一个观察点都运行一次，避免多个不确定字段同时报错而难以定位。

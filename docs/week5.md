@@ -1,9 +1,9 @@
 # 第五周逐日学习指南：小型 Vision Transformer 与视觉模型比较
 
-> 更新日期：2026-10-27<br>
+> 更新日期：2026-10-31<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-2)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
-> 本周成果：复用 Encoder 实现 ViT，完成 Patch=4/8 对照，并在配置冻结后统一测试 CNN、ResNet 和 ViT，形成带局限说明的视觉报告。  
+> 本周成果：复用 Attention 与 LayerNorm，按 D2L ViTBlock 组装 ViT，完成 Patch=4/8 对照，并在配置冻结后统一测试 CNN、ResNet 和 ViT，形成带局限说明的视觉报告。<br>
 > 环境：本地 Conda `petvision`、RTX 4060；沿用 PyTorch、Matplotlib、PyYAML、pytest。首轮 FP32，小模型和 batch=64 起步。
 
 ## 怎么使用这份指南
@@ -52,7 +52,7 @@ python -m pip check
 
 解释器应位于 Conda 的 `petvision` 环境，`petvision.__file__` 应指向当前仓库的 `src/petvision/`。若出现 `No module named petvision`，先确认第二周已建立 `pyproject.toml` 和包目录，再在根目录执行 `python -m pip install -e . --no-deps`；若缺少 torch 或 CUDA 不可用，按[第二周 Day 1 的安装与排错步骤](week2.md#environment)逐项核对。
 
-复用第三周 CIFAR-10 固定划分与第四周的手写 EncoderBlock。 本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
+复用第三周 CIFAR-10 固定划分与第四周的手写 Attention、LayerNorm；ViTBlock 按本周教材步骤组织。本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
 
 ## 固定条件与接口约定
 
@@ -69,9 +69,9 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 | T | 进入 Attention 的序列长度 | `T=N+1`，包含 CLS |
 | depth、heads、ffn_hidden_dim | Block 层数、注意力头数、FFN 中间宽度 | 2、4、512；每头维度为 128/4=32 |
 
-沿用第三周的 `cifar10_split.json`、预处理与训练/验证边界。小 ViT 起步 C=128、depth=2、heads=4、FFN=512、dropout=0.1、CLS 分类、可学习位置嵌入；两个 Patch 版本都从零初始化。AdamW lr=3e-4、weight_decay=0.01、batch=64、20 epochs、seed=42 为首轮预算，先实测短运行再固定。
+沿用第三周的 `cifar10_split.json`、CNN 使用的 32×32 预处理与训练/验证边界。第三周的教材结构 ResNet 使用 Resize 后的 96×96，本周两个 ViT 都使用 32×32。小 ViT 起步 C=128、depth=2、heads=4、FFN=512、dropout=0.1、CLS 分类、可学习位置嵌入；两个 Patch 版本都从零初始化。AdamW lr=3e-4、weight_decay=0.01、batch=64、20 epochs、seed=42 为首轮预算，先实测短运行再固定。
 
-32×32 图片：Patch=4 得到 64 个图像 token、含 CLS 长度 65；Patch=8 得到 16 个图像 token、含 CLS 长度 17。两组仅改变 Patch 相关结构，C、层数、划分、增强与训练预算一致；Patch 投影与位置参数量会改变，需记录。ViT 使用双向 Attention，不启用 causal mask。跨 CNN/ResNet/ViT 比较允许优化配置不同，但必须列出差异，不把准确率差异全归因于架构。
+32×32 图片：Patch=4 得到 64 个图像 token、含 CLS 长度 65；Patch=8 得到 16 个图像 token、含 CLS 长度 17。两组仅改变 Patch 相关结构，C、层数、划分、增强与训练预算一致；Patch 投影与位置参数量会改变，需记录。ViT 使用双向 Attention，不启用 causal mask。跨 CNN/ResNet/ViT 比较列出输入尺寸、Resize、优化设置和预算差异，比较的是各自完整配置的表现。
 
 这里“相同训练预算”具体指相同 epoch、batch 与样本数，并不表示相同计算量或耗时。每头 Attention 分数矩阵从 65×65 变为 17×17，元素数约相差 14.6 倍；整个模型还包含投影、FFN 等计算，不能据此断言训练就快 14.6 倍。报告应同时看验证指标、参数量和实测时间；某个 Patch 更优是本次设置下的观察，不是验收必须得到的结论。
 
@@ -80,7 +80,7 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 | 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
 | --- | --- | --- | --- | --- |
 | Day 1 | Patch Embedding 与位置形状 | 4h | 1h | 两种 Patch 的可检查实现 |
-| Day 2 | 复用 Encoder 组装 ViT | 4h | 1h | 可训练 ViT 与小批过拟合 |
+| Day 2 | 按教材 ViTBlock 组装 ViT | 4h | 1h | 可训练 ViT 与小批过拟合 |
 | Day 3 | Patch=4/8 正式对照 | 4h | 1h | 两个训练结果与曲线 |
 | Day 4 | 统一指标与冻结视觉配置 | 4h | 1h | 验证对照表和统一评估函数 |
 | Day 5 | 统一 CIFAR-10 测试与错误分析 | 4h | 1h | 六个变体的最终视觉结果表 |
@@ -95,8 +95,8 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [ViT 原论文](https://arxiv.org/abs/2010.11929) | 第 3 节、Figure 1 与图像 Patch 表达 | 手算 token 数和展开顺序 |
-| [torchvision ViT 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/vision_transformer.html) | patch projection、CLS 与位置嵌入 | 作为结构参考 |
+| [D2L 11.8 Transformers for Vision（英文原版，主材料）](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html) | 11.8.2 PatchEmbedding、11.8.4 CLS 与可学习位置参数，代码选择 PyTorch | 手算 Patch 数和展开顺序 |
+| [ViT 原论文](https://arxiv.org/abs/2010.11929) / [torchvision ViT 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/vision_transformer.html)（实现后选读） | 对照 Patch、CLS 与位置嵌入的共同结构 | 区分参考版本的初始化与 dropout 差异 |
 | [F.unfold（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.nn.functional.unfold.html) | kernel_size、stride、输出的 Patch 维度 | 与 Conv 投影做独立数值对照 |
 
 ### 时间与操作
@@ -182,7 +182,7 @@ position embedding [1,N+1,C]
 
 CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训练；它不是预先算出的类别标签。位置 0 对应 CLS，后面才是图像 Patch。
 
-构造函数中用 `nn.Parameter` 注册 CLS 和位置嵌入，例如先以 `torch.zeros(1,1,C)` 和 `torch.zeros(1,N+1,C)` 建立 Parameter，再各用 `nn.init.normal_(parameter, mean=0.0, std=0.02)` 初始化；记录这一初始化方式。forward 只 expand/concat/相加，不临时创建新 Parameter。检查两者出现在 named_parameters 和 state_dict 中，位置长度与实际 N+1 不符时明确报错，B=1 与 B=4 都保持 batch 维。
+按教材 PyTorch 版初始化：CLS 使用 `nn.Parameter(torch.zeros(1,1,C))`，可学习位置参数使用 `nn.Parameter(torch.randn(1,N+1,C))`。两者均注册为 Parameter；本轮保持这套教材初始化，torchvision 等实现可能使用其他初始化，应按所选参考明确区分。forward 只 expand/concat/相加，不临时创建新 Parameter。检查两者出现在 named_parameters 和 state_dict 中，位置长度与实际 N+1 不符时明确报错，B=1 与 B=4 都保持 batch 维。
 
 Day 1 尚未接好完整 ViT.forward 时，在测试里明确调用 patch_embed，手动 expand / concat / 加位置参数，核对这些中间结果即可；不要今天就调用尚未实现的完整分类前向。构造 ViT 时先检查 image_size 能被正整数 patch_size 整除；完整 forward 还要检查输入 H、W 均等于配置 image_size。仅比较 token 数不能识别例如 16×64 与 32×32 这类同数量、不同位置网格的输入。
 
@@ -199,14 +199,14 @@ python -m pytest tests/test_vit.py -q
 - [ ] 形状检查支持 batch=1 和 batch>1。
 
 <a id="day-2"></a>
-## Day 2：复用 Encoder 组装 ViT
+## Day 2：按教材 ViTBlock 组装 ViT
 
 ### 去哪里学、读到哪里
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
-| [ViT 原论文](https://arxiv.org/abs/2010.11929) | Encoder、CLS 分类和训练设置说明 | 组装最小分类模型 |
-| [第四周指南](week4.md) | pre-LN Encoder 接口与检查 | 复用已验证模块 |
+| [D2L 11.8 Transformers for Vision（英文原版，主材料）](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html) | 11.8.3 ViTMLP / ViTBlock、11.8.4 完整模型 | 按教材 pre-LN 与 dropout 位置组装 |
+| [第四周指南](week4.md#block-conventions) | Attention、LayerNorm 接口与参考检查 | 复用基础模块，ViTBlock 按本节定义 |
 | [Python 计时（官方中文）](https://docs.python.org/zh-cn/3.12/library/time.html#time.perf_counter)、[CUDA 同步（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.cuda.synchronize.html) | perf_counter、GPU 异步与同步；显存接口按下方说明使用 | 记录小模型真实耗时与峰值显存 |
 | [重置显存峰值](https://docs.pytorch.org/docs/stable/generated/torch.cuda.memory.reset_peak_memory_stats.html)、[读取分配峰值](https://docs.pytorch.org/docs/stable/generated/torch.cuda.memory.max_memory_allocated.html)（官方英文） | reset_peak_memory_stats、max_memory_allocated 与字节单位 | 明确峰值的统计起点和范围 |
 
@@ -214,7 +214,7 @@ python -m pytest tests/test_vit.py -q
 
 | 时间 | 做什么 |
 | --- | --- |
-| 0.5h | 确认可复用 Encoder 的接口 |
+| 0.5h | 核对教材 ViTBlock 与基础模块接口 |
 | 2h | 组装 ViT 与训练配置 |
 | 1h | 形状、反向、smoke 与过拟合 |
 | 0.5h | 测时并固定首轮预算 |
@@ -222,7 +222,7 @@ python -m pytest tests/test_vit.py -q
 
 ### 当天任务概览
 
-1. 完成 ViT：Patch→CLS/可学习位置→两层 pre-LN EncoderBlock→最终 LayerNorm→CLS 分类头，输出 `[B,10]`。复用第四周的 Block 类并创建本模型的新实例，保留手写 Attention 和 FFN。
+1. 在 vit.py 定义 ViTMLP 和 ViTBlock，完成 Patch→CLS/可学习位置→embedding dropout→两层 pre-LN ViTBlock→取 CLS→LayerNorm＋Linear 分类头，输出 `[B,10]`。Attention 与 LayerNorm 复用第四周模块，Block 的顺序按教材 ViT 实现。
 
 2. 创建 `configs/cv/vit_cifar10.yaml`，在训练和独立评估入口的模型选择处添加 ViT。记录第三周划分文件路径，训练和验证实例分别加载正确预处理。
 
@@ -233,53 +233,40 @@ python -m pytest tests/test_vit.py -q
 ### 分步操作与自查
 
 <a id="encoder-reuse"></a>
-#### 第一步：明确 ViT.forward 与复用模块的边界
+#### 第一步：按教材定义 ViTMLP、ViTBlock 和完整前向
 
-继续修改 `src/petvision/models/cv/vit.py`，从 `petvision.models.transformer.blocks` 导入 EncoderBlock，从 `petvision.models.transformer.normalization` 导入 LayerNorm，在昨天的 ViT 类中补齐构造函数和 forward；模型定义保留在该文件，训练入口只负责创建和调用它。
+继续修改 `src/petvision/models/cv/vit.py`，从 attention 模块导入 MultiHeadSelfAttention，从 normalization 模块导入自写 LayerNorm。第四周 EncoderBlock 对应 post-LN＋ReLU；本周在 vit.py 定义自己的 pre-LN ViTBlock，按教材 ViT 的结构组合这两个基础模块。
 
-```python
-def forward(self, images):
-    # Patch → CLS/可学习位置 → 两个 EncoderBlock → norm → 分类 logits
-    ...
-```
+1. 定义 `ViTMLP(embed_dim, hidden_dim, dropout=0.0)`：Linear(C,hidden_dim) → GELU → Dropout → Linear(hidden_dim,C) → Dropout。两个 Linear 保留 bias=True；GELU 使用默认的精确模式。两处 dropout 对应教材 ViTMLP。
+2. 定义 `ViTBlock(embed_dim, num_heads, ffn_hidden_dim, dropout=0.0)`：注册独立的 norm1/norm2，MultiHeadSelfAttention 显式使用 bias=False，与教材 ViTBlock 的默认值一致；再创建 ViTMLP。LayerNorm 的 eps=1e-5。
+3. ViTBlock.forward(x) 先执行 `x = x + attention(norm1(x))`，再执行 `x = x + mlp(norm2(x))`。Attention 的 dropout 在 softmax 权重处，MLP 的两处 dropout 已在内部；按教材顺序计算，Attention 投影后不再额外插一次残差 dropout。图像 token 都有效，不传 causal mask。
+4. 在 ViT 构造函数中按 depth 创建独立 ViTBlock 并放入 ModuleList。注册 `self.embedding_dropout = nn.Dropout(dropout)`，作用在 CLS / Patch 拼接且加上可学习位置之后。教材区分 emb_dropout 与 blk_dropout，本项目配置的同一个 dropout 值分别传给这两处，放置位置保持一致。
+5. 分类头使用 `self.head = nn.Sequential(LayerNorm(embed_dim), nn.Linear(embed_dim, num_classes))`。Block 堆叠结束后先取 CLS，再交给 head；分类头只执行一次最终 LayerNorm。
 
-网络只返回 `[B,10]`，训练损失、优化器和数据 loader 继续留在训练器。不要在 forward 里额外对类别做 softmax。
-
-推荐直接复用第四周 `EncoderBlock` 的实现，用 ModuleList 创建两个新的 Block；ViT 自己负责 CLS、可学习位置嵌入与堆叠后的最终 LayerNorm。第四周的教学 Encoder 还包含正弦位置编码和最终归一化，不能直接嵌入后再把同样的职责做一遍。
-
-| 计算位置 | ViT 中由谁负责 | 次数 |
-| --- | --- | --- |
-| CLS 拼接、可学习位置相加 | ViT | 进入 Block 堆叠前各一次 |
-| norm1、Attention、norm2、FFN 与两个残差 | 各个 EncoderBlock | 每层各自执行 |
-| 堆叠后的最终 LayerNorm、取 CLS、分类头 | ViT | 各一次 |
-
-整体顺序可先写为以下核心片段；构造函数中的 `self.blocks` 使用两个新建的 EncoderBlock，`self.final_norm` 是最终 LayerNorm：
-
-构造函数实际按 depth 创建 `nn.ModuleList`，每次循环新建 `EncoderBlock(embed_dim, heads, ffn_hidden_dim, dropout)`，不写死为两个共享对象。final_norm 使用 LayerNorm(embed_dim)，head 使用 nn.Linear(embed_dim, num_classes)；下方代码位于 ViT.forward 的输入尺寸检查之后，结尾还需 `return logits`。
+完整 ViT.forward 在检查图片高宽后按下面顺序执行：
 
 ```python
 tokens = self.patch_embed(images)
 cls = self.cls_token.expand(tokens.shape[0], -1, -1)
 tokens = torch.cat((cls, tokens), dim=1)
-tokens = tokens + self.position_embedding
+tokens = self.embedding_dropout(tokens + self.position_embedding)
 for block in self.blocks:
-    tokens = block(tokens, attn_mask=None, key_padding_mask=None)
-tokens = self.final_norm(tokens)
-logits = self.head(tokens[:, 0])
+    tokens = block(tokens)
+return self.head(tokens[:, 0])
 ```
 
-若选择封装后的完整 Encoder，需要显式关闭其内部正弦位置编码，并约定最终 LayerNorm 只由一处执行；本周按上面的 Block 组合方式即可。自查时看一次 forward 的调用顺序，确认位置只加一次、最终 LayerNorm 只有一次；Block 内部的 norm1/norm2 仍照常保留。
+网络只返回 `[B,10]` logits，loss、优化器和数据 loader 继续由训练入口负责。ViT 使用可学习位置参数，不经过第四周文本 Encoder 的 sqrt(C) 缩放或正弦位置入口。项目的 RGB 32×32、Patch=4/8 和 C=128 是小预算配置，教材的大图 / 灰度输入与模型宽度按项目配置替换；核心计算顺序按教材对应。
 
 #### 第二步：逐层检查尺寸
 
-P=4 时序列长 65，P=8 时长 17，Encoder 入口和出口均保持 `[B,T,128]`。最终 LayerNorm 后取 `x[:,0]` 得到 `[B,128]`，分类头输出 `[B,10]`。
+P=4 时序列长 65，P=8 时长 17，ViTBlock 堆叠的入口和出口均保持 `[B,T,128]`。先取 `x[:,0]` 得到 `[B,128]`，再由 head 中的 LayerNorm 与 Linear 输出 `[B,10]`。
 
 在 `tests/test_vit.py` 中按这个顺序完成检查，调试时可临时分段调用子模块：
 
 1. 创建 P=4、B=2 的随机输入，先只调用 patch_embed，确认得到 `[2,64,128]`；若这里不对，先检查卷积输出和 flatten / transpose。
 2. 将 CLS 扩展到 `[2,1,128]`，拼接在第 0 个位置，确认长度从 64 变为 65；再核对位置参数为 `[1,65,128]`，通过 batch 广播相加。
 3. 依次调用两个 Block，分别确认入口与出口的 T 都是 65，并确认没有传 causal mask；不要只检查最后一个 Block。
-4. 执行最终 LayerNorm，再取第 0 个位置送入分类头；确认取出的是 `[2,128]`，而不是把全部 65 个位置都送去作为独立分类结果。
+4. 先取第 0 个位置的 `[2,128]`，再依次调用 head 中的 LayerNorm 和 Linear；确认分类结果为 `[2,10]`。
 5. 再新建 P=8 的模型，从头重复检查，此时 Patch 数为 16、含 CLS 长度为 17。不能只替换输入而沿用 P4 的位置参数。
 6. 将两种模型都改用 B=1 输入再运行，确认 logits 仍为 `[1,10]`。通过后移除临时打印，保留形状断言，进入反向检查。
 
@@ -289,7 +276,9 @@ ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列�
 
 扩展已有 `tests/test_vit.py`，再导入 ViT；本步的 B=1 前反向、参数梯度与保存加载检查写入这个文件，保留昨天的 Patch 检查。64 样本拟合通过第四步接好后的训练入口运行。
 
-对随机图像和标签做一次 backward，查看 Patch 投影、CLS、位置嵌入、Encoder 和 head 的梯度是否存在且有限。B=1 也要通过。
+对随机图像和标签做一次 backward，查看 Patch 投影、CLS、位置嵌入、全部 ViTBlock 和 head 的梯度是否存在且有限。B=1 也要通过。
+
+在同一个 tests/test_vit.py 中补一个小 ViTBlock 的参考检查，顶层补充 `from torch import nn` 和 ViTBlock 的导入：以教材 ViTBlock / ViTMLP 的计算顺序建立独立参考，dropout=0、CPU float64，Attention 可使用 nn.MultiheadAttention(bias=False,batch_first=True) 并按第四周映射投影；对齐两个 LayerNorm、MLP 两个 Linear 的参数，比较同一输入的输出，最大绝对差以 1e-6 为目标。确认 embedding dropout、两个 MLP dropout 都随 train/eval 切换。
 
 再对固定 64 条训练图做过拟合，训练时关闭随机增强以减少干扰。loss 不降时先检查取出的是否为 CLS、模型是否包含参数、优化器是否覆盖参数。
 
@@ -342,7 +331,7 @@ experiment_dir: experiments/vit_patch_size/week5/runs/patch4
 output_dir: outputs/vit_patch4
 ```
 
-`model.image_size` 用于建立 Patch 和位置参数，`data.image_size` 对应实际输入，构建时核对两者都为 32。heads、FFN 宽度与 dropout 都要传入新建的 Block，不能继续使用第四周演示时写死的 C=32。
+`model.image_size` 用于建立 Patch 和位置参数，必须等于实际送入 ViT 的图像高宽；`data.image_size` 记录数据集原图尺寸。本周 ViT 不额外 Resize，因此构建时核对两者都为 32。heads、FFN 宽度与 dropout 都要传入新建的 Block，不能继续使用第四周演示时写死的 C=32。
 
 ### 运行与验收
 
@@ -355,7 +344,7 @@ python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --overfit-sample
 确认输出为 `[B,10]`，再检查固定 64 条训练图的 loss 能否下降。若 CLS 没有梯度，检查它是否注册为 Parameter、是否参与 concat、分类头是否取 `tokens[:,0]`；无法学习时也要检查是否误用了 causal mask。今天完成短检查与测时，正式训练在 Day 3 执行。
 
 - [ ] 前向与反向正常，CLS 和位置参数参与学习。
-- [ ] 复用 Block 类创建新模型，未重复加入正弦位置编码或堆叠后的最终 LayerNorm。
+- [ ] ViTBlock 与教材 pre-LN、GELU 和 dropout 位置一致，Attention / LayerNorm 已复用，可学习位置与 head 归一化各执行一次。
 - [ ] 小批数据能够拟合，训练器接口与 CNN/ResNet 兼容。
 - [ ] 两组训练预算在比较前固定。
 
@@ -410,7 +399,7 @@ P8 attention 每头矩阵：17 × 17
 
 #### 第三步：固定可比条件后分别训练
 
-首轮可固定各自 seed 独立初始化，并记录这一方式；相同 seed 不保证公共层的初值相同，因为 Patch 层消耗的随机数数量不同。若选择对齐公共层，只从 step=0 状态复制 Encoder、最终 LayerNorm、分类头及同形状的 CLS，Patch 投影和位置嵌入独立初始化。数据划分、增强策略、采样种子和训练预算保持一致。
+首轮可固定各自 seed 独立初始化，并记录这一方式；相同 seed 不保证公共层的初值相同，因为 Patch 层消耗的随机数数量不同。若选择对齐公共层，只从 step=0 状态复制 ViTBlock 堆叠、整个 head 及同形状的 CLS，Patch 投影和位置嵌入独立初始化。数据划分、增强策略、采样种子和训练预算保持一致。
 
 复制完整 P4 配置到 `configs/cv/vit_patch8_cifar10.yaml`，将 `model.patch_size` 改为 8，experiment_dir 改为 `experiments/vit_patch_size/week5/runs/patch8`，output_dir 改为 `outputs/vit_patch8`。若对齐公共层，在正式第一次前向之前保存 P4 的 initial.pt，并为 P8 明确实现允许复制的键名范围；逐项检查这些键的 shape 和复制后数值。第三周加载规则要求所有共有键形状一致，而本周 Patch 与位置参数同名但形状不同，不能直接套用。显式排除这两类参数并记录差异，其他意外不匹配仍报错；不能使用训练后的 best。
 
@@ -466,7 +455,7 @@ python scripts/train_cv.py --config configs/cv/vit_patch8_cifar10.yaml
 
 2. 扩展 `evaluate.py`，输出 split、样本数、loss、accuracy、macro_f1、参数量和测量配置；用手写小预测例子核对指标实现。
 
-3. 计时固定相同 device、dtype、batch、输入尺寸，先预热；GPU 计时前后同步。把加载时间单独记录，批量耗时除以图片数注明为 batch 平均 ms/img。
+3. 计时固定相同 device、dtype、batch 和预热规则，各模型输入使用其冻结配置对应的预处理结果尺寸；各消融对内部保持相同输入尺寸，跨架构表注明 CNN/ViT 为 32、ResNet 为 96。data.image_size 记录的是 CIFAR 原图尺寸 32，计时不能据此给所有模型都创建 32×32 张量。GPU 计时前后同步，加载时间单独记录，批量耗时除以图片数注明为 batch 平均 ms/img。
 
 4. 将 ViT P4/P8 的验证对照保存为 `patch_results.csv`，结合第三周 `results.csv` 汇总 CNN BN on/off、ResNet residual on/off、ViT P4/P8 的验证指标与预算；冻结六个变体及各自 best，准备一次统一测试。
 
@@ -507,7 +496,7 @@ for true_id, pred_id in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
 
 loss 继续按第二周的样本加权方法累计。循环结束后才调用 metrics_from_confusion，断言 matrix.sum() 等于实际 n_samples，并核对矩阵算出的 accuracy 与总正确数 / 总样本数一致；不能对每批 F1 取平均。
 
-结果字典中加入 macro_f1、混淆矩阵的 `matrix.tolist()`、参数量 `sum(p.numel() for p in model.parameters())`。所有模型使用同一确定性预处理和同一数据划分，读取所选 config 的 experiment_dir，按 `f"{args.split}_metrics.json"` 写入对应验证或测试结果；保存方法复用第二周 JSON 输出。
+结果字典中加入 macro_f1、混淆矩阵的 `matrix.tolist()`、参数量 `sum(p.numel() for p in model.parameters())`。结果中的 image_size 保存预处理后实际送入模型的尺寸，从实际 images 张量的高宽核对；本轮图像为正方形，取末维边长即可。不要直接复制记录原图尺寸的 data.image_size。所有模型使用同一固定数据划分，分别采用其冻结训练配置对应的确定性评估预处理：CNN/ViT 为 32×32，ResNet 含 Resize(96,96)。读取所选 config 的 experiment_dir，按 `f"{args.split}_metrics.json"` 写入对应验证或测试结果；保存方法复用第二周 JSON 输出。
 
 metrics_from_confusion 用整数矩阵累计、用浮点除法计算 F1；总样本数为 0 时明确报错。两类 / 三类手算检查放在本地草稿或当前评估模块的检查入口，实际调用该函数，不仅在纸上验证公式。误分类采集仍可沿用第二周的独立函数，或在这次完整循环中同步收集；若同步收集，收满图片后仍遍历全部样本。
 
@@ -539,17 +528,17 @@ ms_per_image = seconds * 1000 / (20 * images.shape[0])
 print("batch mean ms/img:", ms_per_image)
 ```
 
-这是模型前向的批量平均值，验证指标仍由完整验证集单独计算。每条测时记录写 warmup=5、repeats=20、实际 batch、dtype、device 和是否包含数据搬运；本片段不包含搬运。如记录峰值，CUDA allocated 包含已加载模型等当前分配，不能写成整张显卡的总使用量。
+这是模型前向的批量平均值，验证指标仍由完整验证集单独计算。每条测时记录写 warmup=5、repeats=20、实际 batch、输入形状、dtype、device 和是否包含数据搬运；本片段不包含搬运。如记录峰值，CUDA allocated 包含已加载模型等当前分配，不能写成整张显卡的总使用量。
 
-将计时片段封装为 evaluate.py 顶层的 `benchmark_forward(model, images)`，返回包含 ms_per_image、warmup、repeats、batch_size、dtype、device、include_transfer=False 的字典。main 在完整评估后取所选 loader 的一批图片、迁移到设备，调用该函数，将返回值放入结果的 inference 字段，再写 metrics JSON。加载阶段的秒数另记 load_seconds，两个数字不能混用；六个模型都读取相同 batch 设置，并记录实际批大小。
+将计时片段封装为 evaluate.py 顶层的 `benchmark_forward(model, images)`，返回包含 ms_per_image、warmup、repeats、batch_size、input_shape、dtype、device、include_transfer=False 的字典，input_shape 从 images.shape 取得。main 在完整评估后取所选 loader 的一批图片、迁移到设备，调用该函数，将返回值放入结果的 inference 字段，再写 metrics JSON。加载阶段的秒数另记 load_seconds，两个数字不能混用；六个模型都读取相同 batch 设置，并记录实际批大小。图片来自各自 loader，保留其训练时使用的分辨率。
 
 #### 第四步：冻结六个变体
 
-先把两个 ViT 的真实验证结果写入 `experiments/vit_patch_size/week5/patch_results.csv`，每行含 variant、split=val、token_count、best_epoch、val_loss、val_accuracy、macro_f1、params、epochs、batch、训练秒数、峰值显存（CUDA 可用时）、推理测量条件、config、checkpoint 和指标来源路径。指标读取各运行目录的 val_metrics.json，训练量与耗时读取各自真实记录；用第一周 CSV 写法保存两行，不能填入示例值。
+先把两个 ViT 的真实验证结果写入 `experiments/vit_patch_size/week5/patch_results.csv`，每行含 variant、split=val、image_size、token_count、best_epoch、val_loss、val_accuracy、macro_f1、params、epochs、batch、训练秒数、峰值显存（CUDA 可用时）、推理测量条件、config、checkpoint 和指标来源路径。指标读取各运行目录的 val_metrics.json，训练量与耗时读取各自真实记录；用第一周 CSV 写法保存两行，不能填入示例值。
 
 再读取第三周的 `experiments/cnn_vs_resnet/week3/results.csv`，核对其中四组配置和 best；若第三周尚未计算 macro_f1，可用已冻结 best 和同一验证集补算，仍不访问测试集。
 
-核对四个第三周模型与两个 ViT 的 config/best 路径，将 variant、config、checkpoint、验证指标和 best epoch 列为本周 README 的冻结清单。每一行直接指向实际运行的文件；冻结后按这张清单逐一测试。此时选择依据仍是验证集，准备 Day 5 统一测试。
+核对四个第三周模型与两个 ViT 的 config/best 路径，将 variant、image_size、config、checkpoint、验证指标和 best epoch 列为本周 README 的冻结清单；image_size 取各组已保存的实际模型输入尺寸，ResNet 的 96 不能被原图配置中的 32 覆盖。每一行直接指向实际运行的文件；冻结后按这张清单逐一测试。此时选择依据仍是验证集，准备 Day 5 统一测试。
 
 评估输出保存在各自配置的 experiment_dir，文件名为 `val_metrics.json` 或 `test_metrics.json`，图表也按对应运行目录保存，避免六个变体互相覆盖。第五周的总表另外汇总这些结果，保留每行来源路径。
 
@@ -608,9 +597,9 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 #### 第二步：结果表保留比较条件
 
-除 accuracy/F1，记录参数量、epoch、batch、训练时间、推理测法和初始化来源。CNN/ResNet/ViT 均为从零训练，预训练模型结果以后另列。
+除 accuracy/F1，记录输入尺寸、参数量、epoch、batch、训练时间、推理测法和初始化来源。CNN/ResNet/ViT 均为从零训练，预训练模型结果以后另列。
 
-将六个变体 experiment_dir 下的 test_metrics.json 整理成六行，用 csv.DictWriter 保存到 `experiments/vit_patch_size/week5/visual_test_results.csv`；至少包含 variant、split、n_samples、loss、accuracy、macro_f1、params、config、checkpoint、指标来源路径和实际库/代码版本。写入前确认每行 variant 与 Day 4 冻结清单一一对应，不能用验证指标填充缺失的测试结果。
+将六个变体 experiment_dir 下的 test_metrics.json 整理成六行，用 csv.DictWriter 保存到 `experiments/vit_patch_size/week5/visual_test_results.csv`；至少包含 variant、split、image_size、n_samples、loss、accuracy、macro_f1、params、config、checkpoint、指标来源路径和实际库/代码版本。写入前确认每行 variant 与 Day 4 冻结清单一一对应，不能用验证指标填充缺失的测试结果。
 
 #### 第三步：用图像辅助解释
 
@@ -622,7 +611,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 #### 第四步：结论分成内部对照与跨模型比较
 
-BN、残差、Patch 各自比较控制条件内的差异；跨架构表同时报告不同优化设置和计算预算。一次小数据实验不能证明某类模型在所有任务上更好。
+BN、残差、Patch 各自比较控制条件内的差异；跨架构表同时报告输入分辨率、Resize、优化设置和计算预算。一次小数据实验不能证明某类模型在所有任务上更好。
 
 ### 运行与验收
 
@@ -637,7 +626,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 每行都应为 `split=test`、`n_samples=10000`，混淆矩阵总数也应一致。汇总到 `experiments/vit_patch_size/week5/visual_test_results.csv`，保存主要模型的混淆矩阵与错误图。
 
-- [ ] 六组测试结果来自冻结配置，样本数和预处理一致。
+- [ ] 六组测试结果来自冻结配置，样本数相同，各组预处理与其冻结训练配置对应，输入尺寸明确列出。
 - [ ] 最终表区分验证与测试，失败结果没有被删除。
 - [ ] 能联系实际样例解释卷积与自注意力的差异。
 
@@ -649,7 +638,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [第五周实验记录](../experiments/vit_patch_size/week5/README.md) | 本周真实配置与结果 | 完成视觉阶段总结 |
-| [ViT 原论文](https://arxiv.org/abs/2010.11929) | 按自己的模型回顾 Patch→Encoder→CLS | 解释结构 |
+| [D2L 英文 ViT](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html) | 按自己的模型回顾 Patch→CLS/位置→ViTBlock→head | 解释结构与项目配置差异 |
 
 ### 时间与操作
 
@@ -667,7 +656,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 2. 有限参考下重写 Patch 投影、CLS 拼接、位置嵌入与 CLS 分类的核心片段，画出 P4/P8 全流程形状。
 
-3. 确认模型能独立导入和加载，不把可复用 Encoder 写死为某个 T；记录实际版本、参数量、训练/推理时间。
+3. 确认模型能独立导入和加载，不把 Attention / ViTBlock 的 T 写死；记录实际版本、参数量、训练/推理时间。
 
 4. 将预训练模型迁移、Oxford Pet、更多种子和调参列入拓展，本周按既定两个 Patch 完成主线。
 
@@ -687,7 +676,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 在草稿中写 Patch reshape/投影、CLS 扩展、位置相加、Encoder 和 CLS 分类。先写 P4/P8 的每个 shape，再核对实现。
 
-可以复用已经验证的 Encoder，本次重写重点是视觉 token 到分类的连接，不需要重新训练一套模型。
+复用本周已经验证的 ViTBlock 堆叠，按 Patch→CLS/位置→embedding dropout→ViTBlock→取 CLS→head 的顺序调用；本次重写重点是视觉 token 到分类的连接，不需要重新训练一套模型。
 
 用草稿的重写路径实际处理 B=1、B=2 的随机图片，分别检查 P4/P8 的 token 长度 65/17、CLS 特征 `[B,128]` 和 logits `[B,10]`，再做一次有限 loss/梯度检查。下方已有 test_vit 只检查它所导入的实现，草稿也要被实际调用。
 
@@ -719,7 +708,7 @@ python -m pytest tests/test_vit.py -q
 
 ## 本周结束检查
 
-- [ ] 小 ViT 复用手写 Encoder，Patch/CLS/位置形状与梯度检查通过。
+- [ ] 小 ViT 复用手写 Attention / LayerNorm，ViTBlock 顺序及 Patch/CLS/位置形状与梯度检查通过。
 - [ ] Patch=4/8 两组完成约定预算，并保存验证对照。
 - [ ] CNN、ResNet、ViT 六个变体有冻结配置后的独立测试与失败分析。
 - [ ] 结果、时间、参数量与跨架构局限集中到本周 README。
