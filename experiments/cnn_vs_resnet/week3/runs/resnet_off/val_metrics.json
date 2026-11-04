@@ -1,0 +1,23 @@
+{
+  "split": "val",
+  "variant": "resnet_off",
+  "loss": 0.4465469798564911,
+  "accuracy": 0.9028,
+  "n_samples": 5000,
+  "image_size": 96,
+  "params": 11184650,
+  "batch_size": 512,
+  "device": "cuda",
+  "dtype": "torch.float32",
+  "torch_version": "2.14.1+cu130",
+  "checkpoint": "outputs/resnet_off/best.pt",
+  "checkpoint_epoch": 84,
+  "checkpoint_sha256": "f9c6abdc135ab5484f43351234dd5d59297bb598a823514992968b9c742e6786",
+  "config": "configs/cv/resnet_no_residual_cifar10.yaml",
+  "split_sha256": "482ec710828a8da2f0fefda6091dc38c1bbbed0505a09325d2989fb5db4a2d27",
+  "logged_loss": 0.4465469798564911,
+  "logged_accuracy": 0.9028,
+  "loss_abs_diff": 0.0,
+  "accuracy_abs_diff": 0.0,
+  "evaluated_on": "2026-11-04"
+}

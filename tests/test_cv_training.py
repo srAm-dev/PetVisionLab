@@ -709,7 +709,179 @@ def test_evaluate_resnet_residual_config_compatibility(tmp_path, monkeypatch, ca
     if saved_flag is None and requested_flag is False:
         with pytest.raises(ValueError, match="模型配置"):
             evaluate_script.main()
+        assert not (tmp_path / "experiment").exists()
     else:
         evaluate_script.main()
         assert "'n_samples': 2" in capsys.readouterr().out
-    assert not (tmp_path / "experiment").exists()
+        assert not (tmp_path / "experiment" / "test_metrics.json").exists()
+        assert not (tmp_path / "experiment" / "figures" / "mistakes_test.png").exists()
+
+
+@pytest.mark.parametrize("dataset_name", ("mnist", "cifar10"))
+@pytest.mark.parametrize("split", ("val", "test"))
+def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_name, split):
+    import argparse
+    import hashlib
+    import json
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+    from matplotlib.axes import Axes
+    import yaml
+    from torch.utils.data import DataLoader, Subset, TensorDataset
+    from petvision.models.cv.cnn import CNN
+    from petvision.utils.checkpoint import save_checkpoint
+
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import evaluate as evaluate_script
+
+    filename = "mlp_mnist.yaml" if dataset_name == "mnist" else "cnn_cifar10.yaml"
+    cfg = yaml.safe_load((project_root / "configs/cv" / filename).read_text())
+    cfg["training"]["device"] = "cpu"
+    cfg["data"]["batch_size"] = 5
+    if dataset_name == "mnist":
+        cfg["model"].update(input_dim=4, hidden_dims=[8], num_classes=3)
+        model = MLP(input_dim=4, hidden_dims=[8], num_classes=3)
+        images = torch.zeros(13, 1, 2, 2)
+    else:
+        cfg["model"].update(use_bn=False, num_classes=3)
+        model = CNN(num_classes=3, use_bn=False)
+        images = torch.zeros(13, 3, 32, 32)
+        images[:, 0] = -1
+        images[:, 2] = 1
+    # 所有样本固定预测类别 0，标签固定为 1，产生确定的错图。
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        head = [module for module in model.modules() if isinstance(module, torch.nn.Linear)][-1]
+        head.bias[0] = 3
+    val_data = TensorDataset(images, torch.ones(13, dtype=torch.long))
+    test_data = TensorDataset(images[:9], torch.ones(9, dtype=torch.long))
+    val_data.classes = test_data.classes = ["airplane", "automobile", "bird"]
+    val_loader = DataLoader(Subset(val_data, list(range(13))), batch_size=5)
+    test_loader = DataLoader(test_data, batch_size=5)
+    builder = "build_mnist_loaders" if dataset_name == "mnist" else "build_cifar10_loaders"
+    monkeypatch.setattr(evaluate_script, builder, lambda **kwargs: (val_loader, val_loader, test_loader))
+
+    experiment = tmp_path / "experiment"
+    cfg["experiment_dir"] = str(experiment)
+    cfg["output_dir"] = str(tmp_path / "weights")
+    split_path = tmp_path / "split.json"
+    split_path.write_text("{}", encoding="utf-8")
+    cfg["data"]["split_path"] = str(split_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    checkpoint_path = tmp_path / "model.pt"
+    save_checkpoint({
+        "model_state": model.state_dict(), "model_config": cfg["model"],
+        "config": cfg, "epoch": 1,
+        "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
+    }, checkpoint_path)
+    monkeypatch.setattr(evaluate_script, "parse_args", lambda: argparse.Namespace(
+        config=config_path, checkpoint=checkpoint_path, split=split,
+    ))
+    other_split = "test" if split == "val" else "val"
+    unchanged = {
+        experiment / "val_metrics.json": b'{"source": "first-step validation"}',
+        experiment / "history.csv": b"training history",
+        experiment / "config.yaml": b"training config",
+        experiment / "run_summary.json": b"training summary",
+        experiment / "figures" / f"mistakes_{other_split}.png": b"other split image",
+    }
+    for path, content in unchanged.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    old_test_metrics = b'{"source": "previous test"}'
+    (experiment / "test_metrics.json").write_bytes(old_test_metrics)
+
+    displayed = []
+    titles = []
+    original_imshow = Axes.imshow
+    original_title = Axes.set_title
+
+    def observe_imshow(ax, image, *args, **kwargs):
+        displayed.append(torch.as_tensor(image).clone())
+        return original_imshow(ax, image, *args, **kwargs)
+
+    def observe_title(ax, label, *args, **kwargs):
+        if label.startswith("true="):
+            titles.append(label)
+        return original_title(ax, label, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "imshow", observe_imshow)
+    monkeypatch.setattr(Axes, "set_title", observe_title)
+    evaluate_script.main()
+
+    expected_samples = 13 if split == "val" else 9
+    assert f"'n_samples': {expected_samples}" in capsys.readouterr().out
+    assert len(displayed) == len(titles) == 8
+    for image in displayed:
+        if dataset_name == "mnist":
+            assert image.shape == (2, 2)
+            torch.testing.assert_close(image, torch.full_like(image, 0.5))
+        else:
+            assert image.shape == (32, 32, 3)
+            torch.testing.assert_close(image[0, 0], torch.tensor([0.0, 0.5, 1.0]))
+    label = "automobile" if dataset_name == "cifar10" else "1"
+    assert all(f"true={label}" in title and "score=" in title for title in titles)
+    assert (experiment / "figures" / f"mistakes_{split}.png").read_bytes().startswith(b"\x89PNG")
+    assert not plt.get_fignums()
+    for path, content in unchanged.items():
+        assert path.read_bytes() == content
+    if split == "test":
+        result = json.loads((experiment / "test_metrics.json").read_text())
+        assert result["split"] == "test" and result["n_samples"] == 9
+        assert result["mistake_examples_count"] == 8
+    else:
+        assert (experiment / "test_metrics.json").read_bytes() == old_test_metrics
+
+
+@pytest.mark.parametrize("split", ("val", "test"))
+def test_evaluate_removes_only_current_split_stale_mistakes(tmp_path, monkeypatch, split):
+    import argparse
+    import hashlib
+    from pathlib import Path
+
+    import yaml
+    from torch.utils.data import DataLoader, TensorDataset
+    from petvision.utils.checkpoint import save_checkpoint
+
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import evaluate as evaluate_script
+
+    cfg = yaml.safe_load((project_root / "configs/cv/mlp_mnist.yaml").read_text())
+    cfg["training"]["device"] = "cpu"
+    cfg["model"].update(input_dim=4, hidden_dims=[8], num_classes=3)
+    cfg["experiment_dir"] = str(tmp_path / "experiment")
+    cfg["output_dir"] = str(tmp_path / "weights")
+    model = MLP(input_dim=4, hidden_dims=[8], num_classes=3).eval()
+    images = torch.zeros(3, 1, 2, 2)
+    with torch.no_grad():
+        labels = model(images).argmax(1)
+    loader = DataLoader(TensorDataset(images, labels), batch_size=2)
+    monkeypatch.setattr(evaluate_script, "build_mnist_loaders", lambda **kwargs: (loader, loader, loader))
+    split_path = tmp_path / "split.json"
+    split_path.write_text("{}", encoding="utf-8")
+    cfg["data"]["split_path"] = str(split_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    checkpoint_path = tmp_path / "model.pt"
+    save_checkpoint({
+        "model_state": model.state_dict(), "model_config": cfg["model"],
+        "config": cfg, "epoch": 1,
+        "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
+    }, checkpoint_path)
+    monkeypatch.setattr(evaluate_script, "parse_args", lambda: argparse.Namespace(
+        config=config_path, checkpoint=checkpoint_path, split=split,
+    ))
+    figures = tmp_path / "experiment" / "figures"
+    figures.mkdir(parents=True)
+    current = figures / f"mistakes_{split}.png"
+    other = figures / ("mistakes_test.png" if split == "val" else "mistakes_val.png")
+    current.write_bytes(b"stale image")
+    other.write_bytes(b"other split image")
+    evaluate_script.main()
+    assert not current.exists()
+    assert other.read_bytes() == b"other split image"

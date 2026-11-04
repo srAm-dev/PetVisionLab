@@ -5,5 +5,6 @@
   "peak_allocated_mib": 1353.45166015625,
   "device": "cuda",
   "dtype": "torch.float32",
-  "timing_scope": "train+validation+epoch_logging+checkpoint_io"
+  "timing_scope": "train+validation+epoch_logging+checkpoint_io",
+  "image_size": 32
 }

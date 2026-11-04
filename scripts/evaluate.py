@@ -156,8 +156,10 @@ def main():
     metrics = evaluate(model, loader, criterion, device)
     assert metrics["n_samples"] == len(loader.dataset)
     print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
+    # 完整指标统计结束后，再单独收集少量错图用于展示。
+    mistakes = collect_mistakes(model, loader, device, limit=8)
+    experiment_dir = Path(cfg["experiment_dir"])
     if args.split == "test":
-        mistakes = collect_mistakes(model, loader, device, limit=8)
         result = {
             "split": args.split,
             **metrics,
@@ -167,41 +169,49 @@ def main():
             "split_sha256": checkpoint["split_sha256"],
             "mistake_examples_count": len(mistakes),  # 展示数量，不是总错分数。
         }
-        experiment_dir = Path(cfg["experiment_dir"])
         result_path = experiment_dir / "test_metrics.json"
         result_path.parent.mkdir(parents=True, exist_ok=True)
         with result_path.open("w", encoding="utf-8") as file:
             json.dump(result, file, ensure_ascii=False, indent=2)
 
-        figure_path = experiment_dir / "figures" / "mistakes.png"
-        if not mistakes:
-            # 防止把上一次运行的图片误认为本次结果。
-            figure_path.unlink(missing_ok=True)
-            print("没有错分样例，不生成误分类图。")
-            return
+    figure_path = experiment_dir / "figures" / f"mistakes_{args.split}.png"
+    if not mistakes:
+        # 只清除本次 split 的旧错图。
+        figure_path.unlink(missing_ok=True)
+        print("没有错分样例，不生成误分类图。")
+        return
 
-        fig, axes = plt.subplots(2, 4, figsize=(10, 5))
-        for ax in axes.flat:
-            ax.axis("off")
-        for ax, mistake in zip(axes.flat, mistakes):
-            image = mistake["image"]
-            normalize = cfg["data"]["normalize"]
-            mean = image.new_tensor(normalize["mean"]).view(-1, 1, 1)
-            std = image.new_tensor(normalize["std"]).view(-1, 1, 1)
-            image = image * std + mean
-            if data_cfg["name"]=="mnist":
-                ax.imshow(image.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1)
-            else:
-                ax.imshow(image.permute(1, 2, 0).clamp(0, 1).numpy())
-            ax.set_title(
-                f"true={mistake['true_label']}, pred={mistake['predicted_label']}\n"
-                f"score={mistake['score']:.2%}"
-            )
-        fig.tight_layout()
-        figure_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(figure_path)
-        plt.close(fig)
-        print("figure saved:", figure_path)
+    dataset = loader.dataset
+    if isinstance(dataset, torch.utils.data.Subset):
+        dataset = dataset.dataset
+    classes = getattr(dataset, "classes", None) if data_cfg["name"] == "cifar10" else None
+
+    fig, axes = plt.subplots(2, 4, figsize=(12, 6))
+    for ax in axes.flat:
+        ax.axis("off")
+    for ax, mistake in zip(axes.flat, mistakes):
+        image = mistake["image"]
+        mean = image.new_tensor(normalize["mean"]).view(-1, 1, 1)
+        std = image.new_tensor(normalize["std"]).view(-1, 1, 1)
+        image = image * std + mean
+        if data_cfg["name"] == "mnist":
+            ax.imshow(image.squeeze(0).numpy(), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+        else:
+            ax.imshow(image.permute(1, 2, 0).clamp(0, 1).numpy(), interpolation="nearest")
+        true_label = mistake["true_label"]
+        predicted_label = mistake["predicted_label"]
+        true_name = classes[true_label] if classes is not None else str(true_label)
+        predicted_name = classes[predicted_label] if classes is not None else str(predicted_label)
+        ax.set_title(
+            f"true={true_name}\npred={predicted_name}, score={mistake['score']:.2%}",
+            fontsize=9,
+        )
+    fig.suptitle(f"{experiment_dir.name} | {args.split} | epoch={checkpoint['epoch']} | first {len(mistakes)} mistakes")
+    fig.tight_layout()
+    figure_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(figure_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print("figure saved:", figure_path)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,5 @@
+variant,split,image_size,best_epoch,val_loss,val_accuracy,params,epochs,batch,train_seconds,config,checkpoint,n_samples,validation
+cnn_bn_on,val,32,93,0.6821131154060364,0.7724,94986,100,2048,1678.3681535750002,configs/cv/cnn_cifar10.yaml,outputs/cnn_bn_on/best.pt,5000,experiments/cnn_vs_resnet/week3/runs/cnn_bn_on/val_metrics.json
+cnn_bn_off,val,32,99,1.1125172458648682,0.615,94538,100,2048,1894.7597661949985,configs/cv/cnn_no_bn_cifar10.yaml,outputs/cnn_bn_off/best.pt,5000,experiments/cnn_vs_resnet/week3/runs/cnn_bn_off/val_metrics.json
+resnet_on,val,96,80,0.45159566712379456,0.9102,11184650,100,512,5452.225578079997,configs/cv/resnet_cifar10.yaml,outputs/resnet_on/best.pt,5000,experiments/cnn_vs_resnet/week3/runs/resnet_on/val_metrics.json
+resnet_off,val,96,84,0.4465469798564911,0.9028,11184650,100,512,4868.042650405001,configs/cv/resnet_no_residual_cifar10.yaml,outputs/resnet_off/best.pt,5000,experiments/cnn_vs_resnet/week3/runs/resnet_off/val_metrics.json
