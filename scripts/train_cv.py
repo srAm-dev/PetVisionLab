@@ -16,7 +16,7 @@ from petvision.models.cv.cnn import CNN
 from petvision.models.cv.resnet import ResNet18
 from petvision.training.cv_trainer import train_one_epoch, evaluate
 from petvision.utils.seed import set_seed
-from petvision.utils.checkpoint import save_checkpoint
+from petvision.utils.checkpoint import save_checkpoint, load_checkpoint
 
 def run_smoke(model, train_loader, val_loader, optimizer, criterion, device):
     train_metrics = train_one_epoch(
@@ -56,13 +56,19 @@ def run_training(cfg, model, train_loader, val_loader, optimizer, criterion, dev
     record_resources = cfg["data"]["name"]=="cifar10"
     variant = experiment_dir.name
     history_path = experiment_dir / "history.csv"
+    output_dir = Path(cfg["output_dir"])
     if record_resources and history_path.exists() and history_path.stat().st_size > 0:
         raise FileExistsError("实验目录已有 history.csv，请先归档原结果或使用新的 experiment_dir")
+    if record_resources:
+        for filename in ("initial.pt", "best.pt", "last.pt"):
+            if (output_dir / filename).exists():
+                raise FileExistsError(
+                    f"输出目录已有 {filename}，请先归档原结果或使用新的 output_dir"
+                )
     experiment_dir.mkdir(parents=True, exist_ok=True)
     with (experiment_dir / "config.yaml").open("w", encoding="utf-8") as file:
         yaml.safe_dump(cfg, file, allow_unicode=True, sort_keys=False)
 
-    output_dir = Path(cfg["output_dir"])
     if record_resources:
         # 在第一次训练前向之前保存参数和 BN buffers，供 Day 5 对齐初始状态。
         save_checkpoint({
@@ -169,6 +175,7 @@ def main():
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
+    print("device:", device)
 
     data_cfg = cfg["data"]
     if data_cfg["name"]=="mnist":
@@ -221,18 +228,87 @@ def main():
             num_classes=model_cfg["num_classes"],
         ).to(device)
     elif model_cfg["name"]=='cnn':
+        if type(model_cfg["use_bn"]) is not bool:
+            raise ValueError("model.use_bn 必须是布尔值")
         model = CNN(
             num_classes=model_cfg["num_classes"],
             use_bn=model_cfg["use_bn"],
         ).to(device)
     elif model_cfg["name"]=='resnet18':
+        use_residual = model_cfg.get("use_residual", True)
+        if type(use_residual) is not bool:
+            raise ValueError("model.use_residual 必须是布尔值")
         model = ResNet18(
             num_classes=model_cfg["num_classes"],
+            use_residual=use_residual,
         ).to(device)
     else:
         raise ValueError(f"不支持的模型类型:{model_cfg["name"]}")
 
     training_cfg = cfg["training"]
+    init_path = training_cfg.get("init_checkpoint")
+    if init_path is not None:
+        checkpoint = load_checkpoint(init_path)
+        if type(checkpoint.get("step")) is not int or checkpoint["step"] != 0:
+            raise ValueError("training.init_checkpoint 必须指向 step=0 的初始状态")
+        if checkpoint["seed"] != training_cfg["seed"]:
+            raise ValueError("初始状态的 seed 与 training.seed 不一致")
+
+        # 只允许 BN / 残差开关不同，其他模型结构配置必须一致。
+        source_config = checkpoint["model_config"].copy()
+        target_config = model_cfg.copy()
+        if model_cfg["name"] == "cnn":
+            source_config.pop("use_bn", None)
+            target_config.pop("use_bn", None)
+        elif model_cfg["name"] == "resnet18":
+            source_config.pop("use_residual", None)
+            target_config.pop("use_residual", None)
+        if source_config != target_config:
+            raise ValueError("初始状态的模型结构配置与当前模型不一致")
+
+        source_state = checkpoint["model_state"]
+        target_state = model.state_dict()
+        common_keys = source_state.keys() & target_state.keys()
+        source_only = source_state.keys() - target_state.keys()
+        target_only = target_state.keys() - source_state.keys()
+
+        # CNN 的 Identity 对应原 BN 位置，只有这些 BN 状态允许被移除。
+        expected_source_only = set()
+        if model_cfg["name"] == "cnn" and not model_cfg["use_bn"]:
+            if checkpoint["model_config"].get("use_bn", True):
+                for name, module in model.named_modules():
+                    if isinstance(module, torch.nn.Identity):
+                        for field in ("weight", "bias", "running_mean",
+                                      "running_var", "num_batches_tracked"):
+                            expected_source_only.add(f"{name}.{field}")
+        if source_only != expected_source_only or target_only:
+            raise ValueError(
+                f"初始状态存在非预期的 key 差异："
+                f"来源独有={sorted(source_only)}，目标独有={sorted(target_only)}"
+            )
+        for name in common_keys:
+            if source_state[name].shape != target_state[name].shape:
+                raise ValueError(f"初始状态的 {name} shape 与当前模型不一致")
+            if source_state[name].dtype != target_state[name].dtype:
+                raise ValueError(f"初始状态的 {name} dtype 与当前模型不一致")
+
+        # 用完整目标 key 严格加载，再逐项确认复制后的值完全相同。
+        model.load_state_dict({name: source_state[name] for name in target_state}, strict=True)
+        max_difference = 0.0
+        for name, value in model.state_dict().items():
+            value = value.cpu()
+            if not torch.equal(value, source_state[name]):
+                raise RuntimeError(f"初始状态复制后 {name} 的值不一致")
+            max_difference = max(
+                max_difference, (value - source_state[name]).abs().max().item(),
+            )
+        print(f"初始状态来源: {init_path}")
+        print(f"共有 key={len(common_keys)}，来源独有={len(source_only)}，"
+              f"目标独有={len(target_only)}，最大共有状态差={max_difference}")
+        print("来源独有 key:", sorted(source_only))
+        print("目标独有 key:", sorted(target_only))
+
+    # 初始权重加载结束后创建新优化器；训练始终从零进度开始。
     criterion = torch.nn.CrossEntropyLoss()
     if training_cfg["optimizer"]=="adam":
         optim = torch.optim.Adam
@@ -244,6 +320,7 @@ def main():
         model.parameters(), lr=cfg["training"]["learning_rate"],
         weight_decay=cfg["training"]["weight_decay"],
     )
+    set_seed(training_cfg["seed"])
     
     if args.smoke:
         run_smoke(model, train_loader, val_loader, optimizer, criterion, device)

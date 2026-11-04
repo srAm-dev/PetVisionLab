@@ -1,6 +1,6 @@
 # 第六周逐日学习指南：字符级 Bigram 与 Mini-GPT
 
-> 更新日期：2026-10-31<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：固定文本划分，完成同一字符 tokenizer 下的 Bigram 与小 GPT、验证曲线、保存加载和自回归生成，解释下一 token 预测。  
@@ -167,7 +167,7 @@ used_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 本轮可直接保留原换行，三个 split 用 `Path.write_bytes(part_text.encode("utf-8"))` 写入，父目录先创建。断言三个字符串按顺序拼接等于 text，再计算各 split 的 UTF-8 bytes hash；manifest 的原文件 hash 与实际文本 hash 分别命名。后续读取已有文件时检查 hash 和区间，不能只看文件名相同。
 
-把上述来源、边界和 hash 组织成普通字典，按第二周 json.dump 的 UTF-8 写法保存到 `experiments/mini_gpt/week6/split_manifest.json`，父目录先创建。记录前面计算出的实际字符数和各 split 长度，保存后读回核对三个区间连续、总长为 L。
+在 `scripts/prepare_text.py::main()` 写出 train.txt / val.txt / test.txt 后，将来源、边界和 hash 组织成 manifest 字典；先创建 `experiments/mini_gpt/week6/`，再用 `Path(.../split_manifest.json).open("w",encoding="utf-8")` 打开文件，调用 `json.dump(manifest,file,ensure_ascii=False,indent=2)` 保存。记录前面计算出的实际字符数和各 split 长度，保存后读回核对三个区间连续、总长为 L。
 
 #### 第三步：写出 tokenizer 的最小接口
 
@@ -250,7 +250,7 @@ python scripts/prepare_text.py
 
 #### 第一步：用 ABCDE 手算错位窗口
 
-继续修改 `src/petvision/data/text.py`，今天新增 sample_batch 和第四步的 iter_eval_windows。创建 `tests/test_language_model.py`，顶层导入 torch、pytest 和这两个函数；把下面的错位、边界、尾窗计数检查写成测试函数，之后再在同一文件添加模型检查。
+继续修改 `src/petvision/data/text.py`，今天新增 sample_batch 和第四步的 iter_eval_windows。创建 `tests/test_language_model.py`，顶层导入 torch、pytest、sample_batch 和 iter_eval_windows。新增 `test_sample_batch_shift` 检查 x/y 错开一位；`test_sample_batch_split_bounds` 检查样本不越过当前 split、数据不足时抛出 ValueError；`test_eval_window_coverage` 将下方 N=8、T=3 的各窗口目标拼接，断言恰好覆盖 ID 1–7 且无重复。
 
 设 ID 为 `[0,1,2,3,4]`，T=3，起点 0：
 
@@ -272,7 +272,7 @@ y：                 [1,2,3]
 
 #### 第二步：理解 Bigram 的能力边界
 
-创建 `src/petvision/models/llm/bigram.py`，顶层写 `from torch import nn`，在其中实现下述 BigramLanguageModel；在 `tests/test_language_model.py` 中从 `petvision.models.llm.bigram` 导入它，补充 B=1、输出形状、loss 和梯度检查。
+创建 `src/petvision/models/llm/bigram.py`，顶层写 `from torch import nn`，在其中实现下述 BigramLanguageModel；在 `tests/test_language_model.py` 顶层从 `petvision.models.llm.bigram` 导入 BigramLanguageModel，新增 `test_bigram_forward_backward`：用 V=8、B=1/2、T=4 的合法 long ID 检查 `[B,T,V]` 输出，展平后计算交叉熵并 backward，断言 Embedding 参数梯度非 None 且有限。
 
 Embedding(V,V) 可视为一张转移 logits 表，当前 token ID 取出一行，决定下一 token 的分布。它不利用更早的上下文；GPT 将能利用前缀信息。参数量为 V²。在 bigram.py 定义 `BigramLanguageModel(vocab_size)`，构造函数创建 `nn.Embedding(vocab_size, vocab_size)`，forward(token_ids) 返回查表结果；token_ids 必须是 long Tensor。
 
@@ -332,7 +332,7 @@ def iter_eval_windows(token_ids, context_length):
 <a id="text-inputs"></a>
 #### 第五步：建立配置，连接已保存的文本与 tokenizer
 
-创建 `scripts/train_gpt.py` 和 `src/petvision/training/lm_trainer.py`。前者沿用第二周 argparse / yaml.safe_load 建立 `--config` 入口与 main 入口保护，负责读文件、创建对象和调度；后者定义下文的 train_step / evaluate_lm，导入时不启动训练。
+创建 `scripts/train_gpt.py` 和 `src/petvision/training/lm_trainer.py`。在 train_gpt.py 顶层导入 argparse、yaml 和 pathlib.Path，定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加必填的 `--config`（type=Path）；main() 调用 parse_args，再以 UTF-8 打开配置文件，用 yaml.safe_load 得到 cfg，随后读数据、创建对象和调度训练。文件末尾添加 `if __name__ == "__main__": main()` 入口保护。lm_trainer.py 定义下文的 train_step / evaluate_lm，导入时不启动训练。
 
 创建 `configs/llm/bigram_char.yaml`，让训练入口读取本次配置而不是借用分类器的 epoch 参数：
 
@@ -383,7 +383,7 @@ val_ids = torch.tensor(tokenizer.encode(val_text), dtype=torch.long)
 train_generator = torch.Generator().manual_seed(cfg["training"]["seed"])
 ```
 
-读取前用 split_manifest 核对文件 hash；按 bytes 解码可保持之前约定的换行。今天测试文本不进入训练 / 验证循环。device 与 set_seed 复用第二周方法，先 set_seed 再新建 `BigramLanguageModel(tokenizer.vocab_size).to(device)` 和 AdamW。一次更新先调用 sample_batch(train_ids, ...)，再将得到的 x / y 交给 train_step；验证把 val_ids 交给 evaluate_lm，按前述 iter_eval_windows 遍历。
+读取前用 split_manifest 核对文件 hash；按 bytes 解码可保持之前约定的换行。今天测试文本不进入训练 / 验证循环。在 train_gpt.py 顶层导入 `petvision.utils.seed.set_seed`；main() 将 device=auto 解析为 CUDA 可用时 cuda、否则 cpu，并用 torch.device 创建对象，先调用 set_seed(cfg["training"]["seed"])，再新建 `BigramLanguageModel(tokenizer.vocab_size).to(device)` 和 AdamW。一次更新先调用 sample_batch(train_ids, ...)，再将得到的 x / y 交给 train_step；验证把 val_ids 交给 evaluate_lm，按前述 iter_eval_windows 遍历。
 
 在 lm_trainer.py 实现 `train_step(model, x, y, optimizer)`：切 train、清梯度、前向、将 logits / y 展平计算交叉熵、backward、step，返回本批平均 loss 和目标数。`evaluate_lm(model, token_ids, context_length, device)` 切 eval/no_grad，完整累加所有窗口的 NLL 与目标数，返回 loss 和 n_target_tokens，再恢复原模式。两个函数的输入来自不同 split，不能在内部重新随机划分。
 
@@ -393,7 +393,7 @@ train_generator = torch.Generator().manual_seed(cfg["training"]["seed"])
 
 词表大小从 tokenizer.vocab_size 实际读取；`model.context_length` 控制窗口长度，Bigram 本身仍只依赖当前位置。一次 step 指一个训练 batch 的参数更新，2000 steps 不是遍历完整语料 2000 次。今天先实现参数解析与小批更新，正式结果待 Day 4 写出。
 
-本日小批检查要实际做一次更新：先 clone Embedding 的参数，计算有限标量 loss，清梯度、backward、step，确认参数发生变化。训练 Generator 在 evaluate 前后分别 `.get_state().clone()`，用 `torch.equal` 检查状态完全相同；这样才能证明验证没有消耗训练采样流。evaluate 可统一返回 loss 和实际目标 token 数，供训练日志与后续独立检查复用。
+修改 `tests/test_language_model.py::test_bigram_forward_backward`：创建 AdamW 后先 clone Embedding 参数，再计算 loss、清梯度、backward、optimizer.step，断言至少一个参数值发生变化。另新增 `test_lm_evaluation_preserves_generator`：创建独立训练 Generator，保存其 get_state().clone()，对固定 val_ids 调用 evaluate_lm，再用 torch.equal 比较 Generator 状态完全相同，同时核对返回的目标数等于 len(val_ids)-1。
 
 ### 运行与验收
 
@@ -447,7 +447,7 @@ python -m pytest tests/test_language_model.py -q
 先定义 `GPTBlock(embed_dim, num_heads, ffn_hidden_dim, dropout=0.0)`：
 
 1. 创建独立的 norm1、norm2，eps=1e-5；两个归一化均保留 gamma、beta。
-2. 创建 MultiHeadSelfAttention，显式设 bias=True。它使用三套 Q/K/V Linear，作者把它们拼在一个 c_attn 中；计算等价，参数映射可沿用第四周的 Q/K/V 拼接方法。
+2. 创建 MultiHeadSelfAttention，显式设 bias=True。它使用三套 Q/K/V Linear，作者的 c_attn 将它们合为一个 Linear；计算等价，本项目继续分别定义 q_proj / k_proj / v_proj。后面的 test_gptblock_reference 将三套 weight 和 bias 按 Q/K/V 顺序沿 dim=0 拼接，复制到参考 Attention 的 in_proj_weight / in_proj_bias，核对这种对应关系。
 3. Attention 的 softmax 权重 dropout 保留在注意力模块内部；GPTBlock 再注册一次投影输出 dropout，对应作者 resid_dropout。第一条残差为 `x = x + attn_output_dropout(attention(norm1(x), mask))`。
 4. FFN 按 Linear(C,hidden_dim) → GELU → Linear(hidden_dim,C) → Dropout 组织，两个 Linear 使用 bias=True；这里按 nanoGPT 在第二个 Linear 后做一次 dropout，GELU 后不另加隐藏层 dropout。第二条残差为 `x = x + ffn(norm2(x))`。
 5. GPTBlock.forward 接收 x、attn_mask、key_padding_mask=None，将 Mask 传给 Attention，只返回新的 x。
@@ -502,10 +502,10 @@ for block in self.blocks:
 
 上述 self.token_embedding、self.position_embedding 和 self.blocks 均在构造函数中建立；堆叠后接最终 LayerNorm 和词表输出层。每层收到同一个 causal_mask，当前样本不含 padding。ViT 不传 causal mask，GPT 不能沿用它的双向设置。
 
-在 tests/test_language_model.py 顶层补充 `from torch import nn` 和 GPTBlock 的导入，再增加一个 GPTBlock 数值参考：
+修改 `tests/test_language_model.py`，顶层补充 `from torch import nn` 和 GPTBlock 的导入，新增 `test_gptblock_reference`，将以下四项写入该函数；模型形状 / 梯度另写入 `test_gpt_forward_backward`，未来隔离另写入 `test_gpt_causal_mask`：
 
 1. 取 C=32、heads=4、FFN=128、dropout=0、CPU float64，创建自写 GPTBlock。参考使用 `nn.TransformerEncoderLayer`，设置 batch_first=True、norm_first=True、activation="gelu"、layer_norm_eps=1e-5、bias=True、dropout=0；在关闭所有 dropout 时，这条 pre-LN 计算顺序与作者 Block 对应。
-2. 按第四周的 QKV 拼接方法对齐 Attention 的 weight / bias，再把 norm1/norm2 的 gamma/beta 和两个 FFN Linear 映射到参考 norm1/norm2、linear1/linear2。
+2. 在 torch.no_grad 下，把自写 q_proj / k_proj / v_proj 的 weight 按 dim=0 拼接后复制到 reference.self_attn.in_proj_weight，bias 也按 Q/K/V 顺序拼接；out_proj 单独复制。再把 norm1/norm2 的 gamma/beta 复制到参考 norm1/norm2.weight/bias，两个 FFN Linear 对应 linear1/linear2。
 3. 两边输入数值相同的独立 `[B,T,C]` 叶子 Tensor，传相同布尔 causal mask；参考的 Mask 参数名为 src_mask。使用同一固定 probe 反向，比较输出、输入梯度和对应参数梯度，最大绝对差以 1e-6 为目标。
 4. 将自写 Block 的 dropout 改为 0.1，检查 Attention 权重、Attention 投影输出、FFN 输出三处 dropout 均已注册并随 train/eval 切换；另外检查 MiniGPT 的 embedding dropout。非零 dropout 不做两套实现的逐值随机输出比较。
 
@@ -513,7 +513,7 @@ for block in self.blocks:
 
 固定一小段训练文本反复更新，观察 train loss 能否明显下降。若不下降，先查目标错位、mask 方向、optimizer 参数和 step，再扩大文本与训练步数。
 
-可取 train 的前 33 个已编码 ID，构造一组 32 位置的 x/y，使用临时 GPT、dropout=0、固定这组输入约更新 100 次。记录初始与最终 loss，检查最终更低且有限，再检查 token/position embedding、各 Block、输出 head 的梯度存在且有限；共享的输入 / 输出权重按同一 Parameter 检查。这个例子直接放入已有语言模型检查或本地草稿执行，不写正式结果。
+在 `tests/test_language_model.py` 新增 `test_gpt_short_text_fit`。函数内直接创建 33 个教学 ID：`torch.tensor([i % 8 for i in range(33)], dtype=torch.long)`，以前 32 个为 x、后 32 个为 y，各加 batch 维得到 `[1,32]`；不读取正式语料文件。新建 vocab_size=8、context_length=32、C=32、heads=4、depth=2、FFN=128、dropout=0 的临时 GPT 和 AdamW，固定这组输入约更新 100 次。记录初始与最终 loss，断言最终更低且有限，再检查 token/position embedding、各 Block、输出 head 的梯度存在且有限；共享的输入 / 输出权重按同一 Parameter 检查。不写正式 history 或 checkpoint。
 
 从昨天的 Bigram YAML 复制出 `configs/llm/mini_gpt.yaml`，保留完整 data 和 training，将 model 替换为：
 
@@ -631,17 +631,17 @@ for step in range(1, target_steps + 1):
 
 验证 loss 下降时保存 best，last 保存最近一次检查点。本轮在每个验证时点和最终步写 last，中断时以文件内 step 为准，最近保存之后尚未落盘的更新需要重跑。本周 checkpoint 至少包含重建所需的结构和词表标识；下周再补完整恢复训练状态。
 
-保存操作复用[第二周 checkpoint 函数](week2.md#checkpoint-io)，在 train_gpt.py 顶层导入 save_checkpoint / load_checkpoint，把判断条件换成 `val_metrics["loss"] < best_val_loss`，循环外将 best_val_loss 初始化为正无穷大，持平保留更早一次。记录 model_state、config、model_config、vocab_size、context_length、tokenizer_path、tokenizer_hash、split_hash、step、val_loss 和 val_target_tokens；hash 来自实际文件，不能只保存路径后省略核对。config.yaml 使用第二周写法，history 则按下方规则逐条追加，不能直接调用使用 epoch / accuracy 字段的视觉 save_history。训练资源记录复用[第三周计时与保存](week3.md#training-resources)，summary 中 epochs 改为 completed_steps，并加入实际累计 input_tokens、input_bytes 和统计范围；保存到各自 experiment_dir/run_summary.json。
+修改 `scripts/train_gpt.py::main()` 的定期验证分支，顶层从 `petvision.utils.checkpoint` 导入 save_checkpoint / load_checkpoint；main() 在 step 循环之前将 best_val_loss 设为正无穷大；定期验证返回 val_metrics 后添加 `if val_metrics["loss"] < best_val_loss` 分支，在其中更新 best_val_loss 并写 best.pt，持平保留更早一次。记录 model_state、config、model_config、vocab_size、context_length、tokenizer_path、tokenizer_hash、split_hash、step、val_loss 和 val_target_tokens；hash 来自实际文件，不能只保存路径后省略核对。main() 在训练循环之前用 yaml.safe_dump(cfg,file,allow_unicode=True,sort_keys=False) 写 experiment_dir/config.yaml；history 由下方 append_lm_history 逐条追加。计时在循环前开始、循环后结束，CUDA 分支前后 synchronize 并统计 peak_allocated_mib；结束后写 run_summary.json，字段含 params、completed_steps、train_seconds、peak_allocated_mib、device、dtype、累计 input_tokens / input_bytes 和 timing_scope。
 
 checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路径与 hash、split manifest 的 hash，以及本次 step 和验证 loss。加载时核对这些信息，再按结构重建并读取 state_dict。用新建模型重新计算固定验证集，比较保存前后的 loss 与目标 token 数，不能只检查文件存在。
 
-在 train_gpt.py 顶层新增 `append_lm_history(row, path)`，按[第三周追加函数](week3.md#training-resources)的 a 模式和单条 writerow 实现；列名改为 step、train_loss、val_loss、val_target_tokens，表头只在新文件 / 空文件写一次。正式分支创建各自 experiment_dir / output_dir，保存 config.yaml，在上面 row 创建后立即调用追加函数；每次仅传这一条 row。新运行使用空日志，已有同名结果先归档；第七周的 resume 才继续现有日志。
+在 `scripts/train_gpt.py` 顶层新增 `append_lm_history(row,path)`：将 path 转为 Path 并创建父目录；打开前检查文件是否不存在或为空，再以 a 模式、encoding="utf-8"、newline="" 打开，用 csv.DictWriter 在新文件 / 空文件写一次表头，每次调用只 writerow(row) 一条；列名改为 step、train_loss、val_loss、val_target_tokens，表头只在新文件 / 空文件写一次。正式分支创建各自 experiment_dir / output_dir，保存 config.yaml，在上面 row 创建后立即调用追加函数；每次仅传这一条 row。新运行使用空日志，已有同名结果先归档；第七周的 resume 才继续现有日志。
 
-每个模型训练结束后读取自己 experiment_dir/history.csv，用 step 为横轴、train_loss / val_loss 为纵轴，保存 `experiment_dir/figures/loss_curves.png`。不要复用要求 epoch / accuracy 的视觉 plot_history；在 train_gpt.py 顶层写 `plot_lm_history(history, experiment_dir)`，绘图核心沿用第一周 plot / savefig。
+每个模型训练结束后读取自己 experiment_dir/history.csv，用 step 为横轴、train_loss / val_loss 为纵轴，保存 `experiment_dir/figures/loss_curves.png`。不要复用要求 epoch / accuracy 的视觉 plot_history；在 train_gpt.py 顶层写 `plot_lm_history(history, experiment_dir)`，函数内用 plt.subplots 创建图，横轴取各行 step，分别 plot 两列 loss 并添加图例；先创建 experiment_dir/figures，savefig 后关闭该 figure。
 
 两组都完成后，在草稿或交互环境读取各自 history，再保存合并对照图 `experiments/mini_gpt/week6/figures/loss_curves.png`。单模型训练入口不硬编码另一模型的结果路径，这样先训练 Bigram 时不会因 GPT 日志尚不存在而失败，第七周 BPE 也可直接复用同一入口。
 
-在 `tests/test_language_model.py` 中先用临时目录完成这条加载路径：同模型同批次 eval logits 保存前后最大差小于 `1e-6`；固定验证窗口的目标计数完全一致、平均 loss 差小于 `1e-6`。正式结果则从 best 对应的验证时点取 val_loss 和计数，不拿 last 的输出与 best 混比。
+在 `tests/test_language_model.py` 新增 `test_lm_checkpoint_roundtrip(tmp_path)`，函数内分别创建小 Bigram / MiniGPT、固定输入及验证 IDs，调用 save_checkpoint 保存到 tmp_path，再调用 load_checkpoint 并新建同配置模型加载；同模型同批次 eval logits 保存前后最大差小于 `1e-6`；固定验证窗口的目标计数完全一致、平均 loss 差小于 `1e-6`。正式结果则从 best 对应的验证时点取 val_loss 和计数，不拿 last 的输出与 best 混比。
 
 #### 第四步：读曲线并定位异常
 
@@ -727,7 +727,7 @@ with torch.no_grad():
 
 新进程读取结构、context 与 tokenizer，创建模型并加载；固定 seed，在 eval/no_grad 下生成。脚本不应依赖训练程序内存中的对象。
 
-generate.py 的 main 按以下顺序接入：load_checkpoint(args.checkpoint) → 核对 tokenizer 文件 hash → CharTokenizer.load → 核对 tokenizer.vocab_size 与 checkpoint.vocab_size → 根据 model_config.name 新建 Bigram 或 MiniGPT → 严格 load_state_dict → 迁移设备并 eval。MiniGPT 的 heads 仍映射为构造参数 num_heads；context_length 从 checkpoint 读取，不在生成脚本另写 128。设备可沿用第二周的自动选择，打印实际设备；旧设备保存在 checkpoint 中不要求本次必须相同。
+generate.py 的 main 按以下顺序接入：load_checkpoint(args.checkpoint) → 核对 tokenizer 文件 hash → CharTokenizer.load → 核对 tokenizer.vocab_size 与 checkpoint.vocab_size → 根据 model_config.name 新建 Bigram 或 MiniGPT → 严格 load_state_dict → 迁移设备并 eval。MiniGPT 的 heads 仍映射为构造参数 num_heads；context_length 从 checkpoint 读取，不在生成脚本另写 128。main() 用 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 选择设备并打印，再执行 model.to(device)；本次设备不要求与 checkpoint 记录的训练设备相同。
 
 若后续把 main 中的循环抽成函数，可约定 `generate_ids(model, prompt_ids, context_length, max_new_tokens, device)`，返回完整 token ID 列表；抽取时将循环里的 args 字段改为函数参数，编码与参数解析仍由 main 完成。下方 JSONL 记录还要写实际 device / dtype、prompt 的 OOV 数；第七周再将加载替换为按 tokenizer 类型分派的入口。
 
@@ -806,7 +806,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 
 #### 第一步：核对最终验证表
 
-将两组真实结果整理为 `experiments/mini_gpt/week6/results.csv`，用第一周 CSV 写法保存两行；字段包含 model、tokenizer_hash、split=val、best_step、val_loss、val_target_tokens、实际完成 steps、params、train_seconds、config、checkpoint。最佳验证值与目标数读取各自 best 对应的记录，不从测试集取值，也不分别挑选不同验证时点的数据。
+在 Python 草稿或交互环境读取 Bigram / MiniGPT 各自的 best checkpoint、history.csv、run_summary.json 和配置，为两组分别建立一个结果字典。字段包含 model、tokenizer_hash、split=val、best_step、val_loss、val_target_tokens、实际完成 steps、params、train_seconds、config、checkpoint；最佳验证值与目标数取自同一个 best 时点。创建 `experiments/mini_gpt/week6/` 后，以 w 模式、UTF-8、newline="" 打开 results.csv，用 csv.DictWriter 写表头和两行真实记录，再读回核对模型名称和来源。不从测试集取值，也不分别挑选不同验证时点的数据。
 
 model、tokenizer_hash、val_loss、steps、params 和时间都对应实际运行。字符两组 tokenizer_hash 必须一致，才有直接比较 token loss 的前提。
 

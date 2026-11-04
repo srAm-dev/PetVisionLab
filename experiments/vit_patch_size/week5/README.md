@@ -44,11 +44,11 @@ P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS
 
 小 ViT：C=128、depth=2、heads=4、FFN=512、dropout=0.1、AdamW lr=3e-4、weight_decay=0.01、20 epochs、batch=64、seed=42。两组 token 长度分别为 65/17。固定复用第三周 CIFAR 索引；各组 experiment_dir 使用 `experiments/vit_patch_size/week5/runs/patch4` 或 `patch8`，checkpoint 位于 `outputs/vit_patch4` / `outputs/vit_patch8`。若短运行测时后统一调整预算，保留实际配置。best 按验证 accuracy 选择，持平保留较早一次，last 为最后一轮。两组记录独立初始化还是复制公共层；复制时显式排除形状不同的 Patch/位置参数，不能直接套用第三周对所有共有键形状一致的加载规则。随机增强与 dropout 的实现和单种子局限见逐日指南。
 
-复用边界见[Day 2 模块组合](../../../docs/week5.md#encoder-reuse)：ViT 复用第四周 EncoderBlock 的类，创建两个新的 Block；CLS、可学习位置和堆叠后的最终 LayerNorm 由 ViT 管理。forward 中位置相加一次、最终 LayerNorm 一次，Block 内部 norm1/norm2 保留；Attention 为双向。
+模型组合见[Day 2](../../../docs/week5.md#encoder-reuse)：在 `src/petvision/models/cv/vit.py` 定义 ViTMLP 和 ViTBlock，后者调用第四周的 MultiHeadSelfAttention 与 LayerNorm，使用 pre-LN＋GELU。ViT.forward 按 Patch→CLS/位置相加→embedding dropout→独立 ViTBlock 堆叠→取第 0 个 token→head(LayerNorm＋Linear) 计算；位置只加一次，Attention 为双向。
 
-数据处理复用第三周的 [torchvision.transforms.v2 流程](../../../docs/week3.md#cifar-v2-transforms)：ToImage 保留 uint8 像素，训练时加入随机裁剪和翻转，再用 ToDtype(torch.float32,scale=True) 缩放、Normalize 归一化；验证和测试省略随机增强。六个视觉变体使用相同的确定性评估预处理。
+数据处理复用第三周的 [torchvision.transforms.v2 流程](../../../docs/week3.md#cifar-v2-transforms)：ToImage 保留 uint8 像素，训练时加入随机裁剪和翻转，再用 ToDtype(torch.float32,scale=True) 缩放、Normalize 归一化；验证和测试省略随机增强。各变体按冻结配置对应的确定性预处理评估：CNN / ViT 的模型输入为 32×32，ResNet 在 ToDtype 之前 Resize 到 96×96。
 
-统一指标接入 evaluate.py 的步骤见[Day 4](../../../docs/week5.md#classification-metrics)；冻结清单写在本 README，列出六个变体实际的配置、best 路径和验证结果。
+修改 `scripts/evaluate.py::main`，调用本文件的 evaluate_classification 完整统计混淆矩阵、loss 与样本数，再调用 benchmark_forward 记录推理测量；F1 计算由 `src/petvision/evaluation/classification.py::metrics_from_confusion` 完成，细节见[Day 4](../../../docs/week5.md#classification-metrics)；冻结清单写在本 README，列出六个变体实际的配置、best 路径和验证结果。
 
 | 文件或目录 | 内容与产生时间 |
 | --- | --- |

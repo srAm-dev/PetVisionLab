@@ -40,15 +40,15 @@ python -m pip check
 
 ## 配置与结果
 
-BPE 学习相邻 token 的合并规则；pair 是有序 ID 对，merge rank 是规则的学习顺序。温度调整生成概率的集中程度，top-k 限制候选数；它们不改变训练好的词表。术语和例子见[本周约定](../../../docs/week7.md#bpe-terms)与[采样步骤](../../../docs/week7.md#day-3)。
+BPE 学习相邻 token 的合并规则；pair 是有序 ID 对，merge rank 是规则的学习顺序。在 `scripts/generate.py::filter_logits` 中，温度先缩放 logits，top-k 再按第 k 高分设过滤阈值，阈值处并列项全部保留；sample_next_token 对过滤结果执行 softmax 和采样；它们不改变训练好的词表。术语和例子见[本周约定](../../../docs/week7.md#bpe-terms)与[采样步骤](../../../docs/week7.md#day-3)。
 
 BPE 起始 256 个字节，目标词表 512，训练子集只取 train 原文前 100,000 个字符，记录 hash、实际合并数与训练时间。BPE GPT 复用第六周结构/2000 步预算，从新词表对应的新模型训练；experiment_dir 为本周 `runs/bpe`，checkpoint 为 `outputs/mini_gpt_bpe`。续训检查单独使用 CPU 小模型 40 与 20+20 步，记录最大差异。采样组合比较始终使用同一 checkpoint 与 prompt；两组同时改变温度与 top-k，只描述组合效果。
 
-Day 4 的 `test_resume.py` 自带小模型配置和教学 token 数据，在 pytest 临时目录保存/读取 checkpoint，独立于正式 BPE 配置和输出。Day 5 才创建 mini_gpt_bpe.yaml 并启动正式训练；按[执行顺序](../../../docs/week7.md#bpe-resume-order)，先从零跑，确实中断且 `0 < last.step < training.steps` 时才使用恢复命令。已达到累计目标则直接评估，不需要再次训练或人为中断。恢复时保留 best_val_loss/best_step、原 best 文件和训练统计累计值，history 只追加恢复点之后的验证行，避免覆盖更优结果或重复记录。
+Day 4 在 `tests/test_resume.py::test_resume_matches_continuous` 中用临时配置和教学 token 调用真实 train_gpt.main() 的从零 / resume 分支，在 pytest 临时目录保存/读取 checkpoint，独立于正式 BPE 配置和输出。Day 5 才创建 mini_gpt_bpe.yaml 并启动正式训练；按[执行顺序](../../../docs/week7.md#bpe-resume-order)，先从零跑，确实中断且 `0 < last.step < training.steps` 时才使用恢复命令。已达到累计目标则直接评估，不需要再次训练或人为中断。恢复时保留 best_val_loss/best_step、原 best 文件和训练统计累计值，history 只追加恢复点之后的验证行，避免覆盖更优结果或重复记录。
 
 tokenizer 训练脚本的参数和调用顺序见[Day 2](../../../docs/week7.md#bpe-training-entry)；训练、生成与编码比较统一通过[load_tokenizer](../../../docs/week7.md#tokenizer-dispatch)按 JSON type 选择字符 / BPE 实例。
 
-BPE 生成展示与 tokenizer 的严格 decode 分开：展示记录原始 IDs、bytes 和 decode_ok，合法输入的往返仍严格检查。恢复训练核对配置、历史 best 与日志步数；完整测试结果另存各模型自己的 test_metrics.json，再在本周汇总链接。
+ByteBPETokenizer.decode 默认 errors="replace"；`tests/test_tokenizer.py::test_bpe_roundtrip` 显式传 errors="strict" 检查合法输入往返，`scripts/generate.py::main` 对生成结果先尝试 strict 解码以记录 decode_ok，失败后用 replace 展示，同时保存原始 IDs 与 bytes。恢复训练核对配置、历史 best 与日志步数；完整测试结果另存各模型自己的 test_metrics.json，再在本周汇总链接。
 
 所有模型的最终测试沿用[第六周验证窗口规则](../../../docs/week6.md#eval-windows)：同一 split 内覆盖 N-1 个目标、保留尾窗、按目标 token 数汇总。字符与 BPE 的 N 由各自 tokenizer 决定，指标仍分开报告。
 

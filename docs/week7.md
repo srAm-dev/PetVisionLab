@@ -1,6 +1,6 @@
 # 第七周逐日学习指南：简化字节级 BPE、采样与中断续训
 
-> 更新日期：2026-10-31<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-3)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写字节级 BPE 与 Unicode 往返检查，加入 Temperature/Top-k 和完整恢复训练，整理字符/BPE 分开评估的语言模型报告。  
@@ -123,7 +123,7 @@ BPE 模型从零初始化，按 BPE 的实际 V 新建 embedding 与输出词表
 
 #### 第一步：从 abab 手算一次合并
 
-修改第六周已有的 `src/petvision/models/llm/tokenizer.py`，保留 CharTokenizer，在同一文件新增 ByteBPETokenizer 以及 pair 计数、非重叠合并辅助函数。创建 `tests/test_tokenizer.py`，从 `petvision.models.llm.tokenizer` 导入这些对象，将今天的短串、平频和空输入检查写成测试函数。
+修改第六周已有的 `src/petvision/models/llm/tokenizer.py`，保留 CharTokenizer，在同一文件新增 ByteBPETokenizer 以及 pair 计数、非重叠合并辅助函数。创建 `tests/test_tokenizer.py`，从 `petvision.models.llm.tokenizer` 导入 ByteBPETokenizer、count_pairs、merge_pair。新增 `test_bpe_pair_counts` 核对 abab / aaaa 的相邻计数，`test_bpe_non_overlapping_merge` 核对 aaaa / aaa 的替换结果，`test_bpe_first_seen_tie` 核对 caba 同频时先选 ca，`test_bpe_decode_bytes` 核对完整中文字节拼接及 strict / replace 解码；空串、单 ID 分别作为这些函数的边界输入。
 
 UTF-8 中 a=97、b=98，初始序列为 `[97,98,97,98]`。相邻 pair 中 `(97,98)` 出现 2 次、`(98,97)` 出现 1 次。
 
@@ -226,13 +226,13 @@ python -m pytest tests/test_tokenizer.py -q
 <a id="bpe-training-entry"></a>
 #### 第一步：固定训练材料和词表预算
 
-创建 `scripts/train_tokenizer.py`，顶层导入 argparse、Path 和 `from petvision.models.llm.tokenizer import ByteBPETokenizer`；训练、保存和打印写在 main，文件末尾加入口保护。继续修改 `src/petvision/models/llm/tokenizer.py` 完成下文的训练与序列化接口，并向 `tests/test_tokenizer.py` 添加保存加载、非法预算与 Unicode 往返测试。
+创建 `scripts/train_tokenizer.py`，顶层导入 argparse、Path 和 `from petvision.models.llm.tokenizer import ByteBPETokenizer`；训练、保存和打印写在 main，文件末尾加入口保护。修改 `src/petvision/models/llm/tokenizer.py` 的 ByteBPETokenizer.train / encode / save / load 方法，操作顺序见本节各步。在已有 `tests/test_tokenizer.py` 中新增 `test_bpe_roundtrip`，用本节 cases 逐条 strict 解码；新增 `test_bpe_save_load(tmp_path)`，比较保存前后 merges、vocab 和相同文本的 IDs；新增 `test_bpe_vocab_budget`，检查预算小于 256 报错、空文本提前停止；新增 `test_bpe_encode_merge_rank`，检查新输入按保存的 rank 合并。
 
 读取第六周 train.txt，只取约定的前 100000 个 Unicode 字符，再转 UTF-8；记录实际字符数、字节数和 hash。256 个基础字节加最多 256 次合并得到目标词表 512。
 
 没有 pair 可合并时提前结束，保存实际词表大小，模型输出维度以这个实际值为准。
 
-把算法接入 train_tokenizer.py：按第二周 argparse 写法接收 `--vocab-size`（int，默认 512）与 `--max-train-chars`（int，默认 100000），后者要求为正。main 读取 `datasets/processed/tinyshakespeare/train.txt` 的 bytes 并按 UTF-8 解码，先按字符截取再转 bytes；新建 ByteBPETokenizer，调用 train(text_subset, vocab_size)，随后 save 到 `experiments/mini_gpt/week7/bpe_tokenizer.json`。父目录先创建，记录子集 hash、字符数和字节数。load 与字符 tokenizer 一样作为类方法，从保存的规则还原对象，不重新训练。
+在 `scripts/train_tokenizer.py` 定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加 `--vocab-size`（type=int，默认 512）与 `--max-train-chars`（type=int，默认 100000）；main() 调用 parse_args，先检查后者为正，再读取训练文本。main 读取 `datasets/processed/tinyshakespeare/train.txt` 的 bytes 并按 UTF-8 解码，先按字符截取再转 bytes；新建 ByteBPETokenizer，调用 train(text_subset, vocab_size)，随后 save 到 `experiments/mini_gpt/week7/bpe_tokenizer.json`。父目录先创建，记录子集 hash、字符数和字节数。load 与字符 tokenizer 一样作为类方法，从保存的规则还原对象，不重新训练。
 
 读取 train.txt 后先与第六周 split_manifest 的 train hash 核对，再计算截取子集的 hash；两者分别保存为原训练 split 标识和 BPE 学习子集标识。已有 bpe_tokenizer.json 时先核对这些条件，改变词表或子集应另存版本，不能覆盖仍被 checkpoint 引用的 tokenizer。
 
@@ -329,7 +329,7 @@ temperature 是正数缩放参数，先计算 `scaled_logits=logits/temperature`
 
 #### 第二步：将采样与模型前向分开
 
-修改已有 `scripts/generate.py`，将下方 sample_next_token 和温度 / 过滤辅助函数定义在文件顶层，模型加载与生成调用仍在 main 内。创建 `tests/test_sampling.py`，测试函数声明 monkeypatch 参数（例如 `def test_sampling_seed(monkeypatch):`），在函数内用 `monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))` 临时加入脚本目录，再 `from generate import sample_next_token` 并导入你定义的过滤函数；Path 从 pathlib 导入。沿用入口保护，导入函数不加载模型或生成样例，不永久修改训练入口的 sys.path。
+修改已有 `scripts/generate.py`，在文件顶层定义下方 `sample_next_token(last_logits,temperature=1.0,top_k=None)` 和 `filter_logits(last_logits,temperature=1.0,top_k=None)`，模型加载与生成调用仍在 main 内。创建 `tests/test_sampling.py`，测试函数声明 monkeypatch 参数（例如 `def test_sampling_seed(monkeypatch):`），在函数内用 `monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))` 临时加入脚本目录，再 `from generate import sample_next_token` 并导入 filter_logits；Path 从 pathlib 导入。沿用入口保护，导入函数不加载模型或生成样例，不永久修改训练入口的 sys.path。
 
 ```python
 def sample_next_token(last_logits, temperature=1.0, top_k=None):
@@ -343,7 +343,7 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 
 作者只使用 torch.topk 返回的第 k 高数值，不使用并列项的索引决定去留。以 `[2,1,1,0]`、top_k=2 为例，阈值为 1，输出应为 `[2,1,1,-inf]`，实际保留三项；top_k=1 遇到并列最高分也可能保留多项。因此只在最高分唯一时检查它与 argmax 一致。
 
-将「温度变换与过滤」整理成可单独检查的函数，返回过滤后的 logits；sample_next_token 再执行 softmax 与 multinomial。沿最后一维取 effective_k 个最大值，只取其中最后一个值作为每行阈值，形状保留 `[B,1]`；用 masked_fill 将严格小于阈值的项填为 -inf。这里用 `<`，不能写 `<=`，也不按 topk 索引 scatter 成恰好 k 项。用上面的四项例子分别检查过滤 logits 和概率，而不是只检查最后抽到了哪个 ID。
+在 `scripts/generate.py::filter_logits` 中完成温度校验、除法与 top-k 阈值过滤，返回 `[B,V]` logits；`sample_next_token` 调用 filter_logits 后再执行 softmax 与 multinomial。`tests/test_sampling.py` 中分别用 `test_sampling_invalid_parameters` 检查参数报错，`test_sampling_topk_threshold` 检查四项 logits 及并列阈值，`test_sampling_seed` 检查固定种子生成的 ID 序列相同。沿最后一维取 effective_k 个最大值，只取其中最后一个值作为每行阈值，形状保留 `[B,1]`；用 masked_fill 将严格小于阈值的项填为 -inf。这里用 `<`，不能写 `<=`，也不按 topk 索引 scatter 成恰好 k 项。用上面的四项例子分别检查过滤 logits 和概率，而不是只检查最后抽到了哪个 ID。
 
 按下面顺序写函数体，先用四项手算例子调通，再接回生成循环：
 
@@ -419,7 +419,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 
 #### 第一步：明确保存发生在哪个时刻
 
-修改已有 `src/petvision/utils/checkpoint.py`，增加本日的完整训练状态保存 / 恢复功能，保留视觉模型和旧推理 checkpoint 的读取用途。修改 `scripts/train_gpt.py`，在 argparse 中新增 `--resume`（Path，默认 None），main 读配置后按是否提供该参数选择从零创建或恢复，再进入统一训练循环。
+修改 `scripts/train_gpt.py::parse_args`，新增 `--resume`（type=Path，默认 None）。修改本文件 main()：在验证完成、更新 best 与日志累计值后，按下一步字段表构造完整 checkpoint，再调用 `src/petvision/utils/checkpoint.py` 已有的 save_checkpoint；在 main() 的对象构造阶段增加 resume 分支，先调用 load_checkpoint 核对配置，再创建并恢复模型、optimizer 和随机状态，最后进入统一循环。utils/checkpoint.py 的 save_checkpoint / load_checkpoint 继续只负责字典读写及 CPU、weights_only=True 加载，不把模型选择或训练循环放进去。
 
 选择完成第 K 次 optimizer.step 后保存，记录 step=K。恢复后第一次更新应是 K+1，不能重复 K，也不能从 K+2 开始。
 
@@ -488,9 +488,9 @@ NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载
 3. 恢复 best_val_loss、best_step、训练统计累计值和日志进度，核对现有 history 没有超出该 checkpoint 的记录；冲突按前文规则归档处理。
 4. 创建训练采样 Generator，完成其他对象初始化后，最后恢复它和实际使用的各随机流。恢复之后直接进入下一次实际采样，不额外抽样打印“看看随机数”。
 5. 从 completed_steps+1 开始更新；如果已达到累计目标就退出训练。首次恢复更新后确认 step 恰好加一，日志仍按原验证间隔追加。
-6. 接线完成后再做下面的 40 步对照；这项测试要调用真正的保存 / 恢复函数，不能在测试内部另写一套简化恢复逻辑。
+6. 接线完成后再编写下方 test_resume_matches_continuous；测试通过替换 parse_args 的返回值调用 train_gpt.main()，实际执行它的从零 / resume 分支与 save_checkpoint / load_checkpoint，不在测试中另写一套恢复模型和 RNG 的业务逻辑。
 
-创建 `tests/test_resume.py`，从 petvision 包导入 MiniGPT、sample_batch 和实际保存 / 恢复函数。测试内部固定 C=32、context=16、batch=4、CPU FP32、dropout=0 的小配置与教学 token 序列，使用 pytest 的 tmp_path 写 checkpoint。它不读取 Day 5 才创建的 mini_gpt_bpe.yaml，也不依赖正式 BPE 输出文件。
+创建 `tests/test_resume.py` 并定义 `test_resume_matches_continuous(tmp_path,monkeypatch)`。用 monkeypatch.syspath_prepend 将项目 scripts 目录临时加入搜索路径，然后导入 train_gpt；MiniGPT、sample_batch、load_checkpoint 从 petvision 对应模块导入。测试内使用 C=32、context=16、batch=4、CPU FP32、dropout=0 的临时配置；将语料读取替换为固定教学 token 数据，将配置、history、checkpoint 输出都指向 tmp_path。连续路径让 main() 跑到 40 步，中断路径先跑 20 步，再传入 --resume 对应的临时 last 跑到累计 40 步。此测试不读取正式 BPE 配置或输出文件。
 
 使用 CPU FP32、dropout=0 的小模型，保留相同初始状态和数据。两条运行到 40 步后比较全部模型参数、optimizer step/状态、最后 loss，以及恢复后第一批的采样起点。
 
@@ -699,7 +699,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 #### 第一步：分别评估各自 tokenizer 的测试原文
 
-继续修改 `scripts/train_gpt.py`，增加下文的 evaluate-only 分支，复用 `src/petvision/training/lm_trainer.py` 中的 evaluate_lm。在 `tests/test_language_model.py` 中补小数据的只评估检查，通过后再执行下面三条正式测试命令。
+继续修改 `scripts/train_gpt.py`，增加下文的 evaluate-only 分支，复用 `src/petvision/training/lm_trainer.py` 中的 evaluate_lm。在 `tests/test_language_model.py` 新增 `test_lm_evaluate_only_does_not_train(tmp_path,monkeypatch)`：创建临时模型 / tokenizer / checkpoint 和长度 N=8 的教学 split，用替换 parse_args 的方式调用 train_gpt.main() 的 evaluate-only 分支；断言目标数为 7，训练 history 和 checkpoint 文件字节未变，并将 train_step 替换为 pytest.fail，验证该分支不会调用参数更新。通过后再执行下面三条正式测试命令。
 
 冻结字符 Bigram、字符 GPT、BPE GPT 的配置和 best，在相同原文 test 边界内分别编码评估。记录有效目标 token 数与窗口规则。
 
@@ -707,7 +707,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 `--evaluate-only` 分支在创建训练循环和写训练文件之前返回：按 checkpoint 重建模型与 tokenizer，只读取所选 split，切 eval 并关闭梯度，不更新参数。对长度为 N 的编码序列，用第六周的固定分窗方式统计 `N-1` 个有效目标，保留尾窗并按目标数汇总 NLL。打印模型、tokenizer hash、原文范围、目标数与 loss；测试结果整理到本周总结，不覆盖训练 history 或 checkpoint。
 
-参数解析复用第二周的 argparse：`--evaluate-only` 为 store_true，`--checkpoint` 为 Path，`--split` 限定 val/test；evaluate-only 时必须提供 checkpoint，且与 resume 互斥。先在临时小模型上检查这个分支返回完整目标计数、参数未变，正式运行前后 history 行数与 checkpoint 保持一致。这样下方三条命令确实只评估，不会先训练再评估。
+修改 `scripts/train_gpt.py::parse_args`：`--evaluate-only` 为 store_true，`--checkpoint` 为 Path，`--split` 限定 val/test；evaluate-only 时必须提供 checkpoint，且与 resume 互斥。先在临时小模型上检查这个分支返回完整目标计数、参数未变，正式运行前后 history 行数与 checkpoint 保持一致。这样下方三条命令确实只评估，不会先训练再评估。
 
 建议给 --split 默认 val；未开启 evaluate-only 时传 --checkpoint 应报错，避免误以为它会恢复训练。只评估分支在 main 中先执行并 return，再进入新训练 / resume 分支。把本次真实结果保存到所选配置的 `experiment_dir/{split}_metrics.json`，字段包含 model、checkpoint、checkpoint_step、tokenizer_hash、split_hash、split、n_target_tokens、loss 和窗口规则。三组分别写自己的目录，再在本周 README 链接它们；结果保存只涉及评估文件，不改训练 config、history 或权重。
 

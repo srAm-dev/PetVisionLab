@@ -1,6 +1,6 @@
 # 第三周逐日学习指南：CNN、ResNet 与 BN / 残差对照
 
-> 更新日期：2026-10-31<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：手写 CNN、BasicBlock 和采用《动手学深度学习》结构的 ResNet18，在 CIFAR-10 上完成 BN on/off 与同深宽残差 on/off 两类对照，保留固定划分供第五周复用。<br>
@@ -274,7 +274,7 @@ MNIST 沿用原来的 `transforms.ToTensor()` → `transforms.Normalize(...)`。
 
 **5. 检查接口迁移没有改变划分、批次和已有验证结果。**
 
-在 `tests/test_datasets.py` 中编写接口检查，使用不下载数据的替身 Dataset，给训练与评估传入明显不同的变换，检查训练变换不影响验证 / 测试；再更换预处理、重新调用加载函数，检查原 split 文件、索引和取样顺序保持不变。同时核对图片 / 标签形状、dtype，以及已有划分与 validation_size 冲突时仍明确报错。原 `tests/test_cv_training.py` 继续检查模型、训练统计和 checkpoint。
+修改 `tests/test_datasets.py`：在 `test_mnist_training_transform_does_not_leak_into_evaluation` 中，使用不下载数据的 FakeMNIST 和两个明显不同的 transform，调用 build_mnist_loaders，断言 train / val 的底层 Dataset 不同、修改训练 transform 不影响 val/test；在 `test_mnist_transform_change_reuses_saved_split` 中，保存首次 split 文件内容与索引，再更换 transform 重建 loader，断言文件、索引和相同 seed 下的取样顺序未变。同时核对图片 / 标签形状、dtype，以及已有划分与 validation_size 冲突时仍明确报错。原 `tests/test_cv_training.py` 保留模型、训练统计和 checkpoint 检查；若已按第二周定义 test_mnist_configurable_loaders，也在该函数中把 mean/std 改为先创建 Compose，再以 train_transform / eval_transform 传入，保留原验证集大小与像素范围断言。
 
 从项目根目录激活 petvision 后，先执行：
 
@@ -858,7 +858,7 @@ return self.relu(out)
 
 #### 第三步：写出能暴露错误的检查
 
-把下面各项添加到 Day 2 已创建的 `tests/test_resnet.py`，使用 `test_` 开头的函数名，保留已有 CNN 检查。
+修改 `tests/test_resnet.py`：顶层从 `petvision.models.cv.resnet` 导入 BasicBlock，新增 `test_basicblock` 和 `test_basicblock_identity_shortcut` 两个函数；已有同名函数时修改原函数，保留已有 CNN 检查。`test_basicblock` 完成下表四种形状及反向检查，`test_basicblock_identity_shortcut` 完成下方全 1 输入的确定性检查。
 
 对 batch=1/2 分别覆盖下面四种情况；输入均为 `[B,64,32,32]`，它们是单个块的随机特征图，整网的 96×96 图片输入在 Day 4 检查。对输出求标量 loss 再反向，检查主分支和存在的投影分支参数都有有限梯度。
 
@@ -871,7 +871,7 @@ return self.relu(out)
 
 若相加报尺寸错误，分别打印 out.shape 和 identity.shape；有投影时继续检查 shortcut(x).shape。先确认调用时的 use_1x1conv，再核对两条路径的 stride。
 
-增加一个能确认残差确实参与相加的确定性小例子：同尺寸、显式传入 use_1x1conv=False 的块，x 全为 1，主分支两层卷积的权重、卷积 bias 及 BN bias 均设为 0，并切 eval。主分支输出应为 0，块的输出应全为 1。这个检查使用恒等旁路，保持显式的 False。随后另建普通随机块做有限梯度检查；置零例子专门验证相加路径，不用于要求每个梯度都非零。Day 5 再在这个例子上补残差关闭后的输出检查。
+在 `tests/test_resnet.py` 的 `test_basicblock_identity_shortcut` 中，新建 `BasicBlock(64,64,stride=1,use_1x1conv=False).cpu().eval()`，输入为 `torch.ones(2,64,32,32)`。在 torch.no_grad 下，把 conv1、conv2 的 weight 和存在的 bias 清零，再把 bn1、bn2 的 bias 清零；新建 BN 的 running_mean / running_var 保持初始 0 / 1。调用模型后，用 `torch.testing.assert_close(outputs, images)` 断言输出全为 1，验证主分支为 0 时恒等旁路仍参与相加。随机输入的有限梯度检查写在前述 test_basicblock 中，每次重新创建模型。
 
 #### 第四步：自己解释一次
 
@@ -1102,9 +1102,17 @@ if self.use_residual:
 return self.relu(out)
 ```
 
-5. 修改 `scripts/train_cv.py` 和 `scripts/evaluate.py` 的 resnet18 构造分支：从各自使用的 model_config 中读取 `.get("residual", True)`，检查结果为布尔值，再传给 ResNet18 的 use_residual。缺省视为开启，使 Day 4 未填写该字段的配置与 checkpoint 仍可使用；训练和评估采用相同规则。
-6. 在已有 `tests/test_resnet.py` 补开关检查。保留 Day 4 的整网前反向和阶段形状检查，确认 use_residual=True 时仍然通过，新增开关不产生参数或 buffer。对普通块和投影块分别检查 on/off 的输出形状与主分支有限梯度；off 时投影的 weight、bias 不参与计算，它们的 grad 应为 None。梯度检查使用新模型或先将旧梯度清为 None。另在本地交互环境创建默认开启的 ResNet18，用已有 checkpoint 工具读取 Day 4 的 initial.pt，将 model_state 完整加载并检查无缺失或多余 key；这项自查使用本地实验文件，pytest 检查继续用临时状态，避免依赖仓库外的权重。
-7. 扩展 Day 3 的置零例子：同尺寸、use_1x1conv=False、x 全为 1，主分支输出为 0 并切 eval。开启残差时输出全为 1，关闭时输出全为 0；再另建普通随机块检查有限梯度。运行 `python -m pytest tests/test_resnet.py -q`，通过后再准备 off 组训练。
+5. 修改 `scripts/train_cv.py` 和 `scripts/evaluate.py` 的 resnet18 构造分支：从各自使用的 model_config 中读取 `.get("use_residual", True)`，检查结果为布尔值，再传给 ResNet18 的 use_residual。缺省视为开启，使 Day 4 未填写该字段的配置与 checkpoint 仍可使用；训练和评估采用相同规则。evaluate.py 比较配置时，先在副本中将缺省 use_residual 补成 True，再比较，允许旧 checkpoint 与显式开启的新配置对应，但仍拒绝 on/off 不一致。
+6. 修改 `tests/test_resnet.py`，保留 `test_resnet_forward_backward` 和 `test_resnet_stage_shapes`，再新增两个函数：`test_basicblock_residual_switch` 分别创建同尺寸普通块、stride=2 的投影块，并对 use_residual=True/False 各用新模型做一次前向和 backward；断言形状正确、主分支参数梯度非 None 且有限，投影参数只在开启残差时有有限梯度，关闭时 grad 为 None。`test_resnet_residual_switch` 创建整网 on/off 两个对象，比较 state_dict 的 key 集合和各项 shape 相同，检查八个 BasicBlock 的 use_residual 均接收指定值，再用 `[2,3,96,96]` 输入检查两边输出均为 `[2,10]`。新增开关本身不应增加参数或 buffer。另在本地交互环境调用 `load_checkpoint("outputs/resnet_on/initial.pt")`，用新建的默认 ResNet18 执行 `load_state_dict(checkpoint["model_state"], strict=True)`，核对 Day4 状态仍可加载；pytest 不依赖该正式文件。
+7. 修改 `tests/test_resnet.py` 中现有的 `test_basicblock_identity_shortcut` 函数，保留函数名，并按以下顺序替换函数体中的单次检查：
+
+   1. 添加 `for use_residual in (True, False)` 循环；每轮新建 `BasicBlock(64,64,stride=1,use_1x1conv=False,use_residual=use_residual).cpu().eval()`，避免复用上轮模型状态。
+   2. 每轮创建 `images = torch.ones(2,64,32,32)`。输入保持全为 1；被置零的是主分支参数。
+   3. 在 `torch.no_grad()` 中遍历 model.conv1 / model.conv2，将 weight 和存在的 bias 清零，再将 model.bn1.bias / model.bn2.bias 清零。新建 BN 的运行均值和方差保留初始值；此时主分支输出为 0。
+   4. 在 no_grad 中调用 `outputs = model(images)`。将原来固定比较 images 的断言，改为先计算 `expected = images if use_residual else torch.zeros_like(images)`，再调用 `torch.testing.assert_close(outputs, expected)`。
+   5. 开启残差时计算 ReLU(0+1)，预期全为 1；关闭时计算 ReLU(0)，预期全为 0。该函数只检查旁路开关；正常随机块的反向检查由第 6 项的 test_basicblock_residual_switch 完成。
+
+运行 `python -m pytest tests/test_resnet.py -q`，通过后再准备 off 组训练。
 
 此方案保留投影模块，因此残差两组的总参数量相同；off 组的投影参数不参与前向和反向。run_summary.json 的 params 继续表示总参数量，比较时另说明这一计算路径差异。
 
@@ -1119,14 +1127,14 @@ BN 对照：    cnn_bn_on  ↔ cnn_bn_off
 
 #### 第二步：核对共有参数的初始值
 
-在训练入口支持可选的 `training.init_checkpoint` 字段：on 组留空或省略；off 组按下表读取已经保存的 step=0 状态。该字段用于从初始权重开始新的实验，进度仍从 0 起、优化器重新创建。
+修改 `scripts/train_cv.py` 的 `main()`：在模型构造分支结束后、创建 optimizer 之前读取 `cfg["training"].get("init_checkpoint")`。未提供路径时使用新建模型的随机初值；提供路径时调用 `load_checkpoint`，先校验 checkpoint["step"]==0，再按后面的 key / shape 清单复制到当前模型。顶层导入 `petvision.utils.checkpoint.load_checkpoint`。on 组省略该字段，off 组填写下表路径；加载只影响初始模型状态，训练进度从 0 起，optimizer 仍在复制结束后重新创建。
 
 | off 配置 | training.init_checkpoint |
 | --- | --- |
 | `cnn_no_bn_cifar10.yaml` | `outputs/cnn_bn_on/initial.pt` |
 | `resnet_no_residual_cifar10.yaml` | `outputs/resnet_on/initial.pt` |
 
-复制对应 on 配置后，BN off 只将 `model.use_bn` 改为 false，残差 off 在 model 中添加 `residual: false`；分别添加上表的 `training.init_checkpoint`。Day 4 的 on 配置保持原样，省略 residual 即按 True 重建，保留它与已保存 model_config 的一致性。两份新配置的 experiment_dir 改为本周 `runs/cnn_bn_off`、`runs/resnet_off`，output_dir 改为 `outputs/cnn_bn_off`、`outputs/resnet_off`。不要覆盖原 on 组文件。
+复制对应 on 配置后，BN off 只将 `model.use_bn` 改为 false，残差 off 在 model 中设置 `use_residual: false`；分别添加上表的 `training.init_checkpoint`。on 配置可以省略 use_residual 或显式写 true，两者均按开启重建并兼容旧 checkpoint。两份新配置的 experiment_dir 改为本周 `runs/cnn_bn_off`、`runs/resnet_off`，output_dir 改为 `outputs/cnn_bn_off`、`outputs/resnet_off`。不要覆盖原 on 组结果。
 
 先确认文件存在且 step=0，再创建 off 模型，逐 key 复制共有参数和适用的 buffer；共有层的 shape 与值都要检查。BN off 用 Identity 替换 BN 时应保持其他层命名稳定，只允许预期的 BN key 差异。残差 off 保留投影模块，因此与 on 组的模型状态键应完全相同，包含投影卷积的 weight、bias；任何漏项或形状不符都应先修复。
 
@@ -1140,7 +1148,9 @@ BN 对照：    cnn_bn_on  ↔ cnn_bn_off
 
 #### 第三步：确认输出不会互相覆盖
 
-四个 variant 各自有 experiment_dir、history、best、last；曲线标题标明 variant，单组 history 使用统一五列，Day 6 的 results.csv 汇总行再写入 variant。训练保存配置的方法沿用 Day 2 的 run_training，逐轮日志见[资源记录步骤](#training-resources)。再将四份实际使用的 YAML 各复制一份到 `experiments/cnn_vs_resnet/week3/configs/`，沿用原配置文件名，供本周 README 集中索引；复制内容应与各 runs/<variant>/config.yaml 一致。若中途改变 batch 或 epoch，要把该对两组都按新条件重跑。
+四个 variant 各自有 experiment_dir、history、best、last；曲线标题标明 variant，单组 history 使用统一五列，Day 6 的 results.csv 汇总行再写入 variant。`scripts/train_cv.py::run_training` 在正式循环前创建 experiment_dir，用 yaml.safe_dump 将本次 cfg 保存为其中的 config.yaml；逐轮日志见[资源记录步骤](#training-resources)。再将四份实际使用的 YAML 各复制一份到 `experiments/cnn_vs_resnet/week3/configs/`，保留原配置文件名，供本周 README 集中索引；复制内容应与各 runs/<variant>/config.yaml 一致。若中途改变 batch 或 epoch，要把该对两组都按新条件重跑。
+
+在 run_training 写配置之前，除已有 history 非空检查外，再检查 output_dir 中的 initial.pt、best.pt、last.pt；任一文件已存在都明确报错，提示归档或改用新目录，避免新 experiment_dir 配错旧 output_dir 时覆盖别组权重。已完成的 on 组集中配置从其 runs/<variant>/config.yaml 复制，保留当时实际使用的内容。
 
 #### 第四步：运行并检查训练现象
 
@@ -1204,7 +1214,7 @@ Day 2 和 Day 4 的 on 组已经完成时直接复用，不为填写对照表再
 
 #### 第一步：整理一张可检查的验证表
 
-将四组汇总结果保存为 `experiments/cnn_vs_resnet/week3/results.csv`。在 Python 草稿或交互环境读取各组 history 和独立验证结果，整理下面的字段，再按第一周 csv.DictWriter 方法创建父目录、写入表头和四行真实结果；不需要另建必做脚本。
+将四组汇总结果保存为 `experiments/cnn_vs_resnet/week3/results.csv`。在 Python 草稿或交互环境读取各组 history 和独立验证结果，按下面的字段为每组建立一个字典，合成四项 rows 列表。用 Path 创建结果文件的父目录，以 w 模式、UTF-8、newline="" 打开文件，创建 csv.DictWriter 并依次调用 writeheader()、writerows(rows)；读回后核对四个 variant 各有一行、指标来自相应组的真实文件。不需要另建必做脚本。
 
 每行至少包括 variant、split=val、image_size、best_epoch、val_loss、val_accuracy、params、epochs、batch、train_seconds、config、checkpoint。结果表的 image_size 记录实际送入模型的尺寸：先从预处理后的 images.shape 核对并保存到该组运行摘要，再由汇总读取；CNN 两组为 32，ResNet 两组为 96。它与 config 中记录原图尺寸的 data.image_size 分别说明，不能直接复制后者填入结果表。
 
@@ -1218,7 +1228,7 @@ best 的指标来自同一个验证选择规则。最终一轮指标和 best epo
 
 BN 图只画同 CNN 两组的 train/val；残差图只画同深宽两组。横轴 epoch，纵轴 loss 或 accuracy，标图例、单位与训练预算。
 
-读取四个 runs/<variant>/history.csv，用第一周的 subplots / plot / savefig 方法分别保存 `experiments/cnn_vs_resnet/week3/figures/bn_comparison.png` 和 `experiments/cnn_vs_resnet/week3/figures/residual_comparison.png`。图与 results.csv 来自已有训练记录，不为绘图重新训练；在本周 README 链接这两张图和结果表。
+在 Python 草稿或交互环境用 csv.DictReader 读取四个 runs/<variant>/history.csv，把 epoch 转为 int、四列 loss / accuracy 转为 float。用 plt.subplots 创建 loss、accuracy 两个坐标轴：BN 图叠加 cnn_bn_on / cnn_bn_off 的曲线，残差图叠加 resnet_on / resnet_off 的曲线；横轴均为 epoch，图例同时标明 variant 与 train / val。先创建 figures 父目录，分别 savefig 到 `experiments/cnn_vs_resnet/week3/figures/bn_comparison.png` 和 `experiments/cnn_vs_resnet/week3/figures/residual_comparison.png`，保存后关闭各 figure。图与 results.csv 来自已有训练记录，不为绘图重新训练；在本周 README 链接这两张图和结果表。
 
 选少量验证误分类，注明真实类和预测类。对照结论依次写观察事实、可能解释、控制条件和局限。
 

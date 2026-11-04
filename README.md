@@ -2,9 +2,9 @@
 
 PetVision-Lab 是一个用于学习深度学习原理与实践的个人项目。通过 Python、NumPy 和 PyTorch，逐步理解模型结构、训练流程与评估方法，并以亲手实现和小型对照实验积累实践经验。
 
-当前已完成第一周基础练习与第二周 MNIST MLP 的主要实现和实验记录。五轮训练的最佳模型来自第 5 轮，验证准确率为 **96.42%**，保存的完整测试结果为 **96.62%**（10000 张）。训练、验证、保存加载和误分类展示已跑通；独立解释与重写仍需巩固。第三至第八周是待实现的学习计划，当前训练入口只支持 MNIST MLP。
+学习安排、实现步骤与验收标准见[总学习计划](docs/StudyPlan.md)和各周逐日指南。实际完成状态、环境、运行命令、指标及遗留问题记录在对应周实验目录的 README；本页提供项目介绍与文档导航。
 
-接下来先按[第二周周总结](experiments/mnist_mlp/week2/README.md#weekly-summary)复习单批次训练 / 验证，再进入[第三周 Day 1](docs/week3.md#day-1)的卷积形状与 CIFAR-10。各阶段的实现、结果和掌握程度见[当前进度](docs/StudyPlan.md#current-progress)。
+首次跟做时，从[第一周指南](docs/week1.md)的环境准备开始；已有实现时，在下方导航打开当前周指南，按当天“分步操作与自查”中的文件和函数修改代码，再运行同节的检查命令。各周实际记录的链接集中在[计划与进度入口](docs/StudyPlan.md#current-progress)。
 
 ## 项目目标
 
@@ -41,7 +41,7 @@ PetVision-Lab 是一个用于学习深度学习原理与实践的个人项目。
 | `docs/StudyPlan.md` | 总体学习路线、阶段任务与验收要求 |
 | `docs/` | 逐日学习指南与技术说明 |
 | `scripts/` | 练习实现与实验入口 |
-| `src/petvision/` | 可复用 Python 包；已包含 MNIST 数据、MLP、分类训练 / 验证和随机种子工具 |
+| `src/petvision/` | 可复用的数据加载、模型、训练 / 评估和工具代码；按学习日逐步创建 |
 | `experiments/` | 按 `<主题>/weekN/` 保存每周说明与总结、环境快照、实验结果和小型图表 |
 | `environment.yml` | 当前本地 Linux 环境导出快照，包含具体构建版本和 PyTorch / CUDA 依赖 |
 | `pyproject.toml` | Python 包配置；当前仅定义构建方式、包发现和 Python 版本要求 |

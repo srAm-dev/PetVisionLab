@@ -45,7 +45,7 @@ V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允�
 
 完整 YAML 和创建步骤见[第六周指南](../../../docs/week6.md)。Day 2–3 先做小规模检查，Day 4 完成保存后才启动正式 2000 步；`--output` 将完整生成样例追加到指定 JSONL 文件。
 
-验证使用[Day 2 固定分窗规则](../../../docs/week6.md#eval-windows)：长度 N 的 split 覆盖索引 1..N-1 的全部目标，窗口共享边界输入但不重复统计目标；尾窗按实际长度评估。总 NLL 除以 N-1，日志记录实际目标数；evaluate 结束后恢复调用前的 train/eval 模式，训练更新时启用 train；两组使用相同窗口和上下文重置方式，第七周最终测试沿用此规则。
+验证使用[Day 2 固定分窗规则](../../../docs/week6.md#eval-windows)：长度 N 的 split 覆盖索引 1..N-1 的全部目标，窗口共享边界输入但不重复统计目标；尾窗按实际长度评估。由 `src/petvision/training/lm_trainer.py::evaluate_lm` 累加总 NLL 后除以 N-1，返回 loss / n_target_tokens；该函数退出时恢复调用前的 train/eval 模式，train_step 每次更新前切 train；两组使用相同窗口和上下文重置方式，第七周最终测试沿用此规则。
 
 | 文件或目录 | 内容与产生时间 |
 | --- | --- |

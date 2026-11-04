@@ -1,6 +1,6 @@
 # 第二周逐日学习指南：PyTorch、MNIST MLP 与完整训练流程
 
-> 更新日期：2026-10-28<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：用 autograd 对照手写梯度，完成 MNIST 数据划分、MLP 训练、小批过拟合、最佳 checkpoint、独立测试与加载一致性检查。  
@@ -238,7 +238,7 @@ if __name__ == "__main__":
 3. `"\n".join(lines)` 把每条信息拼成多行文本；打印与文件写入都使用 `report_text`，避免分别收集两次造成遗漏或口径不同。
 4. `args.output_dir / "environment.txt"` 使用 `/` 拼接路径。`mkdir` 的 `parents=True` 会补齐缺少的父目录，`exist_ok=True` 允许目录已经存在；`write_text` 按指定编码写入文本，重复运行会更新同名文件。
 
-随后将 torch / torchvision 版本、`torch.version.cuda`、CUDA 可用性及可用时的设备名和显存逐行加入 `lines`，保留 CPU 分支；这些值都来自实际检查。可以用 f-string 先格式化显存，再放入列表。GPU 小矩阵运算用于验证设备能够工作，其检查逻辑也保留。
+修改 `scripts/check_environment.py` 的 main()：在 `lines` 列表加入 Python 路径之后，逐行加入 torch / torchvision 版本、`torch.version.cuda` 和 CUDA 是否可用；只在 CUDA 可用分支读取设备名和显存，CPU 分支写明不可用。这些值都来自实际检查。可以用 f-string 先格式化显存，再放入列表。GPU 小矩阵运算用于验证设备能够工作，其检查逻辑也保留。
 
 用 `python scripts/check_environment.py --help` 查看参数说明，再分别尝试不带参数和带 `--output-dir` 的运行方式。打开生成的 `environment.txt`，确认环境字段与终端打印一致；再次运行应能够更新记录。后面的 Day 4 在此基础上增加训练配置与检查模式的参数。
 
@@ -1280,7 +1280,7 @@ if __name__ == "__main__":
 python scripts/check_mnist_training.py
 ```
 
-islice(train_loader,2) 只提供前两个训练批次，验证同理。batch_size=128，因此两份 n_samples 都应为 256；loss 必须有限，准确率只需是合法比例，不设达标目标。smoke 的目的在于确认代码能执行，不代表模型已经训练好。
+在 `scripts/check_mnist_training.py::main()` 的 smoke 部分，train_one_epoch 接收 `islice(train_loader,2)`，evaluate 接收 `islice(val_loader,2)`，两边各处理前两个批次。batch_size=128，因此两份 n_samples 都应为 256；loss 必须有限，准确率只需是合法比例，不设达标目标。smoke 的目的在于确认代码能执行，不代表模型已经训练好。
 
 **3. 看懂固定 64 条样本是怎么做到的。**
 
@@ -1380,7 +1380,7 @@ def test_mlp_configurable_dimensions():
 
 这是独立的小形状检查，不是更改 MNIST 正式配置；4→8→4→3 的参数数为 `(4*8+8)+(8*4+4)+(4*3+3)=91`。它与已有的默认模型 235146 参数检查一起，确认新参数被使用、旧默认行为仍兼容。
 
-数据接口也做小检查：默认参数读取原划分时仍为 55000/5000/10000；使用独立临时 split_path 和 validation_size=10000 时应为 50000/10000/10000；相同旧路径传入不同 validation_size 应明确报错，而不是覆盖原划分。把 mean/std 改为 (0.0,)/(1.0,) 后，图片应保留 ToTensor 的 0–1 范围，验证传入值确实影响预处理。检查使用临时路径，不修改正式基线的 YAML 或划分文件。
+在已有 `tests/test_cv_training.py` 末尾新增 `test_mnist_configurable_loaders(tmp_path)`，在函数内调用 `build_mnist_loaders` 检查数据参数：默认参数读取原划分时仍为 55000/5000/10000；使用独立临时 split_path 和 validation_size=10000 时应为 50000/10000/10000；相同旧路径传入不同 validation_size 应明确报错，而不是覆盖原划分。把 mean/std 改为 (0.0,)/(1.0,) 后，图片应保留 ToTensor 的 0–1 范围，验证传入值确实影响预处理。检查使用临时路径，不修改正式基线的 YAML 或划分文件。
 
 ```bash
 python -m pytest tests/test_cv_training.py -q -s
@@ -1667,7 +1667,7 @@ experiments/mnist_mlp/week2/
 
 完成上述修改后，仍使用下方“运行与验收”里的 --smoke、--overfit-samples 64 和 pytest 命令。检查运行前后，config.yaml、history.csv、曲线和 checkpoint 不应因检查而新增或被改写。
 
-这组示例已用临时数据验证配置快照、两轮 CSV、曲线生成和画布关闭，并检查了有 / 无已有正式结果时两种检查模式的文件隔离。临时验证未运行正式五轮，也未生成正式模型权重。Day 5 接入 checkpoint 保存后，再用不带检查开关的命令完成正式运行。
+自查时将 experiment_dir 指向临时目录，先用 2 epochs 的小数据运行 main()，检查生成 config.yaml、含两行指标的 history.csv 和曲线；再分别执行 smoke / overfit，确认这两种模式不新建或覆盖正式结果。实际命令和结果记录在本周 README。Day 5 完成 checkpoint 保存后，再用不带检查开关的命令运行正式训练。
 
 ### 运行与验收
 
@@ -1788,7 +1788,7 @@ model.load_state_dict(checkpoint["model_state"])
 model = model.to(device).eval()
 ```
 
-创建 `scripts/evaluate.py`，复用 Day 4 的参数解析方式读取 `--config、--checkpoint、--split`；`--config`、`--checkpoint` 为必填路径，`--split` 限定 val/test。文件顶层从 petvision 包导入 MLP、数据函数和 `training.cv_trainer.evaluate`，在 main 中核对 YAML 中模型配置与 checkpoint 一致，再用保存的划分创建 loader，按 split 选择 val_loader 或 test_loader，最后调用已有 evaluate，打印 loss、accuracy、n_samples。文件末尾加入口保护；它不创建优化器，也不调用训练循环。
+创建 `scripts/evaluate.py`，定义 `parse_args(argv=None)`，在 argparse.ArgumentParser 中添加 `--config、--checkpoint、--split`；`--config`、`--checkpoint` 为必填路径，`--split` 限定 val/test。文件顶层从 petvision 包导入 MLP、数据函数和 `training.cv_trainer.evaluate`，在 main 中核对 YAML 中模型配置与 checkpoint 一致，再用保存的划分创建 loader，按 split 选择 val_loader 或 test_loader，最后调用已有 evaluate，打印 loss、accuracy、n_samples。文件末尾加入口保护；它不创建优化器，也不调用训练循环。
 
 按下面顺序完成这个新文件，不能只复制上面的加载片段就直接运行：
 
@@ -1820,9 +1820,9 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 
 保存加载检查按「固定一批输入 → 原模型 eval 得到 logits_before → 保存 → 新建同结构模型并加载 → 同输入得到 logits_after」执行。固定 CPU FP32、关闭随机性时，打印 `(logits_before-logits_after).abs().max().item()` 并检查小于 `1e-6`；不能拿 last 的当前输出与另一个 epoch 的 best 比。
 
-在已有 `tests/test_cv_training.py` 中补充保存加载检查，测试函数可声明 `def test_checkpoint_roundtrip(tmp_path):`，pytest 会提供一个 Path 临时目录，checkpoint 写到 `tmp_path / "model.pt"`。另用人为验证准确率序列 `[0.80,0.85,0.82]` 核对选择逻辑：best 应对应第 2 轮，last 对应第 3 轮。临时检查通过后才运行正式五轮训练。
+修改 `tests/test_cv_training.py`：在 `test_checkpoint_roundtrip(tmp_path)` 中创建小 MLP 与固定输入，保存 state_dict 后新建同配置模型加载，在 eval/no_grad 下比较 logits、loss 和预测类别；logits / loss 最大差小于 1e-6。再新增 `test_checkpoint_best_and_last(tmp_path,monkeypatch)`，调用实际 train_cv.main()，用 monkeypatch 让验证函数依次返回 accuracy `[0.80,0.85,0.82,0.85]`，把配置的 epochs 设为 4、输出指向 tmp_path；运行后读取真正保存的 best.pt / last.pt，断言 best.epoch==2、last.epoch==4，验证持平时保留更早模型。临时检查通过后才运行正式五轮训练。
 
-测试从新 checkpoint 模块导入实际 save_checkpoint / load_checkpoint，保存原模型的真实 state_dict 后新建 MLP 并加载。best / last 检查也读取实际生成的两个文件、核对 epoch；再补一轮 accuracy=0.85，验证持平不会替换较早 best。不要只比较两个相同字典或文件是否存在，那不能证明模型恢复与选择规则正确。
+测试从新 checkpoint 模块导入实际 save_checkpoint / load_checkpoint，保存原模型的真实 state_dict 后新建 MLP 并加载。best / last 检查也读取实际生成的两个文件、核对 epoch；上述第 4 轮 accuracy=0.85 与第 2 轮持平，best 仍应保留第 2 轮。不要只比较两个相同字典或文件是否存在，那不能证明模型恢复与选择规则正确。
 
 #### 第四步：输出应能回答什么
 
@@ -1888,7 +1888,7 @@ test_metrics.json 至少包含 split、n_samples、loss、accuracy、checkpoint 
 
 今天补全 `evaluate.py` 的测试输出：当 `--split test` 时，将这些字段写入配置指定的 `experiment_dir/test_metrics.json`，少量误分类保存到 `figures/mistakes.png`。目录在保存前创建；`--split val` 继续用于独立验证，不覆盖 test 指标。
 
-在 evaluate.py 顶层导入 json。沿用 Day 5 的完整 metrics，在 main 的评估调用之后、`if args.split == "test":` 内构造输出并保存：
+修改 `scripts/evaluate.py`：顶层导入 json；在 main() 已有 `metrics = evaluate(model, loader, criterion, device)` 调用之后添加 `if args.split == "test":`，在该分支将当前这次完整遍历得到的 metrics 加入下方结果字典并保存，不再另算一次汇总指标：
 
 ```python
 result = {

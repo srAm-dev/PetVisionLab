@@ -1,6 +1,6 @@
 # 第一周逐日学习指南：Python、NumPy、数学与线性回归
 
-> 更新日期：2026-10-28<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[StudyPlan.md 第一周](StudyPlan.md#stage-1)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 表示你的第一个学习日，可以从任意星期开始。  
 > 本周成果：独立写出 NumPy 线性回归，解释预测、损失、梯度和参数更新，保存真实曲线，并在周末整理简短小结。  
@@ -254,12 +254,12 @@ python scripts/numpy_basics.py
 
 ### 第一步：补充 scripts/numpy_basics.py
 
-沿用 Day 1 的 X 与 w，完成下面五项；每项都打印结果和 shape。
+打开 `scripts/numpy_basics.py`，在文件中已有的 X、w 定义之后添加以下五组计算；X 为 `[[1.,2.],[3.,4.],[5.,6.]]`，w 为 `[[2.],[-1.]]`。每组都打印数值和 shape，不替换原来的数据定义。
 
 1. 取 X 的第一行、第一列、前两行；比较 `X[:, 0]` 与 `X[:, 0:1]` 的维度。
 2. 比较 `X.sum(axis=0)` 与 `X.sum(axis=1)`，解释沿哪条轴求和。
 3. 比较 `X @ w` 与 `X * w.T`：前者做矩阵乘法，后者做逐元素乘法与广播。
-4. 把 w 从 `(2,1)` 变成 `(2,)`，观察预测输出怎样变化。
+4. 新建 `w_flat = w.reshape(-1)`，将 `(2,1)` 变为 `(2,)`；分别打印 `X @ w` 与 `X @ w_flat` 的数值和 shape。原 w 保持列向量，供下面的类与矩阵公式对照使用。
 5. 把 Day 1 的 MSE 改写成 NumPy 版本，与普通 Python 版本对照。
 
 这里 axis 是轴的编号，从 0 开始。二维 X 的 axis=0 对应样本所在的行方向，`sum(axis=0)` 把各行相加，留下每列的和；axis=1 对应列方向，`sum(axis=1)` 把每行内部各列相加，留下每行的和。整数索引 `X[:,0]` 去掉列这一维，切片 `X[:,0:1]` 保留它。
@@ -279,7 +279,7 @@ python scripts/numpy_basics.py
 - `__init__(self, w, b)`：保存参数。
 - `predict(self, X)`：根据参数返回预测。
 
-在 `numpy_basics.py` 中用 `from linear_model import LinearModel` 导入，验证结果与之前的矩阵公式相同。两个脚本放在同一个 `scripts/` 目录中。
+在 `scripts/numpy_basics.py` 顶层写 `from linear_model import LinearModel`，在演示部分用已有的 X、w 和 b=0.5 创建 `model = LinearModel(w, b)`；分别计算 model.predict(X) 与 `X @ w + b`，核对两者 shape 都为 `(3,1)`，最大绝对差小于 `1e-10`。两个脚本放在同一个 `scripts/` 目录中。
 
 将脚本的演示调用放在 `if __name__ == "__main__":` 下，观察“直接运行”与“被另一个文件导入”的区别。Day 5 的训练脚本采用独立函数，方便 Day 6 检查梯度；本题用于理解状态、方法和模块。
 
@@ -691,7 +691,7 @@ epsilon = 1e-6
 
 ### 第二步：完成学习率对照
 
-创建 `scripts/learning_rate_comparison.py`，从 Day 5 脚本导入 `generate_data` 和 `train`。数据只生成一次，供三组实验共用。
+创建 `scripts/learning_rate_comparison.py`，顶层写 `from linear_regression_numpy import generate_data, train`。在本文件的 main() 中执行一次 `X, y, _, _ = generate_data(seed=42,n_samples=200)`；该函数返回四项，这里只使用前两项数据。随后把同一份 X、y 传给三次 train 调用；不修改 `scripts/linear_regression_numpy.py` 的训练函数。
 
 复用 Day 5 数据、初始参数、500 步预算，分别运行学习率：
 
@@ -745,7 +745,7 @@ experiments/basics/week1/figures/learning_rates.png
 3. 梯度与更新循环。
 4. 初始 / 最终 loss 和参数输出。
 
-按相同条件运行，比较结果。完成后用自己的话解释，仍需依赖参考的部分可在周末小结中简要说明。重写以训练核心流程为主，绘图可复用已有方法。
+在 `scripts/linear_regression_rewrite.py` 中自行定义 predict、mse、gradients、train；main() 用同一份数据调用这些函数并打印最终 w、b、loss。通过后分别运行 `python scripts/linear_regression_numpy.py` 和 `python scripts/linear_regression_rewrite.py`，按下一段的固定条件比较输出；绘图部分在本文件 main() 的训练调用之后，用返回的 loss_history 创建图，先创建父目录，再保存到 `experiments/basics/week1/figures/loss_curve2.png`。
 
 比较时固定同一份 X、y、零初始化、学习率 0.05 和 500 步，核对两份实现的最终 loss、w、b；相同 float64 条件下，最大绝对差以 `1e-8` 为自查目标。重写脚本自身必须执行并打印这些结果，已有脚本的运行成功不能代替这项检查。
 

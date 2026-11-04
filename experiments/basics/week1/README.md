@@ -101,7 +101,7 @@ b_new = b - learning_rate * db
 - 更新次数与日志编号容易错位；初始损失记为第 0 步，循环中实际更新次数使用 `step + 1`，每 50 次更新打印一次。
 - 输出目录不存在时保存图片会失败；保存前用 `mkdir(parents=True, exist_ok=True)` 创建目录，保存后关闭图。
 
-后续继续巩固：在有限参考下复述链式法则到矩阵梯度的推导，并独立重写预测、损失、梯度和更新循环。当前实验报告训练 MSE；独立训练、验证和测试划分按计划在第二周练习。
+后续巩固时，在 `scripts/linear_regression_rewrite.py` 独立写出 predict、mse、gradients、train，再在 main 中生成 seed=42、N=200 的数据，从零初始化并以 learning_rate=0.05 更新 500 次；实际运行脚本，将最终 w、b、loss 与 linear_regression_numpy.py 的同条件输出比较。当前实验报告训练 MSE；独立训练、验证和测试划分按计划在第二周练习。
 
 ## 环境与复现材料
 

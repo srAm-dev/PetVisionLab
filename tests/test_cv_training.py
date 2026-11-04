@@ -466,3 +466,250 @@ def test_cifar_rejects_existing_history_before_overwriting_outputs(tmp_path, mon
         )
     for path, content in existing_files.items():
         assert path.read_bytes() == content
+
+
+@pytest.mark.parametrize("model_name", ("cnn", "resnet18"))
+def test_cifar_ablation_uses_initial_state(tmp_path, monkeypatch, model_name):
+    import argparse
+    import csv
+    from pathlib import Path
+
+    import yaml
+    from torch.utils.data import DataLoader, TensorDataset
+    from petvision.models.cv.cnn import CNN
+    from petvision.models.cv.resnet import ResNet18
+    from petvision.utils.checkpoint import load_checkpoint, save_checkpoint
+
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import train_cv
+
+    if model_name == "cnn":
+        filename = "cnn_no_bn_cifar10.yaml"
+        source_model = CNN(use_bn=True).cpu()
+        source_config = {"name": "cnn", "num_classes": 10, "use_bn": True}
+        image_size = 32
+    else:
+        filename = "resnet_no_residual_cifar10.yaml"
+        source_model = ResNet18().cpu()
+        # 模拟 Day 4 尚未添加残差字段的初始状态。
+        source_config = {"name": "resnet18", "num_classes": 10}
+        image_size = 96
+    source_state = source_model.state_dict()
+    source_path = tmp_path / "source_initial.pt"
+    save_checkpoint({
+        "model_state": source_state, "model_config": source_config,
+        "seed": 42, "step": 0,
+    }, source_path)
+
+    cfg = yaml.safe_load((project_root / "configs/cv" / filename).read_text())
+    cfg["training"].update(device="cpu", epochs=1, init_checkpoint=str(source_path))
+    cfg["experiment_dir"] = str(tmp_path / "experiment")
+    cfg["output_dir"] = str(tmp_path / "weights")
+    split_path = tmp_path / "split.json"
+    split_path.write_text("{}", encoding="utf-8")
+    cfg["data"]["split_path"] = str(split_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(train_cv, "parse_args", lambda: argparse.Namespace(
+        config=config_path, smoke=False, overfit_samples=None,
+    ))
+    loader = DataLoader(TensorDataset(
+        torch.randn(2, 3, image_size, image_size), torch.tensor([0, 1]),
+    ), batch_size=2)
+    monkeypatch.setattr(train_cv, "build_cifar10_loaders", lambda **kwargs: (loader, loader, loader))
+    original_train = train_cv.train_one_epoch
+    train_calls = []
+    parameter_names = []
+
+    def check_initial_and_train(model, loader, optimizer, criterion, device):
+        train_calls.append(1)
+        parameter_names.extend(name for name, _ in model.named_parameters())
+        assert not optimizer.state, "应创建全新的优化器"
+        initial = load_checkpoint(tmp_path / "weights" / "initial.pt")
+        assert initial["step"] == 0 and initial["model_config"] == cfg["model"]
+        for name, value in model.state_dict().items():
+            assert torch.equal(value, source_state[name])
+            assert torch.equal(initial["model_state"][name], source_state[name])
+        return original_train(model, loader, optimizer, criterion, device)
+
+    monkeypatch.setattr(train_cv, "train_one_epoch", check_initial_and_train)
+    train_cv.main()
+
+    initial = load_checkpoint(tmp_path / "weights" / "initial.pt")
+    best = load_checkpoint(tmp_path / "weights" / "best.pt")
+    last = load_checkpoint(tmp_path / "weights" / "last.pt")
+    assert len(train_calls) == 1
+    assert best["epoch"] == last["epoch"] == 1
+    assert last["config"]["training"]["init_checkpoint"] == str(source_path)
+    assert any(not torch.equal(initial["model_state"][name], last["model_state"][name])
+               for name in parameter_names)
+    for name, value in initial["model_state"].items():
+        assert torch.equal(value, source_state[name])
+    expected_removed = {
+        f"{name}.{field}"
+        for name, module in source_model.named_modules()
+        if isinstance(module, torch.nn.BatchNorm2d) and model_name == "cnn"
+        for field in module.state_dict()
+    }
+    assert source_state.keys() - initial["model_state"].keys() == expected_removed
+    with (tmp_path / "experiment" / "history.csv").open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert len(rows) == 1 and rows[0]["epoch"] == "1"
+    assert yaml.safe_load((tmp_path / "experiment" / "config.yaml").read_text()) == cfg
+
+
+@pytest.mark.parametrize("problem", (
+    "step", "seed", "model_config", "extra_key", "missing_key",
+    "missing_bn_key", "shape", "dtype",
+))
+def test_initial_checkpoint_rejects_invalid_state(tmp_path, monkeypatch, problem):
+    import argparse
+    from pathlib import Path
+
+    import yaml
+    from petvision.models.cv.cnn import CNN
+    from petvision.utils.checkpoint import save_checkpoint
+
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import train_cv
+
+    checkpoint = {
+        "model_state": CNN().state_dict(),
+        "model_config": {"name": "cnn", "num_classes": 10, "use_bn": True},
+        "seed": 42, "step": 0,
+    }
+    if problem == "step":
+        checkpoint["step"] = 1
+    elif problem == "seed":
+        checkpoint["seed"] = 7
+    elif problem == "model_config":
+        checkpoint["model_config"]["num_classes"] = 11
+    elif problem == "extra_key":
+        checkpoint["model_state"]["unexpected.weight"] = torch.zeros(1)
+    elif problem == "missing_key":
+        del checkpoint["model_state"]["net.0.weight"]
+    elif problem == "missing_bn_key":
+        del checkpoint["model_state"]["net.1.running_mean"]
+    elif problem == "shape":
+        checkpoint["model_state"]["net.0.weight"] = torch.zeros(1)
+    elif problem == "dtype":
+        checkpoint["model_state"]["net.0.weight"] = checkpoint["model_state"]["net.0.weight"].double()
+    source_path = tmp_path / "source.pt"
+    save_checkpoint(checkpoint, source_path)
+    source_bytes = source_path.read_bytes()
+
+    cfg = yaml.safe_load((project_root / "configs/cv/cnn_no_bn_cifar10.yaml").read_text())
+    cfg["training"].update(device="cpu", init_checkpoint=str(source_path))
+    cfg["experiment_dir"] = str(tmp_path / "experiment")
+    cfg["output_dir"] = str(tmp_path / "weights")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(train_cv, "parse_args", lambda: argparse.Namespace(
+        config=config_path, smoke=False, overfit_samples=None,
+    ))
+    monkeypatch.setattr(train_cv, "build_cifar10_loaders", lambda **kwargs: ([], [], []))
+    monkeypatch.setattr(train_cv.torch.optim, "AdamW", lambda *args, **kwargs: pytest.fail(
+        "初始状态检查失败时不应创建优化器",
+    ))
+    with pytest.raises(ValueError):
+        train_cv.main()
+    assert source_path.read_bytes() == source_bytes
+    assert not (tmp_path / "experiment").exists()
+    assert not (tmp_path / "weights").exists()
+
+
+@pytest.mark.parametrize("filename", ("initial.pt", "best.pt", "last.pt"))
+def test_cifar_rejects_existing_checkpoint_before_overwriting_outputs(tmp_path, monkeypatch, filename):
+    from pathlib import Path
+
+    import yaml
+    from petvision.models.cv.cnn import CNN
+
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import train_cv
+    cfg = yaml.safe_load((project_root / "configs/cv/cnn_no_bn_cifar10.yaml").read_text())
+    cfg["training"].update(device="cpu", epochs=1)
+    cfg["experiment_dir"] = str(tmp_path / "experiment")
+    cfg["output_dir"] = str(tmp_path / "weights")
+    split_path = tmp_path / "split.json"
+    split_path.write_text("{}", encoding="utf-8")
+    cfg["data"]["split_path"] = str(split_path)
+    checkpoint_path = tmp_path / "weights" / filename
+    checkpoint_path.parent.mkdir()
+    checkpoint_path.write_bytes(b"existing checkpoint")
+    model = CNN(use_bn=False).cpu()
+    optimizer = torch.optim.AdamW(model.parameters())
+    with pytest.raises(FileExistsError, match=filename):
+        train_cv.run_training(
+            cfg, model, [], [], optimizer, torch.nn.CrossEntropyLoss(), torch.device("cpu"),
+        )
+    assert checkpoint_path.read_bytes() == b"existing checkpoint"
+    assert not (tmp_path / "experiment").exists()
+
+
+@pytest.mark.parametrize("saved_flag, requested_flag", (
+    (None, True), (False, False), (True, None), (None, False),
+))
+def test_evaluate_resnet_residual_config_compatibility(tmp_path, monkeypatch, capsys, saved_flag, requested_flag):
+    import argparse
+    import copy
+    import hashlib
+    from pathlib import Path
+
+    import yaml
+    from torch.utils.data import DataLoader, TensorDataset
+    from petvision.models.cv.resnet import BasicBlock, ResNet18
+    from petvision.utils.checkpoint import save_checkpoint
+
+    project_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(project_root / "scripts"))
+    import evaluate as evaluate_script
+
+    cfg = yaml.safe_load((project_root / "configs/cv/resnet_cifar10.yaml").read_text())
+    cfg["training"]["device"] = "cpu"
+    cfg["experiment_dir"] = str(tmp_path / "experiment")
+    cfg["output_dir"] = str(tmp_path / "weights")
+    split_path = tmp_path / "split.json"
+    split_path.write_text("{}", encoding="utf-8")
+    cfg["data"]["split_path"] = str(split_path)
+    cfg["model"].pop("use_residual", None)
+    if saved_flag is not None:
+        cfg["model"]["use_residual"] = saved_flag
+    saved_cfg = copy.deepcopy(cfg)
+    actual_flag = True if saved_flag is None else saved_flag
+    model = ResNet18(use_residual=actual_flag).cpu()
+    checkpoint_path = tmp_path / "model.pt"
+    save_checkpoint({
+        "model_state": model.state_dict(), "model_config": saved_cfg["model"],
+        "config": saved_cfg, "epoch": 1,
+        "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
+    }, checkpoint_path)
+    cfg["model"].pop("use_residual", None)
+    if requested_flag is not None:
+        cfg["model"]["use_residual"] = requested_flag
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(evaluate_script, "parse_args", lambda: argparse.Namespace(
+        config=config_path, checkpoint=checkpoint_path, split="val",
+    ))
+    loader = DataLoader(TensorDataset(torch.randn(2, 3, 96, 96), torch.tensor([0, 1])), batch_size=2)
+    monkeypatch.setattr(evaluate_script, "build_cifar10_loaders", lambda **kwargs: (loader, loader, loader))
+    original_evaluate = evaluate_script.evaluate
+
+    def check_model_and_evaluate(model, *args):
+        blocks = [module for module in model.modules() if isinstance(module, BasicBlock)]
+        assert len(blocks) == 8
+        assert all(block.use_residual is actual_flag for block in blocks)
+        return original_evaluate(model, *args)
+
+    monkeypatch.setattr(evaluate_script, "evaluate", check_model_and_evaluate)
+    if saved_flag is None and requested_flag is False:
+        with pytest.raises(ValueError, match="模型配置"):
+            evaluate_script.main()
+    else:
+        evaluate_script.main()
+        assert "'n_samples': 2" in capsys.readouterr().out
+    assert not (tmp_path / "experiment").exists()

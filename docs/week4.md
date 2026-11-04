@@ -1,6 +1,6 @@
 # 第四周逐日学习指南：手写 Attention 与 Transformer Encoder
 
-> 更新日期：2026-10-31<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-2)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：实现可复用多头 Attention、Mask、LayerNorm、FFN、位置编码和 Encoder，通过形状、归一化、梯度、未来隔离和官方参考对照。  
@@ -69,7 +69,7 @@ python -m pip check
 教学模块统一输入 `[B,T,C]`，起始 B=2、T=8、C=32、heads=4、head_dim=8、FFN hidden=128；要求 C 能被 heads 整除。本周结构以 [D2L Transformer](https://zh.d2l.ai/chapter_attention-mechanisms/transformer.html) 为主：Encoder 使用 post-LN，FFN 使用 ReLU，堆叠后直接返回最后一个 Block 的输出。参考检查统一关闭 dropout，并对齐全部权重、输入、eps 和 bias。
 
 <a id="block-conventions"></a>
-三种 Block 的职责按参考分开：本周 EncoderBlock 对应教材普通 Transformer 的 post-LN＋ReLU；第五周在 vit.py 定义教材 ViTBlock，使用 pre-LN＋GELU；第六周在 mini_gpt.py 定义 GPTBlock，按 nanoGPT 的 GPT-2 风格使用 pre-LN＋GELU 和因果注意力。复用 Attention、LayerNorm 与形状检查方法，各自的归一化顺序、dropout 位置和位置编码由对应模型负责。
+三种 Block 的职责按参考分开：本周 EncoderBlock 对应教材普通 Transformer 的 post-LN＋ReLU；第五周在 vit.py 定义教材 ViTBlock，使用 pre-LN＋GELU；第六周在 mini_gpt.py 定义 GPTBlock，按 nanoGPT 的 GPT-2 风格使用 pre-LN＋GELU 和因果注意力。后两周导入本周实现的 Attention 与 LayerNorm；各自的归一化顺序、dropout 位置和位置编码在对应模型文件中定义，并由各周列出的测试函数检查。
 
 LN 是 LayerNorm，FFN 是 Feed-Forward Network（前馈网络）。pre-LN 表示先归一化再进入 Attention/FFN，post-LN 表示在子层输出与残差相加之后归一化。`batch_first=True` 表示批次轴放第一位，采用 `[B,T,C]`；`norm_first=False` 对应本周的 post-LN，True 对应 pre-LN。dropout 是训练时随机置零部分元素的操作，dropout=0 表示关闭，避免随机性干扰数值对照。
 
@@ -255,9 +255,9 @@ def forward(self, x, attn_mask=None, key_padding_mask=None,
 <a id="reference-check"></a>
 #### 第三步：逐项复制到官方参考
 
-创建 `tests/test_attention.py`，顶层导入 pytest、torch 和自己模块中的 MultiHeadSelfAttention。先写 B=1/2、不同 T、非法头数和梯度检查，再把下面的官方参考对照放进独立 `test_` 函数。
+创建 `tests/test_attention.py`，顶层导入 pytest、torch 和自己模块中的 MultiHeadSelfAttention。新增 `test_attention_shapes_and_gradients`，固定 C=32、heads=4、dropout=0，对 B=1/2、T=1/8 的随机输入检查输出 `[B,T,C]` 和有限梯度；新增 `test_attention_invalid_heads`，在 pytest.raises(ValueError) 内创建 C=8、heads=3 的模块，检查不能整除时明确拒绝；新增 `test_attention_reference`，把下方权重映射、相同输入 / probe 的输出与梯度对照写入该函数。
 
-先在检查函数中创建两个独立对象；MultiHeadSelfAttention 从自己实现的 attention.py 导入：
+先在 `test_attention_reference` 中创建下面两个独立对象；MultiHeadSelfAttention 从自己实现的 attention.py 导入：
 
 ```python
 attention = MultiHeadSelfAttention(embed_dim=32, num_heads=4, dropout=0.0, bias=False).double()
@@ -284,7 +284,7 @@ bias=False 时四个投影的 bias 都为 None，只复制 weight；再用 bias=
 
 关闭 dropout，用同一输入分别前向；对两个输出使用相同标量目标再 backward，比较输入梯度和对应参数梯度。仅输出相近不能代替完整梯度检查。
 
-把这句话落实为一个检查函数，顺序固定如下：
+继续编写 `test_attention_reference`，在上述对象构造之后按以下顺序执行：
 
 1. 两个模块都转为 CPU float64，dropout=0，复制全部 Q/K/V 和 out_proj 的 weight，以及当前存在的 bias，清除两边已有梯度。
 2. 先生成一份数值 x，再分别用 `x.detach().clone().requires_grad_(True)` 创建 `x_custom、x_reference`。参考层调用 `reference(x_reference, x_reference, x_reference)`，取其返回的第一个元素作为输出。
@@ -345,7 +345,7 @@ python -m pytest tests/test_attention.py -q
 
 先把教材接口对应到本项目：教材 valid_lens=[2,3]、T=4 时，表示两条序列各自只有前 2、3 个有效 key，对应本项目 padding mask 的 `[[False,False,True,True],[False,False,False,True]]`。教材按 query 提供 1、2、…、T 的有效长度时，对应下方上三角 causal mask。本项目用 PyTorch 风格的布尔表表达同一屏蔽关系，保留现有 attn_mask / key_padding_mask 接口；这不要求更改注意力公式。
 
-今天继续修改 `src/petvision/models/transformer/attention.py` 的 forward，将 Mask 处理放在 softmax 之前；以下扰动、权重与异常检查添加到已有 `tests/test_attention.py`，保留 Day 2 的参考对照。
+修改 `src/petvision/models/transformer/attention.py` 的 `MultiHeadSelfAttention.forward`：在 scores 缩放之后、softmax 之前加入两个 Mask 的校验、OR 合并与 masked_fill。修改 `tests/test_attention.py`：保留 test_attention_shapes_and_gradients、test_attention_invalid_heads、test_attention_reference，按本节输入与断言新增下表列出的四个测试函数。
 
 本项目 True 表示屏蔽，T=4 时为：
 
@@ -381,16 +381,16 @@ weights = torch.softmax(scores, dim=-1)
 
 复制 x，仅改第 k+1 个及之后 token；两次使用同一个模型、eval、dropout=0。比较输出 `[:, :k+1]`，应在容差内一致。
 
-padding 检查同理，只改被屏蔽 key 的值，比较有效 query 输出。不要拿 padding query 的输出必须为 0 当作一般规则。
+在 `tests/test_attention.py` 的 `test_attention_padding_mask` 中，新建 dropout=0 的 eval 模块，复制同一份输入，仅对 key_padding_mask=True 的位置加固定扰动；分别传入相同 padding Mask，比较第一条序列前 2 个、第二条前 3 个有效 query 的输出，最大差小于 1e-6。padding query 的输出不要求为 0。
 
 先使用固定小例子 B=2、T=4、C=8、heads=2：
 
 | 检查 | 怎样修改输入 | 比较哪些输出 |
 | --- | --- | --- |
-| causal | clone x，将位置 2、3 加上固定扰动；k=1 | 两次输出的 `[:, :2]`，最大绝对差小于 `1e-6` |
-| padding | 第一条屏蔽 key 2、3，第二条只屏蔽 key 3；只改这些位置 | 分别比较第一条前 2 个、第二条前 3 个有效 query |
-| 合并 | 将上述 padding 与 causal 按 OR 合并 | 权重在合并屏蔽处为 0，其余行和为 1，输出有限 |
-| 全屏蔽 | 构造某个 query 没有有效 key 的输入 | 用 `pytest.raises(ValueError)` 检查约定的明确拒绝 |
+| causal：test_attention_causal_mask | clone x，将位置 2、3 加上固定扰动；k=1 | 两次输出的 `[:, :2]`，最大绝对差小于 `1e-6` |
+| padding：test_attention_padding_mask | 第一条屏蔽 key 2、3，第二条只屏蔽 key 3；只改这些位置 | 分别比较第一条前 2 个、第二条前 3 个有效 query |
+| 合并：test_attention_combined_masks | 将上述 padding 与 causal 按 OR 合并 | 权重在合并屏蔽处为 0，其余行和为 1，输出有限 |
+| 全屏蔽：test_attention_rejects_fully_masked_query | 构造某个 query 没有有效 key 的输入 | 用 `pytest.raises(ValueError)` 检查约定的明确拒绝 |
 
 每个检查使用同一模型、eval、dropout=0 和两份 clone 输入。需要比较权重时通过 return_weights 取 dropout 前权重，先将 Mask `expand_as(weights)`，再检查被屏蔽位置和每行和；合法例子确保每一行至少有一个有效 key。上表检查的是 Attention 本身，后面堆叠模块还要验证 Mask 传递。
 
@@ -444,7 +444,7 @@ python -m pytest tests/test_attention.py -q
 
 #### 第一步：手算一行 LayerNorm
 
-创建 `src/petvision/models/transformer/normalization.py`，顶层写 `import torch` 和 `from torch import nn`，定义继承 nn.Module 的 `LayerNorm(embed_dim, eps=1e-5)`，公式中的 C 即 embed_dim。再创建 `tests/test_layernorm.py`，导入 pytest、torch 和该类，将手算、常量输入及第二步的参考对照写成测试函数。
+创建 `src/petvision/models/transformer/normalization.py`，顶层写 `import torch` 和 `from torch import nn`，定义继承 nn.Module 的 `LayerNorm(embed_dim, eps=1e-5)`，公式中的 C 即 embed_dim。再创建 `tests/test_layernorm.py`，导入 pytest、torch 和该类，分别定义 `test_layernorm_known_values`、`test_layernorm_constant_input`、`test_layernorm_reference`，对应下方手算、常量输入和第二步的参考对照。
 
 输入 `[1,3]`，均值为 2，按 C 求平均的方差为 1；gamma=1、beta=0 时输出约为 `[-1,1]`，eps=1e-5 会使数值略有偏差。
 
@@ -468,7 +468,7 @@ y    = (x - mean) / sqrt(var + eps) * gamma + beta
 
 仅对归一化输出直接求和可能得到退化的零梯度例子，检查时要覆盖一般输入和一般目标。
 
-自写 gamma/beta 分别对应参考的 weight/bias；按[Day 2 的参考检查流程](#reference-check)创建独立输入并使用同一 probe，CPU float64 的输出和三项梯度最大绝对差均以 `1e-6` 为目标。常量输入时，gamma=1、beta=0 的输出应为 0；另外改动一个 token 的特征，只应改变该 token 的归一化输出，以此发现误沿 batch 或时间维统计的问题。
+在 `tests/test_layernorm.py` 的 `test_layernorm_reference` 中，将自写 gamma/beta 复制到 nn.LayerNorm 的 weight/bias，eps 都设为 1e-5；从同一个随机 Tensor 分别 clone 出 requires_grad=True 的独立输入，两边对输出与同一固定 probe 点乘求和后 backward。比较输出、输入梯度、gamma/weight 梯度及 beta/bias 梯度，CPU float64 的最大绝对差均小于 1e-6。常量输入时，gamma=1、beta=0 的输出应为 0；另外改动一个 token 的特征，只应改变该 token 的归一化输出，以此发现误沿 batch 或时间维统计的问题。
 
 #### 第三步：FFN 保留 token 数和通道出口
 
@@ -496,7 +496,7 @@ dropout 位置与教材对应：Attention 内对 softmax 权重做一次 dropout
 
 本周 LayerNorm 只沿最后 C 维，normalized_shape 对应 C 或 [C]；教材 AddNorm 的 `[3,4]` 小演示用于说明可归一化多个维度，不把其中的序列长度 3 写进实际 Encoder。
 
-创建 `tests/test_encoder.py`，导入 FeedForward 和 EncoderBlock。分别检查 FFN 形状、逐 token 独立性、Block 带 Mask 的前反向和参与参数的有限梯度。再用 dropout=0.1 检查 train/eval 标记及 eval 下重复输出一致；参考输出和梯度对照放在 Day 5 完成。
+创建 `tests/test_encoder.py`，导入 FeedForward 和 EncoderBlock。新增 `test_feedforward_token_independence`，检查 FFN 出口形状并只扰动一个 token，断言其他位置输出不变；新增 `test_encoderblock_forward_backward`，用 B=1/2 的随机输入和合法 Mask 检查形状及全部参与参数的有限梯度；新增 `test_encoderblock_train_eval`，以 dropout=0.1 检查子模块 training 标记随模式切换，并在 eval/no_grad 下对同一输入运行两次、断言输出一致。
 
 ### 运行与验收
 
@@ -537,7 +537,7 @@ python -m pytest tests/test_layernorm.py tests/test_encoder.py -q
 
 2. 按教材组装两层 post-LN Encoder：已嵌入的输入向量先乘 sqrt(C)，再加一次正弦位置编码并做位置 dropout，最后依次经过各 Block，直接返回末层输出。
 
-3. 扩展昨天的 `tests/test_encoder.py`，覆盖形状、梯度、Mask 传递、train/eval 模式和保存加载；未来隔离检查只在传入 causal mask 时要求成立。
+3. 修改 `tests/test_encoder.py`，保留已有 FFN / Block 测试，新增 test_positional_encoding_values、test_encoderblock_reference、test_encoder_stack、test_encoder_causal_mask、test_encoder_checkpoint_roundtrip，分别检查位置表、参考数值、堆叠、因果 Mask 传递和保存加载；各函数的输入与断言见下方第三、四步。
 
 4. 参考 nn.TransformerEncoderLayer 时使用 norm_first=False、ReLU、FFN=4C、eps=1e-5、dropout=0，并单独对齐教材 Attention 的无 bias 投影；先核对单 Block，再核对堆叠。
 
@@ -581,18 +581,18 @@ return x
 1. 先只创建 dropout=0 的位置编码模块，输入全零 `[2,8,32]`，确认输出与位置表前 8 行相同；再输入非零张量，确认做的是相加，输出仍为 `[2,8,32]`。
 2. 创建 depth=1 的 Encoder：注册位置编码和一个新 Block；forward 先按 sqrt(C) 缩放输入，再调用位置模块与 Block，把两个 Mask 参数原样传入，最后直接返回 Block 输出。
 3. 跑通单层形状和反向后，将构造改为按 depth 循环创建独立 Block 并放入 ModuleList，forward 按容器顺序逐层更新 x。不要重复引用同一个 Block。
-4. 分别用 T=1 和 T=8 运行 depth=2，确认形状不变、参数可反向；再用 Day 3 的后缀扰动检查完整 Encoder，而不是只检查第一层 Attention。
+4. 在 `tests/test_encoder.py::test_encoder_stack` 中分别用 T=1 和 T=8 运行 depth=2，断言输出保持 `[B,T,C]`、参与参数梯度有限；在 test_encoder_causal_mask 中复制 `[2,8,32]` 输入，只改位置 4–7，两次均传 causal Mask，断言完整 Encoder 输出的前 4 个位置不变。
 5. 最后再执行下一步的参考数值对照；若多层失败，先比较第一层出口，第一层正确后再排查第二层，避免在外层额外加一次归一化。
 
 EncoderBlock 负责自己的 Attention、ReLU FFN 和两次 post-LN；教学 Encoder 负责入口缩放、正弦位置编码与 Block 堆叠。第五周 ViT 和第六周 GPT 继续复用已验证的 Attention 与 LayerNorm，在各自模型文件定义符合目标参考的 Block。
 
 #### 第三步：先对齐一层，再对齐多层
 
-扩展 `tests/test_encoder.py`，导入 Encoder 和 SinusoidalPositionalEncoding；分别添加位置编码、单 Block 参考对照、两层堆叠、Mask 传递和保存加载测试，不覆盖昨天的 FFN / Block 检查。
+修改 `tests/test_encoder.py`，顶层新增 Encoder 和 SinusoidalPositionalEncoding 的导入，保留已有三个检查函数。新增 `test_positional_encoding_values` 检查位置 0 的偶 / 奇通道值、不同位置和 buffer；新增 `test_encoderblock_reference` 执行本节单块参数映射及输出 / 梯度比较；新增 `test_encoder_stack` 检查两层独立参数、T=1/8 的形状与反向；新增 `test_encoder_causal_mask` 执行下文前缀扰动；新增 `test_encoder_checkpoint_roundtrip(tmp_path)` 完成第四步保存加载。
 
 先建立官方参考 `nn.TransformerEncoderLayer(C, heads, dim_feedforward=ffn_hidden_dim, dropout=0.0, activation="relu", batch_first=True, norm_first=False, layer_norm_eps=1e-5, bias=True)`。bias=True 保留参考的 FFN bias 与 LayerNorm 偏移；再将 `reference.self_attn` 替换为同 C、heads、batch_first=True、dropout=0、bias=False 的 `nn.MultiheadAttention`，以对应教材的无 bias Attention。两边都转 CPU float64，先对齐单 Block，再检查两层组合。
 
-单 Block 的映射按模块列清楚：Attention 的 QKV/out_proj 对应 `reference.self_attn`，addnorm1.norm / addnorm2.norm 对应参考 norm1/norm2，FFN 两个 Linear 对应 linear1/linear2；gamma/beta 对应 weight/bias。先确认所有参数均有对应项，再沿用 Day 2 的相同 probe 检查输出、输入梯度与映射后的参数梯度，CPU float64 容差 `1e-6`。Attention 没有 bias 时不复制对应的 None 项；参考 Block 不包含入口 sqrt(C) 缩放和位置编码，这两项用同一位置表单独检查。堆叠末尾保持最后一个 post-LN Block 的输出。
+单 Block 的映射按模块列清楚：Attention 的 QKV/out_proj 对应 `reference.self_attn`，addnorm1.norm / addnorm2.norm 对应参考 norm1/norm2，FFN 两个 Linear 对应 linear1/linear2；gamma/beta 对应 weight/bias。在 test_encoderblock_reference 中先断言两边参数无遗漏且 shape 相同，再复制状态；两份相同数值的独立输入分别前向，对两个输出使用同一个固定随机 probe 点乘求和并各自 backward，逐项比较输出、输入梯度和映射后的参数梯度，CPU float64 最大绝对差小于 1e-6。Attention 没有 bias 时不复制对应的 None 项；参考 Block 不包含入口 sqrt(C) 缩放和位置编码，这两项用同一位置表单独检查。堆叠末尾保持最后一个 post-LN Block 的输出。
 
 检查不同 T 是否正常、输入输出是否保持 `[B,T,C]`，以及 Mask 是否真的传到每一层。默认双向 Encoder 不要求未来隔离；传 causal 时才检查。
 
@@ -600,7 +600,7 @@ EncoderBlock 负责自己的 Attention、ReLU FFN 和两次 post-LN；教学 Enc
 
 重建模型加载后比较固定输入；确认 state_dict 包含设计中需要保存的 buffer，位置长度和模型配置可以恢复。
 
-两层用 `ModuleList([EncoderBlock(...), EncoderBlock(...)])` 分别创建，检查对应参数不是同一个对象，避免 `[block] * 2` 意外共享权重。把 Day 3 的前缀扰动检查用于完整 Encoder，确认 causal Mask 经过每一层；再以 dropout=0.1 切 train/eval，检查子层 training 标记随之改变，eval 下固定输入重复输出一致。保存加载使用第二周的 tmp_path 方法，加载后核对位置 buffer 和固定输入输出，最大差小于 `1e-6`。
+两层用 `ModuleList([EncoderBlock(...), EncoderBlock(...)])` 分别创建，检查对应参数不是同一个对象，避免 `[block] * 2` 意外共享权重。在 `tests/test_encoder.py` 的 `test_encoder_causal_mask` 中创建 depth=2、dropout=0 的 eval Encoder；复制 `[2,8,32]` 输入，仅扰动位置 4–7，两次前向均传同一个严格上三角 Mask，断言输出前 4 个位置最大差小于 1e-6。在 test_encoder_stack 中另建 dropout=0.1 的模型检查 train/eval 标记及 eval 重复输出。在 `test_encoder_checkpoint_roundtrip(tmp_path)` 中，用 torch.save 将 model.state_dict() 写到 tmp_path 下，新建同配置模型并加载；两边 eval/no_grad，比较 pe buffer 相等以及同一固定输入的输出最大差小于 1e-6。
 
 ### 运行与验收
 

@@ -153,29 +153,80 @@ def test_basicblock():
                     f"{name} 梯度不有限"
                 )
 
+def test_basicblock_residual_switch():
+    # 同尺寸普通块，以及同时改变通道和空间尺寸的投影块。
+    cases = [
+        (64, 1, False, (64, 32, 32)),
+        (128, 2, True, (128, 16, 16)),
+    ]
+
+    for batch_size in (1, 2):
+        for out_channels, stride, use_1x1conv, expected_shape in cases:
+            for use_residual in (True, False):
+                # 每组重新创建模型，避免旧梯度干扰关闭分支的检查。
+                model = BasicBlock(
+                    in_channels=64,
+                    out_channels=out_channels,
+                    stride=stride,
+                    use_1x1conv=use_1x1conv,
+                    use_residual=use_residual,
+                ).cpu().train()
+
+                # 关闭残差只跳过计算，仍保留原来的投影模块。
+                if use_1x1conv:
+                    assert model.shortcut is not None
+                else:
+                    assert model.shortcut is None
+
+                images = torch.randn(batch_size, 64, 32, 32)
+                outputs = model(images)
+                assert outputs.shape == (batch_size, *expected_shape)
+                assert torch.isfinite(outputs).all().item()
+
+                loss = outputs.square().mean()
+                assert torch.isfinite(loss).item()
+                loss.backward()
+
+                for name, parameter in model.named_parameters():
+                    if name.startswith("shortcut.") and not use_residual:
+                        assert parameter.grad is None, (
+                            f"残差关闭时 {name} 不应参与反向计算"
+                        )
+                    else:
+                        assert parameter.grad is not None, f"{name} 没有梯度"
+                        assert torch.isfinite(parameter.grad).all().item(), (
+                            f"{name} 梯度不有限"
+                        )
+
 def test_basicblock_identity_shortcut():
-    model = BasicBlock(
-        in_channels=64,
-        out_channels=64,
-        stride=1,
-        use_1x1conv=False,
-    ).cpu().eval()
+    for use_residual in (True, False):
+        # 每轮新建模型，显式关闭投影，使用恒等旁路。
+        model = BasicBlock(
+            in_channels=64,
+            out_channels=64,
+            stride=1,
+            use_1x1conv=False,
+            use_residual=use_residual,
+        ).cpu().eval()
 
-    images = torch.ones(2, 64, 32, 32)
+        images = torch.ones(2, 64, 32, 32)
 
-    with torch.no_grad():
-        # 将主分支的卷积输出置零。
-        for conv in (model.conv1, model.conv2):
-            conv.weight.zero_()
-            if conv.bias is not None:
-                conv.bias.zero_()
+        with torch.no_grad():
+            # 清零卷积和 BN 偏移，使主分支输出为 0。
+            # 新建 BN 的运行均值 / 方差保持初始的 0 / 1。
+            for conv in (model.conv1, model.conv2):
+                conv.weight.zero_()
+                if conv.bias is not None:
+                    conv.bias.zero_()
 
-        model.bn1.bias.zero_()
-        model.bn2.bias.zero_()
+            model.bn1.bias.zero_()
+            model.bn2.bias.zero_()
 
-        outputs = model(images)
+            outputs = model(images)
 
-    torch.testing.assert_close(outputs, images)
+        # 开启时 ReLU(0 + 1) = 1；关闭时 ReLU(0) = 0。
+        expected = images if use_residual else torch.zeros_like(images)
+        torch.testing.assert_close(outputs, expected)
 
 def test_resnet_forward_backward():
     for batch_size in (1, 2):
@@ -230,3 +281,33 @@ def test_resnet_stage_shapes():
                 f"第 {index} 层形状错误："
                 f"预期 {expected_shapes[index]}，实际 {shape}"
             )
+
+def test_resnet_residual_switch():
+    model_on = ResNet18(use_residual=True).cpu().eval()
+    model_off = ResNet18(use_residual=False).cpu().eval()
+
+    # 开关只改变计算路径，不改变参数和 buffer 的键及形状。
+    state_on = model_on.state_dict()
+    state_off = model_off.state_dict()
+    assert state_on.keys() == state_off.keys(), "残差开关改变了模型状态键"
+    for name in state_on:
+        assert state_on[name].shape == state_off[name].shape, (
+            f"残差开关改变了 {name} 的形状"
+        )
+
+    # 使用内存中的状态检查严格加载，不依赖正式训练的 checkpoint。
+    model_off.load_state_dict(state_on, strict=True)
+    images = torch.randn(2, 3, 96, 96)
+
+    for use_residual, model in ((True, model_on), (False, model_off)):
+        blocks = [module for module in model.modules() if isinstance(module, BasicBlock)]
+        assert len(blocks) == 8, "ResNet18 应包含八个 BasicBlock"
+        for index, block in enumerate(blocks):
+            assert block.use_residual is use_residual, (
+                f"第 {index} 个 BasicBlock 未接收到 use_residual={use_residual}"
+            )
+
+        with torch.no_grad():
+            logits = model(images)
+        assert logits.shape == (2, 10)
+        assert torch.isfinite(logits).all().item()

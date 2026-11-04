@@ -1,6 +1,6 @@
 # 第八周逐日学习指南：CLIP、LLM / VLM 推理与八周总结
 
-> 更新日期：2026-10-31<br>
+> 更新日期：2026-11-01<br>
 > 对应计划：[总学习计划](StudyPlan.md#stage-4)  
 > 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
 > 本周成果：本地完成 CLIP 零样本任务，云端运行小型 LLM 与 VLM，保存至少 20 张图×每图2问的完整结果、人工判定和结构图，整理最终报告。  
@@ -180,9 +180,9 @@ conda list --explicit > experiments/vlm_qa/week8/environments/local/conda-explic
 python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.txt
 ```
 
-创建 `experiments/vlm_qa/week8/model_manifest.json`，以 clip、llm、vlm 为键分别保存三个条目，记录模型类、SHA、processor、精度和对应环境目录。先加入 CLIP；后两天先读取已有 JSON、只更新各自条目再写回，避免保存 LLM 时覆盖 CLIP 记录。采用第二周的 JSON 读写方式，父目录先创建，不写入尚未运行模型的虚构结果。
+在 `scripts/run_clip.py::main()` 加载模型并核对 revision 后，创建或更新 `experiments/vlm_qa/week8/model_manifest.json`：路径已存在时用 UTF-8 读取并 json.load，否则从空字典开始；将本次模型类、SHA、processor、精度和环境目录写入 manifest["clip"]，先创建父目录，再以 UTF-8 的 w 模式 json.dump(manifest,file,ensure_ascii=False,indent=2)。后两天在 infer_llm.py / infer_vlm.py 的 main() 中，分别只更新 llm / vlm 键并保留其他条目；不写入尚未运行模型的虚构结果。
 
-三个推理脚本都沿用第二周的 argparse / yaml.safe_load：顶层导入依赖，在 main 中读取 --config 为 cfg，再依次创建模型、准备输入、推理和保存。下面的配置 id / revision 用于 from_pretrained，device / dtype 需要先变为 Torch 对象，output_file 只传给结果写入逻辑，不能把 YAML 整体展开给模型构造函数。
+先在 `scripts/run_clip.py` 顶层导入 argparse、yaml 和 pathlib.Path；定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加必填的 --config（type=Path）。main() 调用 parse_args，以 UTF-8 打开 args.config，用 yaml.safe_load 得到 cfg，再依次准备输入、创建模型、推理和保存；文件末尾添加入口保护。Day 2 的 infer_llm.py 和 Day 3 的 infer_vlm.py 分别建立相同配置入口，额外参数在各天列出。下面的配置 id / revision 用于 from_pretrained，device / dtype 需要先变为 Torch 对象，output_file 只传给结果写入逻辑，不能把 YAML 整体展开给模型构造函数。
 
 #### 第二步：先固定图片、类别与模板
 
@@ -264,11 +264,11 @@ print(outputs.image_embeds.shape, outputs.text_embeds.shape, scores.shape)
 
 clip_results.csv 每张一行，含 image_id、真实类、预测类、分数和模型标识；整体 accuracy 从全部 200 张统计。报告预训练零样本条件，与第五周从零训练结果分开。
 
-类别得分以 `score_airplane ... score_truck` 十列按 classes 顺序保存，并带 score_type，明确是 cosine_similarity 还是应用 logit scale 后的 clip_logits；预测和 accuracy 使用同一套得分。用第一周 csv.DictWriter 写表，再读回核对 200 个 image_id 恰好等于固定子集，正确数/200 与终端 accuracy 一致。
+类别得分以 `score_airplane ... score_truck` 十列按 classes 顺序保存，并带 score_type，明确是 cosine_similarity 还是应用 logit scale 后的 clip_logits；预测和 accuracy 使用同一套得分。在 `scripts/run_clip.py::main()` 的全部图片推理完成后，用 csv.DictWriter 将每张图片的实际记录写到 cfg["output_file"]，先 writeheader 再 writerows；文件关闭后用 csv.DictReader 读回，核对 200 个 image_id 与固定子集相同，正确数/200 与终端 accuracy 一致。
 
 构造 CSV 行时，image_id 使用原始 CIFAR 全局索引，真实类取同一索引的 targets，预测类按配置 classes 顺序解释；先断言配置 classes 等于数据集 classes，避免同名类别顺序错位。每行加入 model_id、revision、prompt_template 和 config 标识，model_manifest 的 clip 条目保留本次完整配置。
 
-从这次错误预测中最多选 8 张原始 PIL 图片，用第二周 subplots 方法标注真实类 / 预测类，保存到 `experiments/vlm_qa/week8/figures/clip_mistakes.png`。直接显示原图，不对 PIL 再逆归一化；没有错误时在 README 记录 0 个样例。样例仅用于解释，accuracy 始终从完整 200 张计算。
+在 `scripts/run_clip.py::main()` 完成完整 accuracy 统计后，按固定子集顺序选取最多 8 条预测错误的记录；用每条 image_id 取原始 PIL 图片，调用 plt.subplots 建立子图，逐张 imshow，并在标题标注真实类 / 预测类。先创建父目录，再 savefig 到 `experiments/vlm_qa/week8/figures/clip_mistakes.png`，保存后关闭 figure。直接显示原图，不对 PIL 再逆归一化；没有错误时在 README 记录 0 个样例。样例仅用于解释，accuracy 始终从完整 200 张计算。
 
 ### 运行与验收
 
@@ -360,7 +360,7 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/cloud/pip-freeze.tx
 <a id="llm-inference"></a>
 #### 第二步：先创建配置，再加载 LLM 和 tokenizer
 
-创建 `scripts/infer_llm.py`，沿用 Day 1 的 `--config` 参数解析、yaml.safe_load、main 与入口保护；后面的对象创建和五个 prompt 推理都接在该 main 中。再创建 `configs/llm/llm_inference.yaml`，按 Day 1 的 SHA 查询步骤固定本模型 revision。下面是首次配置模板，null 要在加载前替换：
+创建 `scripts/infer_llm.py`，定义 parse_args(argv=None) 接收必填 Path 类型的 --config；main() 读取 args.config，调用 yaml.safe_load 得到 cfg，随后加载对象并遍历五个 prompt，文件末尾添加入口保护。创建 `configs/llm/llm_inference.yaml`；首次用 `HfApi().model_info("HuggingFaceTB/SmolLM2-360M-Instruct").sha` 查询完整 SHA，填入 model.revision，后续模型和 tokenizer 均传入这个固定 revision。下面是首次配置模板，null 要在加载前替换：
 
 ```yaml
 model:
@@ -382,7 +382,7 @@ inference:
 output_file: experiments/vlm_qa/week8/llm_outputs.jsonl
 ```
 
-在 infer_llm.py 顶层导入 torch、AutoTokenizer、AutoModelForCausalLM，在 main 读出 cfg 后执行。device / dtype 的转换沿用 Day 1；这里云端配置明确使用 cuda，必须先通过环境检查：
+在 infer_llm.py 顶层导入 torch、AutoTokenizer、AutoModelForCausalLM，在 main 读出 cfg 后执行。main() 将 cfg["inference"]["device"] 交给 torch.device，并将配置的 float32 / float16 / bfloat16 字符串按下方字典转为 Torch dtype；这里云端配置明确使用 cuda，必须先通过环境检查：
 
 ```python
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -456,11 +456,11 @@ print("new token count:", new_ids.shape[-1])
 print(answer)
 ```
 
-核对 `sequences.shape[-1] == input_length + new_ids.shape[-1]`，新增数量不超过 max_new_tokens；提前 EOS 可以少于 128。保存原 messages、rendered_prompt、输入/新增 ID 和 answer；五个 prompt 各自重新构造消息，按第六周 JSONL 方法写五条正式结果。
+核对 `sequences.shape[-1] == input_length + new_ids.shape[-1]`，新增数量不超过 max_new_tokens；提前 EOS 可以少于 128。保存原 messages、rendered_prompt、输入/新增 ID 和 answer；在 `scripts/infer_llm.py::main()` 的五题循环内，每题重新建立 messages，构造当前题的 record；创建 output_file 的父目录，以 UTF-8 的 a 模式打开文件，用 json.dumps(record,ensure_ascii=False) 写一条 JSON 对象并追加一个换行符。
 
 写入路径使用 cfg["output_file"]，本题为 `experiments/vlm_qa/week8/llm_outputs.jsonl`。为本次完整运行生成一个 run_id，五条结果共用该标识；若追加保存多次运行，检查时先按 run_id 筛选本次五条，不能把暖机或重跑记录当成新增题目。
 
-顶层导入 `from uuid import uuid4`，在正式五题循环之前生成一次 `run_id = uuid4().hex`；不要每题重新生成。给每题稳定的 prompt_id（如 llm_q1..llm_q5），record 保存 run_id、prompt_id、messages、rendered_prompt、input_ids、new_ids、raw_answer、model_id、revision、实际 inference 配置和资源测量值，再按第六周方法追加一行。Tensor 先转为 CPU 列表，device / dtype 转为字符串，JSON 不直接序列化 Torch 对象。model_manifest 的 llm 条目保存完整 cfg，输出记录中的 revision 与该条目一致。
+顶层导入 `from uuid import uuid4`，在正式五题循环之前生成一次 `run_id = uuid4().hex`；不要每题重新生成。给每题稳定的 prompt_id（如 llm_q1..llm_q5），record 保存 run_id、prompt_id、messages、rendered_prompt、input_ids、new_ids、raw_answer、model_id、revision、实际 inference 配置和资源测量值，再在当前题循环内以 UTF-8 的 a 模式写入 json.dumps(record,ensure_ascii=False) 并追加一个换行符。Tensor 先转为 CPU 列表，device / dtype 转为字符串，JSON 不直接序列化 Torch 对象。model_manifest 的 llm 条目保存完整 cfg，输出记录中的 revision 与该条目一致。
 
 #### 第五步：填写可重跑的模型记录
 
@@ -734,7 +734,7 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 
 #### 第二步：一次生成保留全部原始结果
 
-修改已有 `scripts/infer_vlm.py`，添加 `--questions`（Path），读取该问题文件及 cfg["data"]["images_manifest"]。逐题通过 image_id 取得图片路径，复用 Day 3 已通过检查的单图推理函数；按 Day 3 第四步的互斥规则区分单图和批量模式。正式输出使用 cfg["output_file"]，本题为 `experiments/vlm_qa/week8/vlm_outputs.jsonl`，按第六周 JSONL 方法创建父目录并追加每题记录。
+修改已有 `scripts/infer_vlm.py`，添加 `--questions`（Path），读取该问题文件及 cfg["data"]["images_manifest"]。在本文件 main() 中，为 --questions 增加批量分支：单图分支要求同时提供 --image、--question、--smoke；批量分支要求 --questions，拒绝同时出现上述单图参数。逐题通过 image_id 取得图片路径，调用已有 `infer_one(model,processor,image_path,question,device,dtype,generation_config)`；generation_config 取 cfg["inference"]。正式输出使用 cfg["output_file"]，本题为 `experiments/vlm_qa/week8/vlm_outputs.jsonl`；创建父目录后，以 UTF-8 的 a 模式将每题 record 的 json.dumps 结果和一个换行符写入。
 
 每题独立构造上下文，不把前一道题的答案喂给下一道。结果记录 qid、image_id、raw_answer、模型版本、设置、耗时、峰值显存和 status。
 
@@ -750,7 +750,7 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 
 循环中每题先建立含 run_id、qid、image_id 的记录，再在 try 中读取图片和生成；except 中写 status=error、raw_answer=None（序列化为 JSON null）和实际错误信息，最后将成功或失败记录统一追加一次。完整运行后，以当前 run_id 筛选记录检查每个 qid 恰好一条；重跑保留新 run_id 或单独输出文件，统计时明确选择一轮。
 
-run_id 沿用 Day 2 的 uuid4 写法，在批量循环开始前生成一次。传给 infer_one 的 question 只取问题文本；reference / criterion 留给人工判定，不拼入模型输入。记录同时保留问题文本、图片 hash、实际模型 revision、生成参数、新增 IDs 和资源字段，使回答能对应到本次输入。成功状态写 ok，失败状态写 error；本步骤的 try/except 处理实际抛出的错误，尚未实现的强制超时不要写成已有能力。
+在 `scripts/infer_vlm.py` 顶层导入 `from uuid import uuid4`；main() 在批量循环之前执行一次 `run_id = uuid4().hex`，循环内所有成功 / 失败记录都使用这一个值。传给 infer_one 的 question 只取问题文本；reference / criterion 留给人工判定，不拼入模型输入。记录同时保留问题文本、图片 hash、实际模型 revision、生成参数、新增 IDs 和资源字段，使回答能对应到本次输入。成功状态写 ok，失败状态写 error；本步骤的 try/except 处理实际抛出的错误，尚未实现的强制超时不要写成已有能力。
 
 #### 第三步：按预先标准人工判定
 

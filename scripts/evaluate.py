@@ -71,7 +71,15 @@ def main():
     checkpoint = load_checkpoint(args.checkpoint)
     saved_cfg = checkpoint["config"]
     data_cfg = cfg["data"]
-    if cfg["model"] != checkpoint["model_config"]:
+    requested_model_cfg = cfg["model"].copy()
+    saved_model_cfg = checkpoint["model_config"].copy()
+    # Day 4 的 ResNet 配置未写开关，语义等同于显式 use_residual=True。
+    for model_config in (requested_model_cfg, saved_model_cfg):
+        if model_config["name"] == "resnet18":
+            model_config.setdefault("use_residual", True)
+            if type(model_config["use_residual"]) is not bool:
+                raise ValueError("model.use_residual 必须是布尔值")
+    if requested_model_cfg != saved_model_cfg:
         raise ValueError("模型配置与 checkpoint 不一致")
     for field in ("name", "validation_size", "normalize"):
         if data_cfg[field] != saved_cfg["data"][field]:
@@ -106,6 +114,7 @@ def main():
     elif model_cfg["name"]=='resnet18':
         model = ResNet18(
             num_classes=model_cfg["num_classes"],
+            use_residual=model_cfg.get("use_residual", True),
         )
     else:
         raise ValueError(f"不支持的模型类型:{model_cfg['name']}")

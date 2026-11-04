@@ -1,6 +1,7 @@
 model:
   name: resnet18
   num_classes: 10
+  use_residual: true
 data:
   name: cifar10
   root: datasets/raw
