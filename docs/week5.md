@@ -1,24 +1,22 @@
-# 第五周逐日学习指南：小型 Vision Transformer 与视觉模型比较
+# 第五周：小型 Vision Transformer 与视觉模型比较
 
-> 更新日期：2026-11-01<br>
-> 对应计划：[总学习计划](StudyPlan.md#stage-2)  
-> 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
-> 本周成果：复用 Attention 与 LayerNorm，按 D2L ViTBlock 组装 ViT，完成 Patch=4/8 对照，并在配置冻结后统一测试 CNN、ResNet 和 ViT，形成带局限说明的视觉报告。<br>
-> 环境：本地 Conda `petvision`、RTX 4060；沿用 PyTorch、Matplotlib、PyYAML、pytest。首轮 FP32，小模型和 batch=64 起步。
+把图片转成 Patch token，组装小型 ViT，完成 Patch=4/8 对照。随后冻结六个视觉变体，用保留的测试集统一评估。
 
-## 怎么使用这份指南
+对应[总计划第 5 周](StudyPlan.md#week-5)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-先确认[上一周指南](week4.md)的基础关卡已通过。第四周 Attention / Mask / LayerNorm 检查需通过；第三周的 CIFAR 固定划分、四组配置和 best checkpoint 应能复用。
+环境：本地 Conda `petvision`、RTX 4060；沿用 PyTorch、Matplotlib、PyYAML、pytest。首轮 FP32，小模型和 batch=64 起步。
 
-本指南按学习日写出环境准备、文件创建、操作步骤、运行命令和自查方法，跟做时从当天内容顺序往下读即可。[本周 README](../experiments/vit_patch_size/week5/README.md) 保存实际环境、复现命令索引、结果链接和周总结。源码、配置、数据与结果按学习日逐步创建；下面的命令在完成相应实现后执行，代码由你亲手完成。
+## 开始前
 
-每天按“读指定部分 → 写代码 → 运行检查 → 解释结果”执行。检查通过后再扩大数据或训练预算；日常通过代码、输出和解释验收，周末集中更新本周 README。学习时间包含机动时间；训练等待与阅读重叠时只计一次。
+Attention、Mask、LayerNorm 检查通过；第三周四组配置、best 和同一份 CIFAR 划分可用。
 
-文件路径均相对于项目根目录；可复用源码放在 `src/petvision/`。新增源码子目录时，在每层包目录放入空的 `__init__.py`；已有目录和文件继续修改，保留此前通过检查的内容。`scripts/` 放运行入口，`tests/` 放检查，结果由脚本运行后生成。
+按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vit_patch_size/week5/README.md)。
 
-## 本周目录蓝图
+更新日期：2026-11-06。
 
-以下为本周逐步形成的文件，注释标明创建或修改时间。`README.md` 已提供；其余文件和结果在执行对应任务时产生。
+## 本周文件
+
+按注释中的学习日逐步创建或修改文件；已有文件继续使用，结果在运行后保存。
 
 ```text
 PetVisionLab/
@@ -40,7 +38,7 @@ PetVisionLab/
     └── {best,last}.pt                     # 实际训练生成
 ```
 
-## 开始前：激活环境并检查已有模块
+## 环境检查
 
 以下命令从项目根目录执行，每个学习日先激活同一个环境：
 
@@ -50,7 +48,7 @@ python -c "import sys, torch, torchvision, yaml, pytest, petvision; print(sys.ex
 python -m pip check
 ```
 
-解释器应位于 Conda 的 `petvision` 环境，`petvision.__file__` 应指向当前仓库的 `src/petvision/`。若出现 `No module named petvision`，先确认第二周已建立 `pyproject.toml` 和包目录，再在根目录执行 `python -m pip install -e . --no-deps`；若缺少 torch 或 CUDA 不可用，按[第二周 Day 1 的安装与排错步骤](week2.md#environment)逐项核对。
+确认解释器属于 `petvision`，`petvision.__file__` 指向当前仓库的 `src/petvision/`。导入失败时先在根目录运行 `python -m pip install -e . --no-deps`；依赖或 CUDA 问题按[第二周环境排查](week2.md#environment)处理。
 
 复用第三周 CIFAR-10 固定划分与第四周的手写 Attention、LayerNorm；ViTBlock 按本周教材步骤组织。本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
 
@@ -75,23 +73,22 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 
 这里“相同训练预算”具体指相同 epoch、batch 与样本数，并不表示相同计算量或耗时。每头 Attention 分数矩阵从 65×65 变为 17×17，元素数约相差 14.6 倍；整个模型还包含投影、FFN 等计算，不能据此断言训练就快 14.6 倍。报告应同时看验证指标、参数量和实测时间；某个 Patch 更优是本次设置下的观察，不是验收必须得到的结论。
 
-## 六天总览
+## 六天安排
 
-| 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
-| --- | --- | --- | --- | --- |
-| Day 1 | Patch Embedding 与位置形状 | 4h | 1h | 两种 Patch 的可检查实现 |
-| Day 2 | 按教材 ViTBlock 组装 ViT | 4h | 1h | 可训练 ViT 与小批过拟合 |
-| Day 3 | Patch=4/8 正式对照 | 4h | 1h | 两个训练结果与曲线 |
-| Day 4 | 统一指标与冻结视觉配置 | 4h | 1h | 验证对照表和统一评估函数 |
-| Day 5 | 统一 CIFAR-10 测试与错误分析 | 4h | 1h | 六个变体的最终视觉结果表 |
-| Day 6 | 视觉报告与核心流程重写 | 4h | 1h | 分类比较报告及可复现材料 |
-| Day 7 | 休息 | 0h | 0h | — |
-| 合计 | — | 24h | 6h | 30h |
+| 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
+| --- | --- | --- |
+| [Day 1](#day-1) | 创建 `src/petvision/models/cv/vit.py`、`tests/test_vit.py` | 32×32 图片得到 64/16 个 Patch，含 CLS 长度 65/17 |
+| [Day 2](#day-2) | 完成 ViTBlock/ViT，创建 P4 配置，扩展训练与评估入口 | CLS、位置参数有梯度；保存加载与 64 样本拟合通过 |
+| [Day 3](#day-3) | 创建 P8 配置，分别训练两种 Patch | 独立保存配置和 best/last；曲线、参数量与资源记录齐全 |
+| [Day 4](#day-4) | 创建 `evaluation/classification.py`，扩展 `scripts/evaluate.py` | Macro-F1 小例子正确；六个配置和 best 按验证结果冻结 |
+| [Day 5](#day-5) | 逐个评估冻结 best，保存 `visual_test_results.csv` | 每组完整测试 10000 条；指标、混淆矩阵与样例对应 |
+| [Day 6](#day-6) | 更新本周 README，重写 Patch 到分类的连接 | 三类内部对照有证据；跨模型比较说明尺寸和预算差异 |
 
 <a id="day-1"></a>
+
 ## Day 1：Patch Embedding 与位置形状
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -99,26 +96,9 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 | [ViT 原论文](https://arxiv.org/abs/2010.11929) / [torchvision ViT 源码](https://docs.pytorch.org/vision/main/_modules/torchvision/models/vision_transformer.html)（实现后选读） | 对照 Patch、CLS 与位置嵌入的共同结构 | 区分参考版本的初始化与 dropout 差异 |
 | [F.unfold（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.nn.functional.unfold.html) | kernel_size、stride、输出的 Patch 维度 | 与 Conv 投影做独立数值对照 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读 ViT 结构并手算尺寸 |
-| 2h | 实现 Patch 投影与顺序检查 |
-| 1h | 检查 Patch=4/8 和非法尺寸 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `src/petvision/models/cv/vit.py` 的 PatchEmbedding，使用 Conv2d(kernel_size=P,stride=P) 后 flatten 空间维并转置到 `[B,N,C]`，或显式展开后 Linear，明确选用哪一种。
-
-2. 用含位置编号的 4×4 小图手算 P=2 的四个 Patch 顺序；若使用 Conv 形式，对齐权重到显式 unfold 版本验证。
-
-3. 创建 `tests/test_vit.py`，检查 32×32 的 P=4/8 分别得到 N=64/16；H/W 不能被 P 整除时明确报错。
-
-4. 添加可学习 CLS `[1,1,C]` 与位置嵌入 `[1,N+1,C]`，CLS 按 batch 扩展；位置长度不匹配时不要静默截断。
-
-### 分步操作与自查
+CLS 参数的原始形状为 `[1,1,C]`，位置参数为 `[1,N+1,C]`；拼接时仅扩展 batch 维。
 
 #### 第一步：把 Patch 数与每个 Patch 的维度分开
 
@@ -186,7 +166,7 @@ CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训
 
 在 `tests/test_vit.py` 新增 `test_vit_token_parameters`：创建 ViT 后只调用 model.patch_embed，手动将 model.cls_token 扩展到 batch、与 Patch 拼接，再加 model.position_embedding；分别核对这三个中间张量的 shape，以及 cls_token / position_embedding 出现在 named_parameters 和 state_dict 中。本函数在本日不调用尚未完成的 ViT.forward。构造 ViT 时先检查 image_size 能被正整数 patch_size 整除；完整 forward 还要检查输入 H、W 均等于配置 image_size。仅比较 token 数不能识别例如 16×64 与 32×32 这类同数量、不同位置网格的输入。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_vit.py -q
@@ -199,9 +179,10 @@ python -m pytest tests/test_vit.py -q
 - [ ] 形状检查支持 batch=1 和 batch>1。
 
 <a id="day-2"></a>
+
 ## Day 2：按教材 ViTBlock 组装 ViT
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -210,29 +191,10 @@ python -m pytest tests/test_vit.py -q
 | [Python 计时（官方中文）](https://docs.python.org/zh-cn/3.12/library/time.html#time.perf_counter)、[CUDA 同步（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.cuda.synchronize.html) | perf_counter、GPU 异步与同步；显存接口按下方说明使用 | 记录小模型真实耗时与峰值显存 |
 | [重置显存峰值](https://docs.pytorch.org/docs/stable/generated/torch.cuda.memory.reset_peak_memory_stats.html)、[读取分配峰值](https://docs.pytorch.org/docs/stable/generated/torch.cuda.memory.max_memory_allocated.html)（官方英文） | reset_peak_memory_stats、max_memory_allocated 与字节单位 | 明确峰值的统计起点和范围 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 核对教材 ViTBlock 与基础模块接口 |
-| 2h | 组装 ViT 与训练配置 |
-| 1h | 形状、反向、smoke 与过拟合 |
-| 0.5h | 测时并固定首轮预算 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 在 vit.py 定义 ViTMLP 和 ViTBlock，完成 Patch→CLS/可学习位置→embedding dropout→两层 pre-LN ViTBlock→取 CLS→LayerNorm＋Linear 分类头，输出 `[B,10]`。Attention 与 LayerNorm 复用第四周模块，Block 的顺序按教材 ViT 实现。
-
-2. 创建 `configs/cv/vit_cifar10.yaml`，在训练和独立评估入口的模型选择处添加 ViT。记录第三周划分文件路径，训练和验证实例分别加载正确预处理。
-
-3. 补充 `tests/test_vit.py` 的前反向、CLS、位置参数梯度与保存加载检查；推理用 model.eval()。
-
-4. 先 smoke，再固定 64 样本过拟合，记录一轮耗时与峰值显存。预算不足时在正式训练前统一调整两种 Patch 的 epoch/batch，并写明原因。
-
-### 分步操作与自查
+### 操作步骤
 
 <a id="encoder-reuse"></a>
+
 #### 第一步：按教材定义 ViTMLP、ViTBlock 和完整前向
 
 继续修改 `src/petvision/models/cv/vit.py`，从 attention 模块导入 MultiHeadSelfAttention，从 normalization 模块导入自写 LayerNorm。第四周 EncoderBlock 对应 post-LN＋ReLU；本周在 vit.py 定义自己的 pre-LN ViTBlock，按教材 ViT 的结构组合这两个基础模块。
@@ -333,7 +295,7 @@ output_dir: outputs/vit_patch4
 
 `model.image_size` 用于建立 Patch 和位置参数，必须等于实际送入 ViT 的图像高宽；`data.image_size` 记录数据集原图尺寸。本周 ViT 不额外 Resize，因此构建时核对两者都为 32。heads、FFN 宽度与 dropout 都要传入新建的 Block，不能继续使用第四周演示时写死的 C=32。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_vit.py -q
@@ -349,36 +311,17 @@ python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --overfit-sample
 - [ ] 两组训练预算在比较前固定。
 
 <a id="day-3"></a>
+
 ## Day 3：Patch=4/8 正式对照
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [ViT 原论文](https://arxiv.org/abs/2010.11929) | Patch 表示与计算代价相关部分 | 解释序列长度变化 |
 | [Attention 论文](https://arxiv.org/abs/1706.03762) | 注意力矩阵与序列长度 | 比较 T×T 的开销 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 列出 Patch 对照控制条件 |
-| 2h | 完成配置并运行两组正式训练 |
-| 1h | 核对指标、参数量和耗时 |
-| 0.5h | 整理验证曲线与配置快照 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `vit_patch8_cifar10.yaml`，与 Patch=4 使用独立 experiment_dir 和 output_dir；两组均从新模型训练，不能在另一 Patch checkpoint 上直接继续。
-
-2. 固定 C、depth、heads、FFN、dropout、优化器、epoch、batch、增强、seed 和划分，只改变 Patch 及随之改变的投影/位置形状。
-
-3. 每组记录 train/val loss、accuracy、best epoch、参数量、实际训练时间与峰值显存，保存 best/last。
-
-4. 画两组验证曲线，解释 attention 矩阵元素量从 65² 到 17² 的变化；实际总耗时还受投影、FFN 与硬件利用率影响，直接记录实测值。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：把不可避免的结构变化写清楚
 
@@ -407,7 +350,7 @@ P8 attention 每头矩阵：17 × 17
 
 数据顺序使用独立 DataLoader Generator；两组 token 长度不同，dropout 会消耗不同数量的随机数，相同全局 seed 不保证逐步 dropout 或增强结果相同。记录相同策略与种子即可；只有独立控制增强随机流或保存增强决策后，才能声称每张图的随机增强完全一致。单种子对照的结论限定在本次设置。
 
-#### 第四步：读曲线而非只看最后一格
+#### 第四步：读取两组完整曲线
 
 1. 读回两个 history.csv，检查 epoch 连续、没有重复，两组都达到冻结的预算。先转换数值列，再绘图，避免 CSV 字符串被当作类别坐标。
 2. 分别找到两组最佳验证 accuracy 所在行，记录该行 epoch、val_loss 与 val_accuracy；同组的两个指标必须取自同一行。
@@ -417,7 +360,7 @@ P8 attention 每头矩阵：17 × 17
 
 在 Python 草稿或交互环境，用 csv.DictReader 读取 patch4、patch8 各自的 history.csv，把 epoch 转为 int、loss / accuracy 转为 float。用 plt.subplots 创建 loss 和 accuracy 两个坐标轴，各自叠加两组 train / val 曲线，以 epoch 为横轴，图例标明 Patch 大小和 split。先创建父目录，再 savefig 到 `experiments/vit_patch_size/week5/figures/patch_comparison.png`，保存后关闭 figure；在本周 README 链接这张图和两份配置。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml
@@ -431,35 +374,17 @@ python scripts/train_cv.py --config configs/cv/vit_patch8_cifar10.yaml
 - [ ] 当前仍按验证集分析，测试集尚未用于挑选配置。
 
 <a id="day-4"></a>
+
 ## Day 4：统一指标与冻结视觉配置
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [PyTorch 分类教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/blitz/cifar10_tutorial.html) | 逐类统计与预测结果 | 扩展为混淆矩阵与 Macro-F1 |
 | [总计划结果模板](StudyPlan.md#acceptance) | 视觉结果列与比较边界 | 冻结六个变体配置 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 复核六个变体的配置与 checkpoint |
-| 2h | 实现混淆矩阵、Macro-F1 和计时 |
-| 1h | 整理验证表并冻结最终评估设置 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `src/petvision/evaluation/classification.py`，从真实类别和预测统计 10×10 混淆矩阵，计算 accuracy 和逐类 F1 后取 10 类平均；分母为零时按约定记 0。
-
-2. 扩展 `evaluate.py`，输出 split、样本数、loss、accuracy、macro_f1、参数量和测量配置；用手写小预测例子核对指标实现。
-
-3. 计时固定相同 device、dtype、batch 和预热规则，各模型输入使用其冻结配置对应的预处理结果尺寸；各消融对内部保持相同输入尺寸，跨架构表注明 CNN/ViT 为 32、ResNet 为 96。data.image_size 记录的是 CIFAR 原图尺寸 32，计时不能据此给所有模型都创建 32×32 张量。GPU 计时前后同步，加载时间单独记录，批量耗时除以图片数注明为 batch 平均 ms/img。
-
-4. 将 ViT P4/P8 的验证对照保存为 `patch_results.csv`，结合第三周 `results.csv` 汇总 CNN BN on/off、ResNet residual on/off、ViT P4/P8 的验证指标与预算；冻结六个变体及各自 best，准备一次统一测试。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：用小混淆矩阵核对指标
 
@@ -483,6 +408,7 @@ Macro-F1 ≈ 0.733333
 用 `y_true=[0,0,0,1]`、`y_pred=[0,0,1,1]` 实际构建这张矩阵：对每对类别执行 `matrix[true,pred] += 1`。第 c 类的 TP 是对角元素，FN 是第 c 行和减 TP，FP 是第 c 列和减 TP。参数 `num_classes=2` 时得到上表结果；再设为 3，未出现的第 2 类 F1=0，Macro-F1 应为 `22/45≈0.488889`。这两次检查验证矩阵方向和固定类别数口径。
 
 <a id="classification-metrics"></a>
+
 #### 第二步：把新指标接到 evaluate.py 的完整数据循环
 
 创建 `src/petvision/evaluation/` 和空的 `__init__.py`，再创建 `src/petvision/evaluation/classification.py`，实现 `metrics_from_confusion(matrix)`：输入整份数据的整数混淆矩阵，按第一步的公式返回 accuracy 和 macro_f1。矩阵的类别数由 matrix.shape[0] 确定；它不负责加载数据或模型。在 classification.py 文件末尾的 `if __name__ == "__main__":` 检查分支中，传入两类矩阵 `[[2,1],[0,1]]`，断言 accuracy=0.75、macro_f1≈11/15；再补全零第三行 / 列，断言 macro_f1≈22/45。使用 `python -m petvision.evaluation.classification` 运行该分支。
@@ -501,6 +427,7 @@ for true_id, pred_id in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
 metrics_from_confusion 用整数矩阵累计、用浮点除法计算 F1；总样本数为 0 时明确报错。两类 / 三类断言保留在 classification.py 的上述检查分支中。误分类继续由 `scripts/evaluate.py::collect_mistakes(model,loader,device,limit=8)` 采集；main() 先调用 evaluate_classification 完成全部样本的统计，再调用 collect_mistakes 获取展示图片，不用展示样本覆盖完整指标。
 
 <a id="inference-timing"></a>
+
 #### 第三步：区分加载耗时与推理耗时
 
 加载 checkpoint 记录为单独阶段。推理先用固定 batch 预热，再重复测量；GPU 前后同步，记录 batch、dtype、device 和重复次数。
@@ -542,7 +469,7 @@ print("batch mean ms/img:", ms_per_image)
 
 评估输出保存在各自配置的 experiment_dir，文件名为 `val_metrics.json` 或 `test_metrics.json`，图表也按对应运行目录保存，避免六个变体互相覆盖。第五周的总表另外汇总这些结果，保留每行来源路径。
 
-### 运行与验收
+### 运行与自查
 
 先用本节两类例子核对指标，再评估两个 ViT 的验证集：
 
@@ -558,36 +485,19 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 - [ ] 所有配置和 best 在查看测试结果前已冻结。
 
 <a id="day-5"></a>
+
 ## Day 5：统一 CIFAR-10 测试与错误分析
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [总计划验收标准](StudyPlan.md#acceptance) | 测试使用与结果模板 | 保存冻结后的测试结果 |
 | [ViT 原论文](https://arxiv.org/abs/2010.11929) | 数据规模与归纳偏置讨论 | 限定小数据实验结论 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 依次评估冻结的六个 checkpoint |
-| 1.5h | 保存混淆矩阵与错误案例 |
-| 1h | 写实际比较结论与局限 |
-| 0.5h | 整理图表和结果索引 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 使用独立 `evaluate.py` 对六个 checkpoint 评估官方 CIFAR-10 测试集，将实际结果写入 `visual_test_results.csv`，每行保留 config、checkpoint、split=test 与版本。
-
-2. 保存主要 CNN/ResNet/ViT 的混淆矩阵和误分类样例，观察哪些类别容易混淆；结果差也完整保留。
-
-3. 解释 BN、残差和 Patch 三类内部对照的实际结果；跨架构比较记录训练预算和参数量，避免把单次结果推广到所有视觉任务。
-
-4. 测试后若发现实现错误，先修复并注明该轮结果无效；新的调参只使用训练/验证。CNN 70%+ 是参考目标，不以反复测试作为达标手段。
-
-### 分步操作与自查
+CNN 70%+ 是参考目标。若测试暴露实现错误，修复后注明原结果无效；后续调参仍使用训练集和验证集。
 
 #### 第一步：逐个加载冻结 checkpoint
 
@@ -599,7 +509,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 除 accuracy/F1，记录输入尺寸、参数量、epoch、batch、训练时间、推理测法和初始化来源。CNN/ResNet/ViT 均为从零训练，预训练模型结果以后另列。
 
-将六个变体 experiment_dir 下的 test_metrics.json 整理成六行，用 csv.DictWriter 保存到 `experiments/vit_patch_size/week5/visual_test_results.csv`；至少包含 variant、split、image_size、n_samples、loss、accuracy、macro_f1、params、config、checkpoint、指标来源路径和实际库/代码版本。写入前确认每行 variant 与 Day 4 冻结清单一一对应，不能用验证指标填充缺失的测试结果。
+将六个变体 experiment_dir 下的 test_metrics.json 整理成六行，用 csv.DictWriter 保存到 `experiments/vit_patch_size/week5/visual_test_results.csv`；至少包含 variant、split、image_size、n_samples、loss、accuracy、macro_f1、params、config、checkpoint、指标来源路径和实际库/代码版本。写入前确认每行 variant 与 Day 4 冻结清单一一对应，缺少测试结果的行标记为未评估。
 
 #### 第三步：用图像辅助解释
 
@@ -613,7 +523,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 BN、残差、Patch 各自比较控制条件内的差异；跨架构表同时报告输入分辨率、Resize、优化设置和计算预算。一次小数据实验不能证明某类模型在所有任务上更好。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/evaluate.py --config configs/cv/cnn_cifar10.yaml --checkpoint outputs/cnn_bn_on/best.pt --split test
@@ -631,45 +541,26 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 - [ ] 能联系实际样例解释卷积与自注意力的差异。
 
 <a id="day-6"></a>
+
 ## Day 6：视觉报告与核心流程重写
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [第五周实验记录](../experiments/vit_patch_size/week5/README.md) | 本周真实配置与结果 | 完成视觉阶段总结 |
 | [D2L 英文 ViT](https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html) | 按自己的模型回顾 Patch→CLS/位置→ViTBlock→head | 解释结构与项目配置差异 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 核对结果表、曲线与复现路径 |
-| 1.5h | 完成视觉报告与失败分析 |
-| 1h | 有限参考重写 Patch/分类核心 |
-| 0.5h | 更新每周 README 与环境记录 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 在本周 README 汇总 CNN、ResNet、ViT 的真实测试表、三类对照结论和错误案例，链接第三周结果与固定划分。
-
-2. 有限参考下重写 Patch 投影、CLS 拼接、位置嵌入与 CLS 分类的核心片段，画出 P4/P8 全流程形状。
-
-3. 确认模型能独立导入和加载，不把 Attention / ViTBlock 的 T 写死；记录实际版本、参数量、训练/推理时间。
-
-4. 将预训练模型迁移、Oxford Pet、更多种子和调参列入拓展，本周按既定两个 Patch 完成主线。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：报告按实验问题组织
 
-打开本周 README，在周总结中按以下顺序写四段，不需要重新复制全部训练日志：
+打开本周 README，按以下实验问题整理周总结，引用已有日志和图表：
 
 1. BN 对照：从第三周结果表取 CNN on/off 两行，写明保持相同的条件、实际指标差异，并链接 BN 曲线。
 2. 残差对照：同样取 ResNet on/off 两行，补充 projection 与参与训练参数的差异；不能用 CNN 对比 ResNet 来代替这组实验。
 3. Patch 对照：引用本周 patch_results.csv、曲线和实测耗时，说明 P4/P8 的 token 数、参数量与结果如何变化。
-4. 跨模型比较：引用冻结后的 visual_test_results.csv，列出三类模型的实际优化设置与预算，再描述本次观察；这段与前三组内部对照分开。
+4. 跨模型比较：引用冻结后的 visual_test_results.csv，列出三类模型的实际优化设置与预算，再描述本次观察；这段注明跨架构的条件差异。
 5. 每段末尾补一句局限或仍不确定的原因。写完逐个打开引用文件，确认数值来自该文件、split 正确，验证结果没有被写成测试结果。
 
 #### 第二步：有限参考重写 ViT 核心
@@ -692,7 +583,7 @@ python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpo
 
 在 README 写单种子、训练预算、从零训练、小图像与模型规模的限制；把更多种子、预训练迁移和 Pet 数据集列为后续项目。
 
-### 运行与验收
+### 运行与自查
 
 核心流程重写后，用小张量重新运行已有 ViT 检查：
 
@@ -713,7 +604,6 @@ python -m pytest tests/test_vit.py -q
 - [ ] CNN、ResNet、ViT 六个变体有冻结配置后的独立测试与失败分析。
 - [ ] 结果、时间、参数量与跨架构局限集中到本周 README。
 
-先用本周 6 小时机动补齐未完成项；仍未通过时，下一周先处理该关卡，后续任务顺延。周末小结控制在约 10–20 分钟，记录实际配置、关键结果、一个解释和仍需巩固的部分。
+保留六个变体的测试来源、输入尺寸、预算与错误分析，供第八周报告引用。第六周转向文本，继续复用 Attention 和 LayerNorm。
 
 通过后进入[第六周](week6.md)。
-

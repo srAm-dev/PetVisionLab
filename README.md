@@ -1,68 +1,37 @@
 # PetVision-Lab
 
-PetVision-Lab 是一个用于学习深度学习原理与实践的个人项目。通过 Python、NumPy 和 PyTorch，逐步理解模型结构、训练流程与评估方法，并以亲手实现和小型对照实验积累实践经验。
+这是我用来学习深度学习的项目。从 Python、NumPy 和梯度下降开始，逐步手写 CNN、ResNet、Transformer、ViT 和 Mini-GPT，再体验预训练 LLM / VLM 推理。每个阶段都用小实验检查理解，保留运行结果和遇到的问题。
 
-学习安排、实现步骤与验收标准见[总学习计划](docs/StudyPlan.md)和各周逐日指南。实际完成状态、环境、运行命令、指标及遗留问题记录在对应周实验目录的 README；本页提供项目介绍与文档导航。
+八周的目标是能独立实现、训练、调试和解释小模型，重点练习张量形状、梯度、训练评估和对照实验。完整 Encoder-Decoder、宠物数据集迁移、模型微调和 Gradio 应用放到后续学习。
 
-首次跟做时，从[第一周指南](docs/week1.md)的环境准备开始；已有实现时，在下方导航打开当前周指南，按当天“分步操作与自查”中的文件和函数修改代码，再运行同节的检查命令。各周实际记录的链接集中在[计划与进度入口](docs/StudyPlan.md#current-progress)。
+第一次跟做，从[学习与执行入口](docs/README.md)进入；查看整体安排读[总计划](docs/StudyPlan.md)。已有代码时，按当前周的检查和重写练习复习，实际进度与结果看各周实验 README。
 
-## 项目目标
+## 八周安排
 
-- 理解模型中的核心计算，能够解释张量形状、梯度与信息流。
-- 建立独立编写、调试、训练和评估小型模型的能力。
-- 通过对照实验分析模型行为，保存可复现的结果与结论。
+| 周次 | 学习内容 | 逐日步骤 | 环境、命令与结果 |
+| --- | --- | --- | --- |
+| 1 | Python、NumPy、数学与线性回归 | [第一周](docs/week1.md) | [实验记录](experiments/basics/week1/README.md) |
+| 2 | PyTorch、MNIST MLP 与训练流程 | [第二周](docs/week2.md) | [实验记录](experiments/mnist_mlp/week2/README.md) |
+| 3 | CNN、ResNet、BN 与残差对照 | [第三周](docs/week3.md) | [实验记录](experiments/cnn_vs_resnet/week3/README.md) |
+| 4 | Attention、Mask、LayerNorm 与 Encoder | [第四周](docs/week4.md) | [实验记录](experiments/transformer_encoder/week4/README.md) |
+| 5 | ViT、Patch 对照与视觉模型比较 | [第五周](docs/week5.md) | [实验记录](experiments/vit_patch_size/week5/README.md) |
+| 6 | 字符级 Bigram、Mini-GPT 与生成 | [第六周](docs/week6.md) | [实验记录](experiments/mini_gpt/week6/README.md) |
+| 7 | 字节 BPE、采样与中断续训 | [第七周](docs/week7.md) | [实验记录](experiments/mini_gpt/week7/README.md) |
+| 8 | CLIP、LLM/VLM 推理与总结 | [第八周](docs/week8.md) | [实验记录](experiments/vlm_qa/week8/README.md) |
 
-## 学习范围
+每周安排 24 小时任务和 6 小时机动，按检查结果推进。训练结果、解释能力和核心代码重写都要练习；未通过的基础项优先补齐，后续任务顺延。
 
-| 方向 | 主要内容 |
-| --- | --- |
-| 编程与数学基础 | Python、NumPy、矩阵运算、导数、梯度下降与线性回归 |
-| 训练流程 | PyTorch、自动求导、数据加载、训练与评估、checkpoint |
-| 计算机视觉 | CNN、ResNet、ViT，以及归一化、残差和 Patch Size 对照 |
-| Transformer | Self-Attention、多头注意力、Mask、LayerNorm、位置编码与 Encoder |
-| 语言建模 | Bigram、Mini-GPT、BPE、采样策略与中断续训 |
-| 预训练模型 | CLIP 图文对齐、LLM 推理、VLM 结构与视觉问答 |
-
-完整 Encoder–Decoder、宠物数据集迁移学习、LLM / VLM 微调和 Gradio 应用作为后续拓展。具体任务安排与验收要求见[总学习计划](docs/StudyPlan.md)。
-
-## 实践方法
-
-采用“理解原理 → 手写代码 → 运行检查 → 对照实验 → 总结”的学习方式：
-
-- 从小数据和小模型起步，将公式、代码和实际输出对应起来。
-- 用形状检查、梯度检查和参考实现验证关键模块。
-- 在清楚的假设与控制条件下开展实验，分析成功结果、错误与局限。
-- 日常通过代码与结果自查，每周简要汇总结论和遗留问题。
-
-## 仓库组织
+## 文件放在哪里
 
 | 路径 | 用途 |
 | --- | --- |
-| `docs/StudyPlan.md` | 总体学习路线、阶段任务与验收要求 |
-| `docs/` | 逐日学习指南与技术说明 |
-| `scripts/` | 练习实现与实验入口 |
-| `src/petvision/` | 可复用的数据加载、模型、训练 / 评估和工具代码；按学习日逐步创建 |
-| `experiments/` | 按 `<主题>/weekN/` 保存每周说明与总结、环境快照、实验结果和小型图表 |
-| `environment.yml` | 当前本地 Linux 环境导出快照，包含具体构建版本和 PyTorch / CUDA 依赖 |
-| `pyproject.toml` | Python 包配置；当前仅定义构建方式、包发现和 Python 版本要求 |
+| `docs/` | 总计划、逐日步骤、接口约定与完成标准 |
+| `scripts/` | 练习、训练、评估和推理入口 |
+| `src/petvision/` | 可复用的数据、模型、训练和工具代码，随学习逐步增加 |
+| `tests/` | 形状、梯度、Mask、保存加载等检查 |
+| `experiments/<主题>/weekN/` | 实际进度、环境快照、配置、小型结果与周总结 |
+| `outputs/`、`datasets/` | 大权重、日志和数据，按忽略规则保留在本地 |
+| `environment.yml` | 当前本地 Linux 环境的完整导出快照 |
+| `pyproject.toml` | 构建方式、包发现和 Python 版本要求 |
 
-模型与训练模块按学习任务逐步建立，长期目录设计见总学习计划。逐日指南包含跟做所需的环境准备、操作、命令与排错；每周实验目录的 README 保存实际环境、复现索引和结果。
-
-首次准备环境请从[第一周环境步骤](docs/week1.md)开始；根目录环境快照含平台相关包与本机路径，跨平台安装需要按指南重新选择依赖。`pip install -e .` 只安装项目包，当前不会自动补齐 NumPy、PyTorch 等运行依赖。
-
-## 文档导航
-
-- [总学习计划](docs/StudyPlan.md)：了解学习范围、任务安排与实验设计。
-
-逐日指南提供资料、安装步骤、练习操作、运行命令、自查与验收标准；每周 README 集中维护实际版本、复现命令索引、结果链接与周总结。首次阅读时可先看[符号与代码片段约定](docs/StudyPlan.md#reading-conventions)，区分正式实现、手算练习和待补全的代码。
-
-| 周次与主题 | 逐日指南 | 每周说明与总结 |
-| --- | --- | --- |
-| 第 1 周：Python、NumPy 与数学 | [第一周指南](docs/week1.md) | [第一周 README](experiments/basics/week1/README.md) |
-| 第 2 周：PyTorch 与 MNIST | [第二周指南](docs/week2.md) | [第二周 README](experiments/mnist_mlp/week2/README.md) |
-| 第 3 周：CNN、ResNet 与对照 | [第三周指南](docs/week3.md) | [第三周 README](experiments/cnn_vs_resnet/week3/README.md) |
-| 第 4 周：Attention 与 Encoder | [第四周指南](docs/week4.md) | [第四周 README](experiments/transformer_encoder/week4/README.md) |
-| 第 5 周：ViT 与视觉比较 | [第五周指南](docs/week5.md) | [第五周 README](experiments/vit_patch_size/week5/README.md) |
-| 第 6 周：字符级 Mini-GPT | [第六周指南](docs/week6.md) | [第六周 README](experiments/mini_gpt/week6/README.md) |
-| 第 7 周：BPE、采样与续训 | [第七周指南](docs/week7.md) | [第七周 README](experiments/mini_gpt/week7/README.md) |
-| 第 8 周：CLIP、LLM / VLM 与总结 | [第八周指南](docs/week8.md) | [第八周 README](experiments/vlm_qa/week8/README.md) |
+环境准备从[第一周](docs/week1.md#day-1)开始，第二周再补 PyTorch 和 GPU 依赖。现有 `environment.yml` 含平台构建与本机路径，跨平台按指南选择依赖。`pip install -e .` 只安装本地项目包，运行依赖需要另行安装。

@@ -1,24 +1,22 @@
-# 第六周逐日学习指南：字符级 Bigram 与 Mini-GPT
+# 第六周：字符级 Bigram 与 Mini-GPT
 
-> 更新日期：2026-11-01<br>
-> 对应计划：[总学习计划](StudyPlan.md#stage-3)  
-> 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
-> 本周成果：固定文本划分，完成同一字符 tokenizer 下的 Bigram 与小 GPT、验证曲线、保存加载和自回归生成，解释下一 token 预测。  
-> 环境：本地 Conda `petvision`、RTX 4060；起步 2 层、C=128、4 heads、context=128、batch=16，FP32，按实际显存与耗时调整。
+从下一字符预测开始，先写 Bigram，再组装 Mini-GPT。两者使用同一字符词表和固定文本划分，比较验证 loss 与生成样例。
 
-## 怎么使用这份指南
+对应[总计划第 6 周](StudyPlan.md#week-6)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-先确认[上一周指南](week5.md)的基础关卡已通过。第四周多头 Attention 和 causal Mask 应已通过测试；能独立实现 PyTorch 训练、验证与 checkpoint。视觉结果可保留，本周切换到文本任务。
+环境：本地 Conda `petvision`、RTX 4060；起步 2 层、C=128、4 heads、context=128、batch=16，FP32，按实际显存与耗时调整。
 
-本指南按学习日写出环境准备、文件创建、操作步骤、运行命令和自查方法，跟做时从当天内容顺序往下读即可。[本周 README](../experiments/mini_gpt/week6/README.md) 保存实际环境、复现命令索引、结果链接和周总结。源码、配置、数据与结果按学习日逐步创建；下面的命令在完成相应实现后执行，代码由你亲手完成。
+## 开始前
 
-每天按“读指定部分 → 写代码 → 运行检查 → 解释结果”执行。检查通过后再扩大数据或训练预算；日常通过代码、输出和解释验收，周末集中更新本周 README。学习时间包含机动时间；训练等待与阅读重叠时只计一次。
+第四周 causal Mask 已通过测试；能独立写训练、验证和 checkpoint 流程。保留第五周的视觉结果。
 
-文件路径均相对于项目根目录；可复用源码放在 `src/petvision/`。新增源码子目录时，在每层包目录放入空的 `__init__.py`；已有目录和文件继续修改，保留此前通过检查的内容。`scripts/` 放运行入口，`tests/` 放检查，结果由脚本运行后生成。
+按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week6/README.md)。
 
-## 本周目录蓝图
+更新日期：2026-11-06。
 
-以下为本周逐步形成的文件，注释标明创建或修改时间。`README.md` 已提供；其余文件和结果在执行对应任务时产生。
+## 本周文件
+
+按注释中的学习日逐步创建或修改文件；已有文件继续使用，结果在运行后保存。
 
 ```text
 PetVisionLab/
@@ -47,7 +45,7 @@ PetVisionLab/
 └── outputs/{bigram_char,mini_gpt}/           # best/last.pt，不上传
 ```
 
-## 开始前：激活环境并检查已有模块
+## 环境检查
 
 以下命令从项目根目录执行，每个学习日先激活同一个环境：
 
@@ -57,14 +55,14 @@ python -c "import sys, torch, torchvision, yaml, pytest, petvision; print(sys.ex
 python -m pip check
 ```
 
-解释器应位于 Conda 的 `petvision` 环境，`petvision.__file__` 应指向当前仓库的 `src/petvision/`。若出现 `No module named petvision`，先确认第二周已建立 `pyproject.toml` 和包目录，再在根目录执行 `python -m pip install -e . --no-deps`；若缺少 torch 或 CUDA 不可用，按[第二周 Day 1 的安装与排错步骤](week2.md#environment)逐项核对。
+确认解释器属于 `petvision`，`petvision.__file__` 指向当前仓库的 `src/petvision/`。导入失败时先在根目录运行 `python -m pip install -e . --no-deps`；依赖或 CUDA 问题按[第二周环境排查](week2.md#environment)处理。
 
-复用已经通过检查的 Attention、训练和保存加载方法，新增文本数据与模型。 本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
+复用已经通过检查的 Attention、训练和保存加载方法，新增文本数据与模型。本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
 
 ## 固定条件与接口约定
 
 <a id="lm-shapes"></a>
-本周模型在每个位置预测“下一个 token 是词表中的哪一项”，因此输出不是每张图片一个类别，而是每个文本位置都有一组类别分数。
+本周模型在每个文本位置预测下一个 token，为该位置输出词表中各项的分数。
 
 | 符号 / 名称 | 含义 | 例子或对应配置 |
 | --- | --- | --- |
@@ -82,23 +80,22 @@ GPT 的正式结构以 [nanoGPT model.py](https://github.com/karpathy/nanoGPT/bl
 
 Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batch=16、seed=42、AdamW lr=3e-4、weight_decay=0.01、2000 steps、每 200 步验证。GPT 为 2 层、C=128、4 heads、FFN=512、dropout=0.1；Bigram 为 vocab×vocab 转移 logits 的 Embedding。NLL 指负对数似然，即正确目标 token 的概率取负自然对数。验证在相同原文上按固定顺序统计有效目标 token 的总 NLL/总数，关闭 dropout；按[验证分窗规则](#eval-windows)覆盖 N-1 个目标，尾窗单独评估并记录计数。测试原文留到第七周配置冻结后使用。预算不足时先短运行测时，再同时固定两组实际预算。
 
-## 六天总览
+## 六天安排
 
-| 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
-| --- | --- | --- | --- | --- |
-| Day 1 | 原文划分、字符词表与数据来源 | 4h | 1h | 固定文本边界与 tokenizer JSON |
-| Day 2 | 下一 token 窗口与 Bigram 基线 | 4h | 1h | Bigram 训练与验证入口 |
-| Day 3 | 因果 Transformer 与 Mini-GPT | 4h | 1h | 小 GPT、未来隔离与反向检查 |
-| Day 4 | 同口径训练、验证与 checkpoint | 4h | 1h | Bigram/GPT 两组曲线与 best |
-| Day 5 | 自回归生成与保存加载 | 4h | 1h | 可重跑生成脚本与真实样例 |
-| Day 6 | 语言模型比较与核心流程重写 | 4h | 1h | 同 tokenizer 结果表和周总结 |
-| Day 7 | 休息 | 0h | 0h | — |
-| 合计 | — | 24h | 6h | 30h |
+| 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
+| --- | --- | --- |
+| [Day 1](#day-1) | 创建 `scripts/prepare_text.py`、`data/text.py`、字符 tokenizer | 原文按 80/10/10 划分；保存 manifest 和词表；统计 OOV |
+| [Day 2](#day-2) | 创建 Bigram、`lm_trainer.py`、`scripts/train_gpt.py` 和语言模型测试 | 输入目标错开一位；验证恰好统计 N-1 个目标；先只做小批检查 |
+| [Day 3](#day-3) | 创建 `models/llm/mini_gpt.py` 及 GPT 配置 | 前缀不受未来扰动；[B,T] 输出 [B,T,V]；短文本可拟合 |
+| [Day 4](#day-4) | 补齐 `scripts/train_gpt.py` 的验证、日志与 checkpoint | 两组正式训练完成相同预算，按 val loss 选 best 并保存曲线 |
+| [Day 5](#day-5) | 创建 `scripts/generate.py`，保存 `samples.jsonl` | 只取最后位置分布逐 token 生成；加载前后固定 seed 的新增 IDs 一致 |
+| [Day 6](#day-6) | 整理本周 `results.csv`、周总结，重写采样与 loss 片段 | 同 tokenizer 的验证结果可比较；测试文本未参与选参 |
 
 <a id="day-1"></a>
+
 ## Day 1：原文划分、字符词表与数据来源
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -107,26 +104,9 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 | [Tiny Shakespeare 原文](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt) | 查看格式、换行和角色名，记录下载来源 | 先划分原文再编码 |
 | [Unicode 指南](https://docs.python.org/zh-cn/3.12/howto/unicode.html)、[hashlib](https://docs.python.org/zh-cn/3.12/library/hashlib.html)（官方中文） | UTF-8 编解码、sha256 与 hexdigest；JSON 读写复用第二周 | 区分原始 bytes、实际使用文本及各自 hash |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读字符编码与语言建模任务 |
-| 2h | 实现下载记录、原文划分和字符词表 |
-| 1h | 检查边界、往返和 OOV |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `scripts/prepare_text.py` 与 `src/petvision/data/text.py`，将原文下载到 `datasets/raw/tinyshakespeare/input.txt`，记录来源、文件 hash 与字符数。固定 80/10/10 原文区间，保存三个 split 文本及 `experiments/mini_gpt/week6/split_manifest.json`，供第七周原样复用。
-
-2. 在 `src/petvision/models/llm/tokenizer.py` 实现 CharTokenizer 的 encode/decode/save/load；只从 train 收集并排序字符，保留独立 `<unk>` ID，保存 JSON。
-
-3. 分别编码 train/val/test，不用验证文本扩充词表；检查训练字符往返一致，统计 val/test 的 OOV 数量。测试集今天仅检查编码可用性，不用其 loss 调参。
-
-4. 用一段短文本展示字符、ID 与解码结果。保留空白换行，不调用 strip() 改变训练内容；下载/规范化规则写入 manifest。
-
-### 分步操作与自查
+划分记录保存到 `experiments/mini_gpt/week6/split_manifest.json`，第七周继续使用同一份文件；保留原文空白和换行。
 
 #### 第一步：区分原文、字符和 token
 
@@ -204,7 +184,7 @@ load 是类方法：它从 JSON 读回 chars，用 `cls(chars)` 创建同一种 
 
 将这些检查接到 `scripts/prepare_text.py` 的保存操作之后，打印已知短文本及往返结果，并分别统计 val/test 中不属于训练字符集合的字符数量；不扩充词表。再次运行时核对已有 split 与 tokenizer，没有条件变化则复用，不静默覆盖跨周使用的文件。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/prepare_text.py
@@ -217,9 +197,10 @@ python scripts/prepare_text.py
 - [ ] tokenizer 可保存加载，已知字符往返不改变空白。
 
 <a id="day-2"></a>
+
 ## Day 2：下一 token 窗口与 Bigram 基线
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -227,30 +208,11 @@ python scripts/prepare_text.py
 | [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) | 字符编码、batch 采样与 Bigram 部分，按主题观看 | 实现输入与目标错位 |
 | [Zero to Hero 作者代码](https://github.com/karpathy/nn-zero-to-hero) | 对应课程最小 Bigram 实现 | 理解 vocab×vocab logits |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读自回归目标与 Bigram |
-| 2h | 实现窗口、Bigram 和交叉熵 |
-| 1h | 做形状、错位、验证计数与小批更新检查 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 在 `src/petvision/data/text.py` 构造长度 T+1 的片段，输入为前 T 个 ID，目标为后 T 个 ID；打印一个短例子，逐位置说明预测的是下一个 token。
-
-2. 创建 `src/petvision/models/llm/bigram.py`，使用 Embedding(V,V)，输入 `[B,T]` 输出 `[B,T,V]`。交叉熵将 logits 变为 `[B*T,V]`、target 变为 `[B*T]`，标签 dtype 为 long。
-
-3. 创建 `configs/llm/bigram_char.yaml` 与 `scripts/train_gpt.py`，参数包括 `--config`；在 `src/petvision/training/lm_trainer.py` 实现 train_step 和 evaluate_lm，训练入口负责调用，验证按有效 token 汇总平均 loss。
-
-4. 创建 `tests/test_language_model.py`，检查窗口不跨 split、输入目标错位、batch=1、loss 有限、梯度存在；训练采样使用独立 Generator，验证不推进训练采样状态。今天只用小批数据检查参数能更新，完整 2000 步基线在 Day 4 接通 checkpoint 后运行。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：用 ABCDE 手算错位窗口
 
-继续修改 `src/petvision/data/text.py`，今天新增 sample_batch 和第四步的 iter_eval_windows。创建 `tests/test_language_model.py`，顶层导入 torch、pytest、sample_batch 和 iter_eval_windows。新增 `test_sample_batch_shift` 检查 x/y 错开一位；`test_sample_batch_split_bounds` 检查样本不越过当前 split、数据不足时抛出 ValueError；`test_eval_window_coverage` 将下方 N=8、T=3 的各窗口目标拼接，断言恰好覆盖 ID 1–7 且无重复。
+继续修改 `src/petvision/data/text.py`，今天新增 sample_batch 和第四步的 iter_eval_windows。创建 `tests/test_language_model.py`，顶层导入 torch、pytest、sample_batch 和 iter_eval_windows。新增 `test_sample_batch_shift` 检查 x/y 错开一位；`test_sample_batch_split_bounds` 检查样本不越过当前 split、数据不足时抛出 ValueError；`test_eval_window_coverage` 将下方 N=8、T=3 的各窗口目标拼接，断言恰好覆盖 ID 1-7 且无重复。
 
 设 ID 为 `[0,1,2,3,4]`，T=3，起点 0：
 
@@ -262,7 +224,7 @@ y：                 [1,2,3]
 位置 1 用 token 1 预测 token 2
 ```
 
-这不是把同一个 token 输入后再让模型复制它。起点必须满足片段完整位于当前 split 内。
+目标比输入向后错开一位；整个片段应位于当前 split 内。
 
 长度为 N 的 token 序列中，若每次取 T+1 个 token，起点为 `0..N-T-1`；`torch.randint` 的 high 为 `N-T`，因为上界不包含在结果内。例如 N=5、T=3 时只能从 0 或 1 开始。N 小于 T+1 时明确提示数据不足，不从另一个 split 借 token。
 
@@ -294,6 +256,7 @@ loss 输入 target     [B*T]
 把自回归概率也对应到这个例子：一个 T+1 片段训练的条件概率是各位置下一 token 概率的乘积；取负对数后变为求和，批次 loss 再除以 `B*T`。Bigram 每一项只依赖当前 ID，GPT 每一项可依赖当前可见前缀。用 `[0,1,2,3]` 逐项指出「0→1、1→2、2→3」，解释为什么目标不能与当前位置输入完全相同。
 
 <a id="eval-windows"></a>
+
 #### 第四步：按固定目标区间分窗，完整统计验证 token
 
 训练按随机窗口采样；验证使用确定性的分窗，不抽取随机验证小批替代完整统计。本周不引入 BOS：当前 split 编码后有 N 个 token，索引 0 没有本 split 内的前驱，不计为目标；索引 1..N-1 各预测一次，目标总数应为 N-1。
@@ -323,13 +286,14 @@ def iter_eval_windows(token_ids, context_length):
         yield chunk[:-1], chunk[1:]
 ```
 
-真正评估时先将 x、y 作为 long Tensor 移到模型设备，分别补 batch 维为 `[1,t]`；模型返回 `[1,t,V]`。t 可以小于 context，尤其尾窗不能强行 reshape 成固定长度。模型切 eval 并关闭梯度，每窗用 `cross_entropy(..., reduction="sum")` 得到 NLL 总和，累加 `y.numel()` 个目标，最后计算 `total_nll / total_target_tokens`。
+评估时先将 x、y 作为 long Tensor 移到模型设备，分别补 batch 维为 `[1,t]`；模型返回 `[1,t,V]`。t 可以小于 context，尤其尾窗不能强行 reshape 成固定长度。模型切 eval 并关闭梯度，每窗用 `cross_entropy(..., reduction="sum")` 得到 NLL 总和，累加 `y.numel()` 个目标，最后计算 `total_nll / total_target_tokens`。
 
 上例计数应为 `3+3+1=7=N-1`。若三个窗口的 mean loss 分别为 1、2、4，整体 loss 为 `(3*1+3*2+1*4)/7=13/7`，不能对三个 mean 直接平均。补到现有语言模型检查中：普通尾窗、刚好整除、N=2、不同 context 均满足目标索引恰好覆盖 1..N-1。
 
 该规则会在窗口边界重置模型可见上下文；它是本轮约定的固定评估方式，Bigram/GPT 必须一致，不把它和使用滑动长前缀的评估结果混在一列。每个 split 单独处理，不从 train 借前缀给 val，也不跨入 test。
 
 <a id="text-inputs"></a>
+
 #### 第五步：建立配置，连接已保存的文本与 tokenizer
 
 创建 `scripts/train_gpt.py` 和 `src/petvision/training/lm_trainer.py`。在 train_gpt.py 顶层导入 argparse、yaml 和 pathlib.Path，定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加必填的 `--config`（type=Path）；main() 调用 parse_args，再以 UTF-8 打开配置文件，用 yaml.safe_load 得到 cfg，随后读数据、创建对象和调度训练。文件末尾添加 `if __name__ == "__main__": main()` 入口保护。lm_trainer.py 定义下文的 train_step / evaluate_lm，导入时不启动训练。
@@ -395,7 +359,7 @@ train_generator = torch.Generator().manual_seed(cfg["training"]["seed"])
 
 修改 `tests/test_language_model.py::test_bigram_forward_backward`：创建 AdamW 后先 clone Embedding 参数，再计算 loss、清梯度、backward、optimizer.step，断言至少一个参数值发生变化。另新增 `test_lm_evaluation_preserves_generator`：创建独立训练 Generator，保存其 get_state().clone()，对固定 val_ids 调用 evaluate_lm，再用 torch.equal 比较 Generator 状态完全相同，同时核对返回的目标数等于 len(val_ids)-1。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_language_model.py -q
@@ -409,9 +373,10 @@ python -m pytest tests/test_language_model.py -q
 - [ ] 能解释自回归概率是多个条件概率的乘积，loss 为负对数概率的平均。
 
 <a id="day-3"></a>
+
 ## Day 3：因果 Transformer 与 Mini-GPT
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -419,26 +384,7 @@ python -m pytest tests/test_language_model.py -q
 | [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY)（教学视频） | 从 Bigram 逐步加入 Attention、位置嵌入和残差 | 理解构建过程；最终 GELU 与权重共享按上述作者实现 |
 | [第四周指南](week4.md#block-conventions) | Attention、LayerNorm、causal Mask 与未来隔离 | 复用已验证的基础模块 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 画 Decoder-only 张量流 |
-| 2h | 实现 GPT 与可学习位置嵌入 |
-| 1h | 检查因果性、参数梯度和短训练 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `src/petvision/models/llm/mini_gpt.py` 与 `configs/llm/mini_gpt.yaml`：token embedding + position embedding→两层 pre-LN Block（传入 causal mask）→最终 LayerNorm→Linear(C,V)。
-
-2. 复用第四周 Attention 与 LayerNorm，在 mini_gpt.py 定义独立 GPTBlock；使用 pre-LN、GELU 和作者规定的 dropout 位置，新增位置参数范围为 context=128。
-
-3. 扩展语言模型检查：改变输入后缀，在 eval/dropout=0 下前缀 logits 不变；目标 token 不输入当前位置；输入/输出形状分别为 `[B,T]` 与 `[B,T,V]`。
-
-4. 用极短训练文本做小样本拟合，先检查 loss 能下降和所有活跃参数梯度有限，再按本周固定规模运行。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：按作者定义 GPTBlock，再组装 MiniGPT
 
@@ -532,7 +478,7 @@ model:
 
 同时将 experiment_dir 改为 `experiments/mini_gpt/week6/runs/gpt`，output_dir 改为 `outputs/mini_gpt`。GPT 创建自己的 GPTBlock 实例，复用 Attention 与 LayerNorm；token embedding、可学习位置嵌入、embedding dropout、最终 LayerNorm 和权重共享由 MiniGPT 管理。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_language_model.py -q
@@ -545,36 +491,17 @@ python -m pytest tests/test_language_model.py -q
 - [ ] 小模型可以前反向和拟合固定短文本。
 
 <a id="day-4"></a>
+
 ## Day 4：同口径训练、验证与 checkpoint
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [PyTorch 保存加载（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/saving_loading_models.html) | state_dict 与重建模型 | 保存 tokenizer 和模型配置关联 |
 | [Zero to Hero 作者代码](https://github.com/karpathy/nn-zero-to-hero) | 验证 loss 与训练循环 | 固定比较口径 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 确认两组配置、验证口径和预算 |
-| 2h | 完成两组正式训练与保存 |
-| 1h | 整理曲线、参数量和耗时 |
-| 0.5h | 检查加载后的验证结果 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 两组固定使用同一字符 tokenizer 和验证文本；单独新建模型、优化器与采样 Generator，避免继承另一组状态。
-
-2. 每 200 步验证并写各自 `history.csv`，保留 train loss 的统计窗口和 val loss 的有效 token 数；选择 val loss 最小的 best，另存 last。
-
-3. checkpoint 保存模型 state_dict、config、step、验证指标与 tokenizer 标识/hash；本周先保证加载推理，第七周补齐优化器和随机状态用于续训。
-
-4. 将 tokenizer、配置、参数量、实际训练耗时、峰值显存与两组曲线记录到 week6 实验目录；若 GPT 尚未优于 Bigram，先检查 Mask、错位、梯度和训练预算，记录排查证据，不以反复训练直到 GPT 胜出作为完成条件。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：训练与验证各用独立采样状态
 
@@ -597,7 +524,7 @@ Bigram/GPT 共享 tokenizer JSON、split manifest、验证窗口规则和 token 
 
 本轮可约定 train_loss 为最近 eval_interval 次更新所见目标的平均 NLL，按目标 token 数加权；每个 step 只在 optimizer.step 完成后加 1，随后判断是否验证。2000 步、每 200 步一次时，history 的 step 应为 `200,400,...,2000`，共 10 行数据。last 的 step 与最近保存时实际完成更新次数一致，best 按最小 val_loss 选择。
 
-将下面的调度写在 train_gpt.py 的 main 中。train_ids、val_ids、model、optimizer、device、train_generator 已由 Day 2–3 创建，context_length 和 batch_size 从 cfg 读取；循环前设置区间 NLL 和计数为 0：
+将下面的调度写在 train_gpt.py 的 main 中。train_ids、val_ids、model、optimizer、device、train_generator 已由 Day 2-3 创建，context_length 和 batch_size 从 cfg 读取；循环前设置区间 NLL 和计数为 0：
 
 ```python
 interval_nll = 0.0
@@ -633,7 +560,7 @@ for step in range(1, target_steps + 1):
 
 修改 `scripts/train_gpt.py::main()` 的定期验证分支，顶层从 `petvision.utils.checkpoint` 导入 save_checkpoint / load_checkpoint；main() 在 step 循环之前将 best_val_loss 设为正无穷大；定期验证返回 val_metrics 后添加 `if val_metrics["loss"] < best_val_loss` 分支，在其中更新 best_val_loss 并写 best.pt，持平保留更早一次。记录 model_state、config、model_config、vocab_size、context_length、tokenizer_path、tokenizer_hash、split_hash、step、val_loss 和 val_target_tokens；hash 来自实际文件，不能只保存路径后省略核对。main() 在训练循环之前用 yaml.safe_dump(cfg,file,allow_unicode=True,sort_keys=False) 写 experiment_dir/config.yaml；history 由下方 append_lm_history 逐条追加。计时在循环前开始、循环后结束，CUDA 分支前后 synchronize 并统计 peak_allocated_mib；结束后写 run_summary.json，字段含 params、completed_steps、train_seconds、peak_allocated_mib、device、dtype、累计 input_tokens / input_bytes 和 timing_scope。
 
-checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路径与 hash、split manifest 的 hash，以及本次 step 和验证 loss。加载时核对这些信息，再按结构重建并读取 state_dict。用新建模型重新计算固定验证集，比较保存前后的 loss 与目标 token 数，不能只检查文件存在。
+checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路径与 hash、split manifest 的 hash，以及本次 step 和验证 loss。加载时核对这些信息，再按结构重建并读取 state_dict。用新建模型重新计算固定验证集，比较保存前后的 loss 与目标 token 数，同时核对数值与计数。
 
 在 `scripts/train_gpt.py` 顶层新增 `append_lm_history(row,path)`：将 path 转为 Path 并创建父目录；打开前检查文件是否不存在或为空，再以 a 模式、encoding="utf-8"、newline="" 打开，用 csv.DictWriter 在新文件 / 空文件写一次表头，每次调用只 writerow(row) 一条；列名改为 step、train_loss、val_loss、val_target_tokens，表头只在新文件 / 空文件写一次。正式分支创建各自 experiment_dir / output_dir，保存 config.yaml，在上面 row 创建后立即调用追加函数；每次仅传这一条 row。新运行使用空日志，已有同名结果先归档；第七周的 resume 才继续现有日志。
 
@@ -651,7 +578,7 @@ checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路�
 4. train 持续下降而 val 后期上升时，标出转折区间与 best_step，讨论过拟合；用同一 best 重载验证，排除拿错权重的情况。
 5. GPT 未优于 Bigram 时，先核对两组 tokenizer / split hash、验证目标数和预算，再检查 GPT 的因果性。检查通过后保留真实对照，记录可能原因，不用测试集调参，也不要求为了胜出持续重跑。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_language_model.py -q
@@ -666,35 +593,17 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 - [ ] checkpoint 与 tokenizer 配套，重载后的验证结果一致。
 
 <a id="day-5"></a>
+
 ## Day 5：自回归生成与保存加载
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) | generate、上下文截断和逐 token 采样 | 实现生成循环 |
 | [PyTorch 保存加载（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/saving_loading_models.html) | 推理 eval 与关闭梯度 | 独立进程加载模型 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读生成循环与训练目标的关系 |
-| 2h | 实现 generate.py 与自回归生成函数 |
-| 1h | 保存加载对照及固定样例 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `scripts/generate.py`，接收 `--checkpoint`、`--prompt`、`--max-new-tokens`、`--seed` 和 `--output`。从 checkpoint 重建模型、词表和 context，不手工另建不一致映射。`--output` 指定本次 JSONL 样例文件，每次完整输出追加为一条记录。
-
-2. 生成时 eval 并关闭梯度，每轮只保留最后 context 个输入 ID，取最后位置 logits，经 softmax 后采样一个 token，拼回序列；本周使用 temperature=1 的基础采样。
-
-3. 固定 prompt（例如训练词表内的角色名）、seed=42、max_new_tokens=200，分别用 Bigram 和 GPT 生成，保存 `samples.jsonl` 的全部原始输出和设置。
-
-4. 检查保存前与重新加载后，在相同环境、prompt、seed 和采样设置下可复现；解释一次 forward 的并行训练与逐 token 生成的区别。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：只取最后位置的分布
 
@@ -731,9 +640,10 @@ generate.py 的 main 按以下顺序接入：load_checkpoint(args.checkpoint) �
 
 若后续把 main 中的循环抽成函数，可约定 `generate_ids(model, prompt_ids, context_length, max_new_tokens, device)`，返回完整 token ID 列表；抽取时将循环里的 args 字段改为函数参数，编码与参数解析仍由 main 完成。下方 JSONL 记录还要写实际 device / dtype、prompt 的 OOV 数；第七周再将加载替换为按 tokenizer 类型分派的入口。
 
-重建和加载模型会涉及初始化，因此生成复现用的 seed 在模型加载完成后、采样开始前重新设置。保存前与加载后的两次生成都从相同 prompt 和 seed 开始，比较完整新增 token ID 列表完全一致；不能只对比解码后看起来相似的文字。
+重建和加载模型会涉及初始化，因此生成复现用的 seed 在模型加载完成后、采样开始前重新设置。保存前与加载后的两次生成都从相同 prompt 和 seed 开始，比较完整新增 token ID 列表完全一致；以原始 ID 列表核对生成是否一致。
 
 <a id="jsonl-output"></a>
+
 #### 第三步：保存可解释的样例
 
 samples.jsonl 每行记录 model、checkpoint、tokenizer_hash、prompt、seed、生成设置和原始文本。角色名等短 prompt 要先确认属于字符词表。
@@ -759,7 +669,7 @@ with output_path.open("a", encoding="utf-8") as file:
 3. 分开描述“能看见字符组合规律”和“长句是否连贯”，再结合 Bigram 只看当前 token、GPT 使用前缀解释观察；不要从一个句子直接推断整体模型能力。
 4. 把样例观察与验证 loss 放在一起写入 README，注明小语料、有限预算的限制。生成检查还应保留 ID 数量和重载复现结果，不能用文字看起来合理代替这两项检查。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/generate.py --checkpoint outputs/bigram_char/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --output experiments/mini_gpt/week6/samples.jsonl
@@ -773,36 +683,17 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 - [ ] 样例标注真实模型、tokenizer、prompt、seed 与设置。
 
 <a id="day-6"></a>
+
 ## Day 6：语言模型比较与核心流程重写
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [困惑度评估说明（中文译文）](https://hugging-face.cn/docs/transformers/perplexity) | PPL 定义与 tokenizer 对指标的影响 | 理解下周 BPE 比较边界 |
 | [总计划语言模型验收](StudyPlan.md#acceptance) | 同 tokenizer 的基线要求 | 整理本周验证结果 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 核对曲线、tokenizer 与配置 |
-| 1.5h | 分析验证差异与生成样例 |
-| 1h | 有限参考重写前向/生成核心 |
-| 0.5h | 更新本周 README |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 保存 `week6/results.csv`：model、tokenizer_hash、split=val、val_loss、参数量、steps、耗时；把两组验证 loss 与生成样例放在同一口径下解释。
-
-2. 比较同字符 tokenizer 下 GPT 与 Bigram 的验证 loss；GPT 能利用更长前缀，但有限预算下不保证更优。实现或统计检查不通过时先修复；检查通过而 GPT 未胜出时，保留真实结果并解释局限，可以进入下一周。
-
-3. 有限参考下重写错位样本、下一 token 交叉熵和逐步生成核心，解释 causal Mask 为什么必要。
-
-4. 更新本周 README，链接曲线、样例、split manifest 和 tokenizer；原文测试集继续保留，Temperature、Top-k 和 BPE 按第七周安排。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：核对最终验证表
 
@@ -830,7 +721,7 @@ model、tokenizer_hash、val_loss、steps、params 和时间都对应实际运�
 
 保存原文划分、字符映射、模型配置和 best/last。测试原文继续保留；下周变更 tokenizer 时创建新模型并单独报告指标，不直接把两个 token loss 作大小排序。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_language_model.py -q
@@ -849,7 +740,6 @@ python -m pytest tests/test_language_model.py -q
 - [ ] 因果信息隔离、保存加载与生成复现检查通过。
 - [ ] 配置、tokenizer、曲线、样例和结果口径在本周 README 中齐全。
 
-先用本周 6 小时机动补齐未完成项；仍未通过时，下一周先处理该关卡，后续任务顺延。周末小结控制在约 10–20 分钟，记录实际配置、关键结果、一个解释和仍需巩固的部分。
+第七周原样复用原文划分、字符 tokenizer 和两组模型。测试文本继续保留；BPE 使用新词表和从零初始化的新模型。
 
 通过后进入[第七周](week7.md)。
-

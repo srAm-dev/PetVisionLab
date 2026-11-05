@@ -3,9 +3,10 @@
 学习指南：[第三周逐日任务](../../../docs/week3.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本文件保存第三周的实际环境、复现命令、结果链接和周总结。实验指标来自各组保存的训练记录与独立验证；学习步骤见上方逐日指南，复验时使用下方对应配置和权重。
+这里记录 CIFAR-10 四组实验的环境、命令和验证结果。首次跟做见第三周指南；复验时使用各组保存的配置和对应权重。
 
 <a id="progress"></a>
+
 ## 当前进度（2026-11-04）
 
 Day 1 第二步的数据加载接口迁移已完成：build_mnist_loaders 接收外部创建的 train_transform / eval_transform，训练与验证使用独立 Dataset；train_cv.py、evaluate.py、inspect_mnist.py、check_mnist_training.py 四处调用已同步修改。MNIST 保留原来的 ToTensor → Normalize，归一化仍从原配置读取。操作说明见[统一接口步骤](../../../docs/week3.md#unified-loader-interface)。
@@ -31,7 +32,7 @@ CIFAR 的 build_cifar10_loaders 已完成实现，模拟数据与真实数据检
 - 重复调用复用原划分且不改写文件；相同 seed 的新 loader 具有相同取样顺序；validation_size=10000 时返回 40000 / 10000 / 10000。
 - 6 种非法 validation_size、已有文件的 seed / 大小冲突，以及 16 种损坏划分均被拒绝，已有文件未被覆盖。损坏案例覆盖元数据、索引类型、数量、范围、组内重复及组间重叠。
 
-另运行现有 `tests/test_datasets.py` 与 `tests/test_cv_training.py`，共 **8 passed**；其中现有数据测试针对 MNIST，CIFAR 检查是当次临时运行，不计入这 8 项。该阶段使用模拟数据，未写正式划分、训练指标或图片；之后的真实数据检查见下节。
+另运行现有 `tests/test_datasets.py` 与 `tests/test_cv_training.py`，共 8 passed；其中现有数据测试针对 MNIST，CIFAR 检查是当次临时运行，不计入这 8 项。该阶段使用模拟数据，未写正式划分、训练指标或图片；之后的真实数据检查见下节。
 
 ### 真实数据检查（2026-10-28）
 
@@ -57,14 +58,14 @@ CIFAR 的 build_cifar10_loaders 已完成实现，模拟数据与真实数据检
 
 - `train_cv.py::main` 已接入 training.init_checkpoint，在创建优化器之前检查 step、seed、模型结构、状态键、shape 和 dtype，复制后逐项 torch.equal。CNN off 的 8 项共有状态与 on 完全一致，来源独有的 15 项均属于三个 BN；ResNet off 的 127 项状态与 on 完全一致，两组最大共有状态差均为 0。
 - ResNet 配置统一使用 model.use_residual；省略时按 True 处理。evaluate.py 已兼容旧 checkpoint 未写该字段的情况，仍拒绝开启 / 关闭不匹配。
-- 现有 tests 目录检查为 **40 passed**，覆盖初始状态对齐、新优化器、异常初始状态拒绝、输出保护和旧配置加载；未增加测试文件。
-- 两组真实 GPU smoke 均通过：CNN off 的训练 / 验证各处理 4096 条，ResNet off 各处理 1024 条，loss / accuracy 有限。smoke 只用于接线检查，正式每轮验证覆盖 5000 条。
+- 现有 tests 目录检查为 40 passed，覆盖初始状态对齐、新优化器、异常初始状态拒绝、输出保护和旧配置加载；未增加测试文件。
+- 两组真实 GPU smoke 均通过：CNN off 的训练 / 验证各处理 4096 条，ResNet off 各处理 1024 条，loss / accuracy 有限。smoke 只用于检查数据与训练调用，正式每轮验证覆盖 5000 条。
 - 两份 off 配置保留对应 on 的数据、增强、优化器和 100 轮预算：CNN batch=2048，ResNet batch=512。四份集中快照见 [CNN on](configs/cnn_cifar10.yaml)、[CNN off](configs/cnn_no_bn_cifar10.yaml)、[ResNet on](configs/resnet_cifar10.yaml)、[ResNet off](configs/resnet_no_residual_cifar10.yaml)；on 快照来自原运行目录。
 - 两组 off 现已完成正式训练，产物与来源初始状态的再次核对见下节。
 
 ### Day 5 正式训练验收（2026-11-04）
 
-本次读取四组已有训练产物，并运行 `python -m pytest tests -q`，结果为 **40 passed**；本次检查未启动正式训练。对照问题是：在固定模型主分支、初始权重和训练预算下，BN 与残差连接分别怎样影响拟合速度和验证表现。
+本次读取四组已有训练产物，并运行 `python -m pytest tests -q`，结果为 40 passed；本次检查未启动正式训练。对照问题是：在固定模型主分支、初始权重和训练预算下，BN 与残差连接分别怎样影响拟合速度和验证表现。
 
 | variant | 已完成 epochs | 总参数量 | best epoch | best val loss | best val accuracy |
 | --- | --- | --- | --- | --- | --- |
@@ -136,9 +137,10 @@ ResNet 在第 50 轮时，残差 on / off 的 val accuracy 为 88.98% / 87.58%�
 
 这 8 张样例用于观察具体错误，不能据此估计全体验证集的类别混淆频率；单个错误的高 softmax 得分也不证明其判断正确。单种子、增强随机决策未逐样本对齐，以及 residual off 跳过投影计算的限制继续适用。
 
-本次 `python -m pytest tests -q` 为 **46 passed**，在已有 test_cv_training.py 中检查了 MNIST / CIFAR、val / test 的图像还原与命名、8 张展示与完整样本统计的边界，以及旧错图清理。已确认本次生成图表后，checkpoint、history、配置、运行摘要、第一步验证记录和 results.csv 的 hash 均未改变。
+本次 `python -m pytest tests -q` 为 46 passed，在已有 test_cv_training.py 中检查了 MNIST / CIFAR、val / test 的图像还原与命名、8 张展示与完整样本统计的边界，以及旧错图清理。已确认本次生成图表后，checkpoint、history、配置、运行摘要、第一步验证记录和 results.csv 的 hash 均未改变。
 
 <a id="basicblock-rewrite"></a>
+
 ### Day 6 第三步：重写草稿运行检查（2026-11-04）
 
 草稿为 [tmp/basic_block_rewrite.py](../../../tmp/basic_block_rewrite.py)。保留本文件自己定义的 BasicBlock，新增 check_block 和 main：实际调用重写类完成前向与反向，原实现以 ReferenceBasicBlock 导入，仅用于相同输入、相同权重的数值对照。
@@ -173,6 +175,7 @@ python tmp/basic_block_rewrite.py
 本次脚本 SHA-256 为 `8bd798a63229f0167243a4602e206d1414302877f808e210bf0c6a03bf211427`。本节保存对应运行条件、输入输出和结果；复现时同时保留此草稿并核对版本。原模型源码及 56 个既有训练 / 验证相关文件的 hash 均未改变。
 
 <a id="week5-handoff"></a>
+
 ### Day 6 第四步：第五周材料交接（2026-11-04）
 
 第五周从下表取得各组的实际运行材料。[results.csv](results.csv) 是四组验证结果汇总；下表的 history 和 summary 分别属于单组运行，不能互换。配置链接指向训练时保存在 runs 中的快照，四份[集中配置](configs/)与各自快照内容一致；后续复验优先使用这些快照。
@@ -224,6 +227,7 @@ python scripts/evaluate.py \
 交接材料缺项：无。本次完成配置、日志、摘要、权重、划分、图表与源码的核对；复验前后 56 个相关文件的 hash 均未改变，测试集仍留到第五周统一评估。大权重和原始数据位于 Git 忽略目录 outputs / datasets/raw，跨机器复现时需一并复制对应目录，并按上面的 hash 校验划分与 best。Day 6 第三步的重写草稿运行检查已完成，本周完成情况和后续巩固内容见[周总结](#weekly-summary)。
 
 <a id="environment"></a>
+
 ## 环境准备
 
 沿用 `petvision`；首次 PyTorch 安装与排错见[第二周 Day 1](../../../docs/week2.md#environment)，本周检查和操作按[第三周指南](../../../docs/week3.md)完成。每次运行前：
@@ -236,6 +240,7 @@ python -m pip check
 只在依赖发生变化时更新环境定义和快照。记录实际 GPU、显存、batch 与单 epoch 耗时；原始数据放在 `datasets/raw/`。本周实验目录已提供，配置和脚本按指南实现。
 
 <a id="commands"></a>
+
 ## 运行练习
 
 以下命令均从项目根目录执行，先激活对应 Conda 环境。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。已有正式训练产物，复核结果时使用独立评估入口；需要重新训练时先归档原产物或选择新的运行与输出目录。
@@ -243,12 +248,12 @@ python -m pip check
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/inspect_cifar10.py` | 建立和检查固定划分 |
-| Day 2–4 | `python -m pytest tests/test_resnet.py -q` | CNN、BasicBlock、ResNet18 前反向与阶段形状检查 |
+| Day 2-4 | `python -m pytest tests/test_resnet.py -q` | CNN、BasicBlock、ResNet18 前反向与阶段形状检查 |
 | Day 2 | `python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml --smoke` | CNN 短运行 |
 | Day 2 | `python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml --overfit-samples 64` | CNN 过拟合检查 |
-| Day 2–5 | `python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml` | BN on |
+| Day 2-5 | `python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml` | BN on |
 | Day 5 | `python scripts/train_cv.py --config configs/cv/cnn_no_bn_cifar10.yaml` | BN off |
-| Day 4–5 | `python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml` | 残差 on |
+| Day 4-5 | `python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml` | 残差 on |
 | Day 5 | `python scripts/train_cv.py --config configs/cv/resnet_no_residual_cifar10.yaml` | 残差 off |
 | Day 6 | `python scripts/evaluate.py --config configs/cv/cnn_cifar10.yaml --checkpoint outputs/cnn_bn_on/best.pt --split val` | BN on 独立验证 |
 | Day 6 | `python scripts/evaluate.py --config configs/cv/cnn_no_bn_cifar10.yaml --checkpoint outputs/cnn_bn_off/best.pt --split val` | BN off 独立验证 |
@@ -284,27 +289,27 @@ Day 5 在 BN off 配置设置 `training.init_checkpoint: outputs/cnn_bn_on/initi
 各组实际配置、运行材料和 best 链接见[第五周交接清单](#week5-handoff)，本周汇总表、对照曲线与验证分析见上方 Day 6 记录。大权重与原始数据保存在忽略目录。
 
 <a id="weekly-summary"></a>
+
 ## 周总结（2026-11-04）
 
-**完成情况。** 已统一 MNIST / CIFAR-10 的加载接口，将训练与评估变换分开；实现三层 CNN、按 D2L 结构组装的 ResNet18、BN 开关与残差开关。四组均完成 100 轮训练，每对共有初始状态已核对，四份 best 均经 CUDA、FP32、完整 5000 条验证样本独立复验。两张对照曲线、四组验证错图、[结果汇总表](results.csv)和[第五周交接材料](#week5-handoff)齐备。已有测试验收记录为 46 passed；[重写草稿](../../../tmp/basic_block_rewrite.py)的普通块与下采样块均通过实际前向、反向及原实现对照。
+完成情况。 已统一 MNIST / CIFAR-10 的加载接口，将训练与评估变换分开；实现三层 CNN、按 D2L 结构组装的 ResNet18、BN 开关与残差开关。四组均完成 100 轮训练，每对共有初始状态已核对，四份 best 均经 CUDA、FP32、完整 5000 条验证样本独立复验。两张对照曲线、四组验证错图、[结果汇总表](results.csv)和[第五周交接材料](#week5-handoff)齐备。已有测试验收记录为 46 passed；[重写草稿](../../../tmp/basic_block_rewrite.py)的普通块与下采样块均通过实际前向、反向及原实现对照。
 
-**关键实验结果。** 以下均为同一固定验证集上的 best accuracy，best 按验证 accuracy 选取，持平保留较早一轮。
+关键实验结果。 以下均为同一固定验证集上的 best accuracy，best 按验证 accuracy 选取，持平保留较早一轮。
 
 - BN 对照：cnn_bn_on 为 77.24%，cnn_bn_off 为 61.50%，相差 15.74 个百分点。结合[BN 曲线](figures/bn_comparison.png)，开启 BN 在本轮预算下拟合更快、验证准确率更高；on 组的验证曲线仍有波动，准确率更高与曲线更稳定要分别判断。
 - 残差对照：resnet_on 为 91.02%，resnet_off 为 90.28%，相差 0.74 个百分点。on 组训练准确率首次达到 90% / 98% 分别在第 17 / 55 轮，off 为第 23 / 68 轮；[残差曲线](figures/residual_comparison.png)体现的差异主要是达到相同拟合程度所需的 epoch，本次最终验证差距较小。关闭残差后仍能取得较高准确率，不据此否定残差对优化的作用。
 
-**关键理解与易错点。**
+关键理解与易错点。
 
 - use_1x1conv 负责将旁路的通道数和空间尺寸对齐，use_residual 负责是否计算旁路并相加。普通块显式 use_1x1conv=False 时仍保留恒等残差；主分支最后一个 BN 后先相加，再 ReLU。
 - initial.pt 保存 step=0 的初始状态，供 on / off 对齐后从零进度训练；best.pt / last.pt 保存训练结果。用训练后的 best 代替 initial 会改变消融起点。
 - data.image_size=32 表示原始 CIFAR 图片边长，实际输入为 CNN 的 32×32、ResNet 的 Resize 后 96×96。复验与后续推理计时都要沿用各组真实预处理。
 - 8 张错图是展示数量，全验证集错误数分别为 1138 / 1925 / 449 / 486。样例中的高 softmax 得分也可能对应错误预测；这几张图不能代表全体类别混淆频率。
 
-**结论范围。** 两对内部各自保持划分、共有初始状态、增强策略和训练预算一致；本轮只有 seed=42，随机增强决策未逐样本独立对齐。ResNet off 保留投影参数但跳过其计算，因此总参数量相同不代表执行的计算完全相同。跨 CNN / ResNet 的输入尺寸、参数量和 batch 不同，跨架构分数差不能直接解释为 BN 或残差带来的收益。当前结果用于描述本轮观察，测试集继续保留到第五周统一评估。
+结论范围。 两对内部各自保持划分、共有初始状态、增强策略和训练预算一致；本轮只有 seed=42，随机增强决策未逐样本独立对齐。ResNet off 保留投影参数但跳过其计算，因此总参数量相同不代表执行的计算完全相同。跨 CNN / ResNet 的输入尺寸、参数量和 batch 不同，跨架构分数差不能直接解释为 BN 或残差带来的收益。当前结果用于描述本轮观察，测试集继续保留到第五周统一评估。
 
-**后续巩固。** 工程与实验材料没有缺项；独立解释和有限参考重写能力继续由本人自查，具体检查如下：
+后续巩固。本周工程与实验材料已整理；独立解释和有限参考重写继续按下面几项自查：
 
-1. 不看参考，写出普通块和下采样块的两条路径，说明每层的输出尺寸，并解释恒等旁路与投影旁路各自怎样传递梯度；运行草稿检查不能代替这项自查。
+1. 不看参考，写出普通块和下采样块的两条路径，说明每层的输出尺寸，并解释恒等旁路与投影旁路各自怎样传递梯度；同时检查草稿运行结果和自己的解释。
 2. 结合 BN on 的验证波动和 ResNet 后期的 train / val 差距，巩固 BN 的 train / eval 行为、running statistics，以及训练拟合速度、验证准确率和过拟合的区别。
 3. 按[第四周指南](../../../docs/week4.md)继续 Attention、Mask 和 LayerNorm；第五周复用本周固定划分、实际配置与 best 权重，统一测试前继续使用验证集。多种子复验可作为后续拓展，当前四组材料保持原有实验口径。
-

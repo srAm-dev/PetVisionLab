@@ -3,11 +3,12 @@
 学习指南：[第二周逐日任务](../../../docs/week2.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
+这里记录 MNIST 的环境、配置、运行命令和实测结果。首次跟做按第二周指南进行；复习时先看最终结果，再按命令加载模型检查。
 
-**当前状态：主要实现与正式实验已完成，独立解释 / 重写仍需巩固。** 先看[最终结果](#final-results)和[周总结](#weekly-summary)；分步骤的早期检查保留在下方折叠记录中，其中“尚未训练”等描述仅指当时。
+主要实现与正式实验已完成，独立解释和重写仍需巩固。 先看[最终结果](#final-results)和[周总结](#weekly-summary)；分步骤的早期检查保留在下方折叠记录中，其中“尚未训练”等描述仅指当时。
 
 <a id="environment"></a>
+
 ## 环境准备
 
 沿用 Conda 环境 `petvision`。首次安装、驱动检查和 CUDA 排错按[第二周 Day 1](../../../docs/week2.md#environment)完成；本地包的 editable 安装按[Day 2](../../../docs/week2.md#day-2)完成。
@@ -47,16 +48,17 @@ python -m pytest tests/test_cv_training.py -q
 上述命令用于在已有依赖环境中安装本地项目和运行检查。首次搭建环境仍按 Day1 指南选择配套包，安装后核对实际版本。
 
 <a id="commands"></a>
+
 ## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day1–4 的实现，以及 Day5 的 checkpoint 保存加载和独立 evaluate 入口；相关检查已通过。含 best/last 的正式五轮训练已完成，独立加载验证也已通过；Day6 的完整测试、误分类输出和单批次练习也已完成。若要重新训练，先归档需要保留的当前结果与权重。
+以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day1-4 的实现，以及 Day5 的 checkpoint 保存加载和独立 evaluate 入口；相关检查已通过。含 best/last 的正式五轮训练已完成，独立加载验证也已通过；Day6 的完整测试、误分类输出和单批次练习也已完成。若要重新训练，先归档需要保留的当前结果与权重。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/check_environment.py --output-dir experiments/mnist_mlp/week2` | 打印并记录环境 |
 | Day 1 | `python scripts/torch_basics.py` | Tensor 与 autograd 检查 |
 | Day 2 | `python scripts/inspect_mnist.py` | 固定划分与数据检查 |
-| Day 3–6 | `python -m pytest tests/test_cv_training.py -q` | 当前 6 项：形状 / 梯度 / 设备 / 统计、保存加载、best/last 选择 |
+| Day 3-6 | `python -m pytest tests/test_cv_training.py -q` | 本周检查范围：形状 / 梯度 / 设备 / 统计、保存加载、best/last 选择 |
 | Day 4 第三步 | `python scripts/check_mnist_training.py` | 已有脚本：独立运行两批 smoke 与固定 64 样本拟合 |
 | Day 4 | `python scripts/train_cv.py --help` | 核对配置参数与互斥检查模式 |
 | Day 4 | `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke` | 两批次 smoke |
@@ -71,14 +73,14 @@ python -m pytest tests/test_cv_training.py -q
 
 基线：seed=42，官方训练集 55,000/5,000，MLP 784→256→128→10，Adam lr=1e-3，batch=128，epochs=5，FP32。训练从新模型起步，按验证准确率选择 best；测试集只在配置冻结后使用。命令中的 output_dir、experiment_dir 和 split 文件路径在 YAML 中明确保存。
 
-MNIST 下载、固定划分与 DataLoader 见[Day 2 数据步骤](../../../docs/week2.md#mnist-data)，训练对象接线见[Day 4](../../../docs/week2.md#training-objects)，实际保存 / 加载操作见[Day 5](../../../docs/week2.md#checkpoint-io)。
+MNIST 下载、固定划分与 DataLoader 见[Day 2 数据步骤](../../../docs/week2.md#mnist-data)，创建训练对象见[Day 4](../../../docs/week2.md#training-objects)，实际保存 / 加载操作见[Day 5](../../../docs/week2.md#checkpoint-io)。
 
 Day 2 数据条件：`data_dir=datasets/raw`，`split_path=experiments/mnist_mlp/week2/mnist_split.json`，seed=42，batch_size=128，num_workers=0，drop_last=False；预处理依次为 ToTensor 与 Normalize(mean=(0.5,), std=(0.5,))。训练打乱批次顺序，验证和测试按固定顺序取样；划分不随每轮训练改变。
 
 <details>
-<summary>历史检查记录：Day 3–5 的实现与调试过程（2026-10-24 至 2026-10-27）</summary>
+<summary>历史检查记录：Day 3-5 的实现与调试过程（2026-10-24 至 2026-10-27）</summary>
 
-以下记录保留各次检查当时的范围。临时检查数量不等于仓库现有 pytest 测试数量；当前保留 6 个测试函数，较早的临时接口检查并非都已加入 tests。
+以下保留各次检查当时的范围。第二周结束时保留 6 个测试函数，较早的临时接口检查并非都已加入 tests；第三周继续扩展了同一测试文件，数量以当前文件为准。
 
 Day 3 检查记录（2026-10-24）：运行 `python -m pytest tests/test_cv_training.py -q -s`，结果为 `3 passed`。CPU 前反向检查通过，设备测试在 RTX 4060 Laptop GPU（`cuda:0`）上通过。B=1/4 时 logits 分别为 `[1,10]` / `[4,10]`，损失为有限标量，所有可训练参数的梯度存在且有限；参数量为 235146。
 
@@ -113,6 +115,7 @@ Day5 复查（2026-10-27）：现有 6 项测试全部通过，设备测试使�
 </details>
 
 <a id="final-results"></a>
+
 ### Day6 最终结果与检查范围（2026-10-27）
 
 本次文档整理读取已有配置、history、checkpoint 和 test_metrics.json，确认配置一致，测试记录的 checkpoint epoch 与 best 对应，划分 SHA-256 相同；没有重新训练或重跑测试集。最终配置为 MLP 784→256→128→10、235146 个参数、seed=42、Adam lr=0.001、weight_decay=0、batch=128、5 epochs、float32。训练 / 验证来自官方训练集的固定 55000 / 5000 划分，测试使用官方独立 10000 张图片；预处理为 ToTensor → Normalize(mean=[0.5], std=[0.5])。
@@ -127,13 +130,13 @@ best 按验证准确率选择；本次最后一轮恰好最优，所以 best 和
 
 划分 SHA-256：`085bc8523d96d53669e5f04ae2857dbfd6910ca605b2c4df0e3c39ec37acf385`。权重位于项目根目录 `outputs/mnist_mlp/best.pt`，该目录被 Git 忽略；在另一台机器复现评估需另行取得权重或按上述正式训练命令重新生成。训练重跑会覆盖默认输出，需先归档要保留的配置、日志、图和权重。
 
-**失败样例分析。** [误分类图](figures/mistakes.png)按测试集顺序收集前 8 张错分，包含 2→4、9→8、4→2、6→0、9→3、2→7。例如图中 6 的闭合圆环明显，可能与 0 的外形相似；这是观察图片后的解释，不能证明模型错分的具体原因。9→3 的 softmax 分数为 96.08%，说明分数高也可能预测错误。这 8 张不是随机抽样，不能据此判断整个测试集最常见的混淆类别。测试准确率低于计划中的 97% 参考值 0.38 个百分点，按真实结果保留，不依据测试样例反复调参；后续方案在训练 / 验证集比较，另列实验。
+失败样例分析。 [误分类图](figures/mistakes.png)按测试集顺序收集前 8 张错分，包含 2→4、9→8、4→2、6→0、9→3、2→7。例如图中 6 的闭合圆环明显，可能与 0 的外形相似；这是观察图片后的解释，不能证明模型错分的具体原因。9→3 的 softmax 分数为 96.08%，说明分数高也可能预测错误。这 8 张不是随机抽样，不能据此判断整个测试集最常见的混淆类别。测试准确率低于计划中的 97% 参考值 0.38 个百分点，按真实结果保留，不依据测试样例反复调参；后续方案在训练 / 验证集比较，另列实验。
 
-**实际调试案例。** Day6 输出代码曾把 JSON 保存和绘图写在 test 分支外，导致 val 模式也尝试写测试结果，并因 result 未赋值而报错；现已全部放进 test 分支。原先固定访问 8 个 mistakes 元素，在不足 8 张时会越界，改为先关闭全部坐标轴，再用 `zip(axes.flat, mistakes)` 只画已有样例。反归一化和输出目录读取 YAML；零错分时记录 0 并清理旧图。相关 5 项临时检查已通过，覆盖零 / 少于 / 超过 8 张错分、val 不改写测试结果、标签与分数正确性；这些是合成数据检查，不计入正式模型指标。
+实际调试案例。 Day6 输出代码曾把 JSON 保存和绘图写在 test 分支外，导致 val 模式也尝试写测试结果，并因 result 未赋值而报错；现已全部放进 test 分支。原先固定访问 8 个 mistakes 元素，在不足 8 张时会越界，改为先关闭全部坐标轴，再用 `zip(axes.flat, mistakes)` 只画已有样例。反归一化和输出目录读取 YAML；零错分时记录 0 并清理旧图。相关 5 项临时检查已通过，覆盖零 / 少于 / 超过 8 张错分、val 不改写测试结果、标签与分数正确性；这些是合成数据检查，不计入正式模型指标。
 
-**第三步练习。** 草稿 `tmp/cv_trainer_rewrite.py` 使用新建 MLP 和两批合成数据，在 GPU 上各执行一次训练与验证。两次输出均为 `[8,10]`，loss 有限；训练后 6 个参数张量变化，验证后所有参数不变且输出不记录梯度。6 个张量对应三个 Linear 的 weight/bias，共含 235146 个标量参数；“张量变化”只要求其中至少一个元素变化。核心步骤由草稿重写，运行与断言部分在辅助下补齐，不据此宣称已完全独立掌握。tmp 被 Git 忽略，正式可复现检查以 tests 和 scripts 中的实现为准。
+第三步练习。 草稿 `tmp/cv_trainer_rewrite.py` 使用新建 MLP 和两批合成数据，在 GPU 上各执行一次训练与验证。两次输出均为 `[8,10]`，loss 有限；训练后 6 个参数张量变化，验证后所有参数不变且输出不记录梯度。6 个张量对应三个 Linear 的 weight/bias，共含 235146 个标量参数；“张量变化”只要求其中至少一个元素变化。核心步骤由草稿重写，运行与断言部分在辅助下补齐，不据此宣称已完全独立掌握。tmp 被 Git 忽略，正式可复现检查以 tests 和 scripts 中的实现为准。
 
-Day 4 当时的配置接线顺序：先按[第四步](../../../docs/week2.md#mnist-configurable-interfaces)改造 MLP 和数据接口，再写 YAML、读取配置并创建对象。跨周的数据加载接口迁移与检查结果统一记录在[第三周进度](../../cnn_vs_resnet/week3/README.md#progress)，操作方法见[第三周统一接口步骤](../../../docs/week3.md#unified-loader-interface)。上表中的命令不变，本周历史指标与配置保留原记录。
+Day 4 当时的配置传参顺序：先按[第四步](../../../docs/week2.md#mnist-configurable-interfaces)改造 MLP 和数据接口，再写 YAML、读取配置并创建对象。跨周的数据加载接口迁移与检查结果统一记录在[第三周进度](../../cnn_vs_resnet/week3/README.md#progress)，操作方法见[第三周统一接口步骤](../../../docs/week3.md#unified-loader-interface)。上表中的命令不变，本周历史指标与配置保留原记录。
 
 完整 YAML 见[Day 4 配置示例](../../../docs/week2.md#mnist-config)，参数解析见[最小入口示例](../../../docs/week2.md#cli-config)。统一使用 `data.root`、`data.split_path`、`data.batch_size` 和 `training.learning_rate`；相对路径均从项目根目录解释。
 
@@ -156,19 +159,21 @@ Day 4 当时的配置接线顺序：先按[第四步](../../../docs/week2.md#mni
 本次已核对原始数据目录 datasets/raw 和权重目录 outputs 被 Git 忽略，且没有其中的文件被 Git 跟踪。小型配置、指标、图片及本周文档作为实验记录保留；临时草稿不作为正式交付文件。
 
 <a id="doc-review"></a>
+
 ### 文档复核（2026-10-27，CPU）
 
-本次重新运行 `python -m pytest tests/test_cv_training.py -q`，结果为 **6 passed**；独立执行上表的 `evaluate.py ... --split val`，覆盖 5000 条，accuracy=0.9642、loss=0.11792092759907245。与原日志的准确率一致，loss 相差约 9.3e-9。检查使用现有 petvision 解释器和 torch 2.14.1+cu130，但当前检查进程的 `torch.cuda.is_available()` 为 False，因此设备测试和独立验证使用 CPU；这不改写此前 GPU 运行记录。
+本次重新运行 `python -m pytest tests/test_cv_training.py -q`，结果为 6 passed；独立执行上表的 `evaluate.py ... --split val`，覆盖 5000 条，accuracy=0.9642、loss=0.11792092759907245。与原日志的准确率一致，loss 相差约 9.3e-9。检查使用现有 petvision 解释器和 torch 2.14.1+cu130，但当前检查进程的 `torch.cuda.is_available()` 为 False，因此设备测试和独立验证使用 CPU；这不改写此前 GPU 运行记录。
 
 本次未重新训练、未重跑测试集，未更新原指标、图表、权重或环境快照。指南中的 `test_mlp_configurable_dimensions` 是建议保留的检查，目前不在这 6 项测试中；相关能力此前只留有上方临时检查记录，不计为现有自动测试覆盖。
 
 <a id="weekly-summary"></a>
+
 ## 周总结
 
-- **完成情况**：第二周的数据划分、参数化 MLP、训练 / 验证、smoke、小批过拟合、五轮训练、best/last、独立加载验证、最终测试及误分类展示均已有实现或记录。单批次草稿已实际运行通过，本周结果与复现入口已整理。
-- **实验结论**：固定五轮 MLP 基线取得 val accuracy=96.42%、test accuracy=96.62%，测试错分 338/10000；低于 97% 参考值，保留真实结果。验证独立重载一致，保存加载固定输入误差为 0；少量误分类只用于观察，不能替代全量统计。
-- **关键理解**：55k 训练集用来更新参数，5k 验证集用来比较方案与选择 best，10k 测试集在配置确定后评估。zero_grad 清除累积梯度；eval 切换层行为，no_grad 关闭梯度记录，两者作用不同。保存配置与划分 hash 用来核对评估条件，best 与 last 可以属于同一轮。
-- **需要巩固**：在交互环境自行定义 train_one_epoch 和 evaluate，使用新建 MLP 与两批合成数据实际调用；训练前 clone 参数，更新后检查发生变化；验证前后比较参数完全相同，并检查输出不记录梯度。然后按 `[B,1,28,28]→[B,784]→[B,10]` 说明计算过程，练习 Tensor 的广播、布尔索引与 Matplotlib 子图。草稿检查通过不代替独立解释。
-- **复现信息缺项**：已确认 PyTorch / torchvision 通过 `pip install` 安装，完整命令未逐字留存，已保存实际版本清单；训练耗时、训练峰值显存没有采集，不用当前显存代替。下次环境变更时保留完整安装命令，后续实验按计划记录资源指标。
+- 完成情况：第二周的数据划分、参数化 MLP、训练 / 验证、smoke、小批过拟合、五轮训练、best/last、独立加载验证、最终测试及误分类展示均已有实现或记录。单批次草稿已实际运行通过，本周结果与复现入口已整理。
+- 实验结论：固定五轮 MLP 基线取得 val accuracy=96.42%、test accuracy=96.62%，测试错分 338/10000；低于 97% 参考值，保留真实结果。验证独立重载一致，保存加载固定输入误差为 0；少量误分类只用于观察，不能替代全量统计。
+- 关键理解：55k 训练集用来更新参数，5k 验证集用来比较方案与选择 best，10k 测试集在配置确定后评估。zero_grad 清除累积梯度；eval 切换层行为，no_grad 关闭梯度记录，两者作用不同。保存配置与划分 hash 用来核对评估条件，best 与 last 可以属于同一轮。
+- 需要巩固：在交互环境自行定义 train_one_epoch 和 evaluate，使用新建 MLP 与两批合成数据实际调用；训练前 clone 参数，更新后检查发生变化；验证前后比较参数完全相同，并检查输出不记录梯度。然后按 `[B,1,28,28]→[B,784]→[B,10]` 说明计算过程，练习 Tensor 的广播、布尔索引与 Matplotlib 子图。草稿检查通过不代替独立解释。
+- 复现信息缺项：已确认 PyTorch / torchvision 通过 `pip install` 安装，完整命令未逐字留存，已保存实际版本清单；训练耗时、训练峰值显存没有采集，不用当前显存代替。下次环境变更时保留完整安装命令，后续实验按计划记录资源指标。
 
 进入第三周前，优先复习上述仍需巩固的内容；现有 MNIST 基线与测试结果保持为本周记录，后续模型和调参使用新的实验目录。

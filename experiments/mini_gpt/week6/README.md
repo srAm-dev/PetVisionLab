@@ -3,9 +3,10 @@
 学习指南：[第六周逐日任务](../../../docs/week6.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
+本周尚未记录实测结果。按第六周指南完成同字符词表的 Bigram 和 Mini-GPT 后，在这里记录验证 loss、训练条件和生成样例。
 
 <a id="environment"></a>
+
 ## 环境准备
 
 沿用 Conda `petvision` 与前几周依赖，不需要下载预训练 GPT 权重。数据来源见 [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt)，下载内容和处理规则在 split manifest 记录。
@@ -18,20 +19,21 @@ python -m pip check
 先按小模型配置测时与显存，若统一缩小 batch/context/steps，需写入两组配置与实验报告。训练与验证数据窗口来自各自原文文件。
 
 <a id="commands"></a>
-## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。参数是本周要实现的接口约定。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
+## 实现后的运行命令
+
+以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/prepare_text.py` | 下载记录、80/10/10 原文划分与字符词表 |
-| Day 2–4 | `python -m pytest tests/test_language_model.py -q` | 错位、形状、因果性与保存加载检查 |
+| Day 2-4 | `python -m pytest tests/test_language_model.py -q` | 错位、形状、因果性与保存加载检查 |
 | Day 4 | `python scripts/train_gpt.py --config configs/llm/bigram_char.yaml` | 接通保存后正式训练字符 Bigram |
 | Day 4 | `python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml` | 接通保存后正式训练字符 Mini-GPT |
 | Day 5 | `python scripts/generate.py --checkpoint outputs/bigram_char/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --output experiments/mini_gpt/week6/samples.jsonl` | Bigram 生成 |
 | Day 5 | `python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --output experiments/mini_gpt/week6/samples.jsonl` | GPT 生成 |
 
-## 配置与结果
+## 计划配置与待保存结果
 
 V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允许输入的最大 token 数。一步 step 是一次批次更新；随机采样 2000 步不等于把整份语料遍历 2000 遍。NLL 是正确目标概率的负自然对数，PPL=exp(平均 NLL)；具体定义与形状见[本周符号表](../../../docs/week6.md#lm-shapes)。
 
@@ -39,11 +41,11 @@ V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允�
 
 验收要求是实现与统计检查通过、比较可复现、结果解释有依据，不要求有限预算下 GPT 一定胜出。相同更新步数不代表相同计算量或两组都已收敛；若 GPT 未更优，记录检查证据和曲线分析，后续补充实验保留独立配置与结果。
 
-从文本 / tokenizer 文件读取到 token IDs、sample_batch 和语言训练函数的接线见[Day 2](../../../docs/week6.md#text-inputs)；train_step / evaluate_lm 放在 src/petvision/training/lm_trainer.py。last 在验证时点和最终步保存，恢复以文件中的 step 为准。
+从文本 / tokenizer 文件读取到 token IDs、sample_batch 和语言训练函数的调用见[Day 2](../../../docs/week6.md#text-inputs)；train_step / evaluate_lm 放在 src/petvision/training/lm_trainer.py。last 在验证时点和最终步保存，恢复以文件中的 step 为准。
 
 两个训练函数统一返回 loss / n_target_tokens。即使最终 steps 不是 eval_interval 的整数倍，末步也执行完整验证并保存；每次只追加当前 row。各运行独立保存 figures/loss_curves.png，两组都完成后再生成周目录下的合并图，BPE 可复用同一入口。
 
-完整 YAML 和创建步骤见[第六周指南](../../../docs/week6.md)。Day 2–3 先做小规模检查，Day 4 完成保存后才启动正式 2000 步；`--output` 将完整生成样例追加到指定 JSONL 文件。
+完整 YAML 和创建步骤见[第六周指南](../../../docs/week6.md)。Day 2-3 先做小规模检查，Day 4 完成保存后才启动正式 2000 步；`--output` 将完整生成样例追加到指定 JSONL 文件。
 
 验证使用[Day 2 固定分窗规则](../../../docs/week6.md#eval-windows)：长度 N 的 split 覆盖索引 1..N-1 的全部目标，窗口共享边界输入但不重复统计目标；尾窗按实际长度评估。由 `src/petvision/training/lm_trainer.py::evaluate_lm` 累加总 NLL 后除以 N-1，返回 loss / n_target_tokens；该函数退出时恢复调用前的 train/eval 模式，train_step 每次更新前切 train；两组使用相同窗口和上下文重置方式，第七周最终测试沿用此规则。
 
@@ -56,14 +58,12 @@ V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允�
 | `samples.jsonl` | 真实生成文本、prompt、seed 与模型信息 |
 | `outputs/bigram_char / outputs/mini_gpt` | 项目根下：best/last 与配套模型信息 |
 
-结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。
+运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
 
 ## 周总结
 
-- 完成情况与仍需补齐的关卡：待本周结束后填写。
-- 关键实验结果与结论：待实际运行后填写。
-- 一两条关键理解与典型错误：待填写。
-- 后续要巩固的部分：待填写。
+- 同词表比较：待填写 Bigram/GPT 的验证 loss、预算与曲线来源。
+- 生成与加载：待链接固定 prompt/seed 的样例和加载一致性结果。
+- 理解与问题：待填写错位目标、causal Mask 的解释和遇到的错误。
 
-保留已有曲线、结果表和配置快照，周末用约 10–20 分钟简要总结。日常验收直接检查代码、输出、图表与解释。
-
+周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

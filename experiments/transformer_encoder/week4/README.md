@@ -3,9 +3,10 @@
 学习指南：[第四周逐日任务](../../../docs/week4.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
+本周尚未记录实测结果。先按第四周指南实现 Attention 和 Encoder，再在这里保存参考误差、Mask 检查、张量流说明和未理解的部分。
 
 <a id="environment"></a>
+
 ## 环境准备
 
 沿用 `petvision` 和第二周的 torch / pytest，不新增大模型依赖。CPU float64 做小尺寸数值对照，GPU FP32 确认设备兼容；完整操作和 Mask 语义见[第四周指南](../../../docs/week4.md)。版本变化时记录 torch 版本和参考 API。
@@ -16,19 +17,20 @@ python -m pip check
 ```
 
 <a id="commands"></a>
-## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。参数是本周要实现的接口约定。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
+## 实现后的运行命令
+
+以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/attention_basics.py` | 单头小矩阵演示 |
-| Day 2–3 | `python -m pytest tests/test_attention.py -q` | 多头、Mask、参考输出/梯度 |
+| Day 2-3 | `python -m pytest tests/test_attention.py -q` | 多头、Mask、参考输出/梯度 |
 | Day 4 | `python -m pytest tests/test_layernorm.py tests/test_encoder.py -q` | LayerNorm 对照与 Block 检查 |
 | Day 5 | `python -m pytest tests/test_encoder.py -q` | 位置编码、Block 与 Encoder |
 | Day 6 | `python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q` | 本周统一检查 |
 
-## 配置与结果
+## 计划配置与待保存结果
 
 形状中 B 是批次序列数、T 是每条序列的位置数、C 是每个位置的特征数；heads 是头数，每头维度为 C/heads。Q/K 决定关注权重，V 提供被加权的信息；具体矩阵计算见[形状与术语说明](../../../docs/week4.md#attention-shapes)和[Day1 手算](../../../docs/week4.md#day-1)。
 
@@ -44,14 +46,12 @@ python -m pip check
 | `tests/test_attention.py` | 项目根下：Attention 数值与行为检查 |
 | `tests/test_layernorm.py / tests/test_encoder.py` | 项目根下：归一化、位置编码、组合检查 |
 
-结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。
+运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
 
 ## 周总结
 
-- 完成情况与仍需补齐的关卡：待本周结束后填写。
-- 关键实验结果与结论：待实际运行后填写。
-- 一两条关键理解与典型错误：待填写。
-- 后续要巩固的部分：待填写。
+- 参考对照：待运行后填写输出、输入梯度和参数梯度的最大误差、容差及设备。
+- Mask 与形状：待检查后填写未来隔离、padding、全屏蔽处理和张量流链接。
+- 重写与问题：待填写自己重写的片段、检查结果和仍不理解的计算。
 
-保留已有曲线、结果表和配置快照，周末用约 10–20 分钟简要总结。日常验收直接检查代码、输出、图表与解释。
-
+周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

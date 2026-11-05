@@ -1,24 +1,22 @@
-# 第八周逐日学习指南：CLIP、LLM / VLM 推理与八周总结
+# 第八周：CLIP、LLM / VLM 推理与八周总结
 
-> 更新日期：2026-11-01<br>
-> 对应计划：[总学习计划](StudyPlan.md#stage-4)  
-> 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
-> 本周成果：本地完成 CLIP 零样本任务，云端运行小型 LLM 与 VLM，保存至少 20 张图×每图2问的完整结果、人工判定和结构图，整理最终报告。  
-> 环境：CLIP 可在本地 Conda `petvision` 运行；LLM/VLM 在云端 48GB GPU 的独立 Conda `petvision-vlm` 运行，实际依赖和精度以模型卡与兼容版本为准。
+先运行 CLIP 和小型 LLM，再跟踪真实图片进入 VLM 的路径。用至少 20 张图片、每张 2 个问题做一次人工核查，整理八周报告。
 
-## 怎么使用这份指南
+对应[总计划第 8 周](StudyPlan.md#week-8)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-先确认[上一周指南](week7.md)的基础关卡已通过。前七周基础和核心模型应已验收；本周主要阅读与推理，完整模型微调、Encoder–Decoder 和 Gradio 系统保留到八周之后。
+环境：CLIP 可在本地 Conda `petvision` 运行；LLM/VLM 在云端 48GB GPU 的独立 Conda `petvision-vlm` 运行，实际依赖和精度以模型卡与兼容版本为准。
 
-本指南按学习日写出环境准备、文件创建、操作步骤、运行命令和自查方法，跟做时从当天内容顺序往下读即可。[本周 README](../experiments/vlm_qa/week8/README.md) 保存实际环境、复现命令索引、结果链接和周总结。源码、配置、数据与结果按学习日逐步创建；下面的命令在完成相应实现后执行，代码由你亲手完成。
+## 开始前
 
-每天按“读指定部分 → 写代码 → 运行检查 → 解释结果”执行。检查通过后再扩大数据或训练预算；日常通过代码、输出和解释验收，周末集中更新本周 README。学习时间包含机动时间；训练等待与阅读重叠时只计一次。
+前七周的基础检查和实验材料已整理，能解释自回归生成及 checkpoint。本周使用预训练权重做推理。
 
-文件路径均相对于项目根目录；可复用源码放在 `src/petvision/`。新增源码子目录时，在每层包目录放入空的 `__init__.py`；已有目录和文件继续修改，保留此前通过检查的内容。`scripts/` 放运行入口，`tests/` 放检查，结果由脚本运行后生成。
+按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vlm_qa/week8/README.md)。
 
-## 本周目录蓝图
+更新日期：2026-11-06。
 
-以下为本周逐步形成的文件，注释标明创建或修改时间。`README.md` 已提供；其余文件和结果在执行对应任务时产生。
+## 本周文件
+
+按注释中的学习日逐步创建或修改文件；已有文件继续使用，结果在运行后保存。
 
 ```text
 PetVisionLab/
@@ -50,7 +48,7 @@ PetVisionLab/
 
 ## 固定条件与接口约定
 
-首选入门模型为 CLIP `openai/clip-vit-base-patch32`、LLM `HuggingFaceTB/SmolLM2-360M-Instruct`、VLM `HuggingFaceTB/SmolVLM-256M-Instruct`，均先按官方模型卡验证一次最小推理，再记录实际 commit/revision、模型类与依赖版本。它们是小模型起点，不要求耗尽 48GB 显存。若兼容性问题需更换模型，保留变更原因及新版本记录。
+本轮入门配置使用 CLIP `openai/clip-vit-base-patch32`、LLM `HuggingFaceTB/SmolLM2-360M-Instruct`、VLM `HuggingFaceTB/SmolVLM-256M-Instruct`，均先按官方模型卡验证一次最小推理，再记录实际 commit/revision、模型类与依赖版本。这些小模型用于先跑通推理和检查结构。若兼容性问题需更换模型，保留变更原因及新版本记录。
 
 本周超出 D2L 基础网络的手写范围，正式推理按所选权重的模型卡、config、processor 与对应版本的官方 API 文档执行；D2L 的 Attention / Transformer 用于理解概念。先按一个完整官方示例跑通，再接项目配置与结果保存，不将前几周的自写 Block、位置编码或 CIFAR 归一化套入预训练模型。
 
@@ -64,7 +62,7 @@ PetVisionLab/
 
 CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 张，以固定英文类别模板做零样本分类，使用模型自己的 processor。结果单列为预训练零样本条件。LLM/VLM 首次用 batch=1、greedy（do_sample=False）、max_new_tokens=128、固定 prompt 与精度；GPU 支持时可用 BF16，否则明确记录 FP32/FP16。VQA 在推理前写好至少 20 张图、每图 2 个问题与判定标准，覆盖类别、颜色、数量、位置和信息不足；每个问题独立上下文，不让前一题答案进入下一题。所选 SmolVLM 模型卡标注主要语言为英语，本轮优先用英文问题与判定标准；如增加中文题，单独报告语言条件和结果，避免把语言能力差异全部归因为视觉理解。
 
-## 六天总览
+## 六天安排
 
 <a id="inference-terms"></a>
 本周先区分下列对象和记录，后面的脚本会分别创建或保存它们：
@@ -81,21 +79,20 @@ CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 �
 | max_new_tokens | 最多新增多少个 token，不含输入 prompt；遇到结束 token 时可能提前停止 |
 | image_id / qid / run_id | 图片编号 / 问题编号 / 一整轮推理的编号；同一轮的所有题共享 run_id，重跑才换一个 |
 
-| 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
-| --- | --- | --- | --- | --- |
-| Day 1 | CLIP 图文相似度与零样本分类 | 4h | 1h | 固定 200 张图的零样本结果 |
-| Day 2 | 云端 Conda 环境与小型 LLM | 4h | 1h | LLM 脚本、Chat Template 与版本记录 |
-| Day 3 | 真正的图像输入与 VLM 张量流 | 4h | 1h | 单图问答与实际模块结构 |
-| Day 4 | 20 张图、40 个问题的完整评估 | 4h | 1h | 原始回答、预先标准和人工判定 |
-| Day 5 | 跨模块复盘与最终报告初稿 | 4h | 1h | 有证据的八周报告 |
-| Day 6 | 复现抽查、解释与最终整理 | 4h | 1h | 最终报告和下一轮学习清单 |
-| Day 7 | 休息 | 0h | 0h | — |
-| 合计 | — | 24h | 6h | 30h |
+| 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
+| --- | --- | --- |
+| [Day 1](#day-1) | 创建 CLIP 配置和 `scripts/run_clip.py`，保存本地环境 | 验证集每类 20 张，共 200 张；固定 revision、类别模板和原始输出 |
+| [Day 2](#day-2) | 建立云端 `petvision-vlm`，创建 LLM 配置与 `scripts/infer_llm.py` | 五个固定 prompt 完成推理；只解码新增 token；保存模型和环境信息 |
+| [Day 3](#day-3) | 创建 VLM 配置和 `scripts/infer_vlm.py`、`tensor_flow.md` | 单图输入含图像张量；视觉模块到语言模型的实际形状可说明 |
+| [Day 4](#day-4) | 准备图片清单和问题，运行批量推理并人工判定 | 至少 20 图/40 题；每题有预先标准、原始输出、状态与判定 |
+| [Day 5](#day-5) | 创建 `docs/final_report.md`，补齐模型 manifest 和张量流 | 各项结论指向已有结果；已完成、待补和拓展分开记录 |
+| [Day 6](#day-6) | 抽查最小复现，更新本周 README 和项目导航 | 能解释六个核心问题；失败例子与下一轮任务写清楚 |
 
 <a id="day-1"></a>
+
 ## Day 1：CLIP 图文相似度与零样本分类
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -103,28 +100,10 @@ CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 �
 | [CLIP 官方实现](https://github.com/openai/CLIP) | zero-shot 示例、特征归一化与相似度 | 理解算法；本周实际加载接口按下方 HF 模型卡 |
 | [CLIP 模型卡](https://huggingface.co/openai/clip-vit-base-patch32) | 模型加载与对应预处理 | 运行固定模型/revision |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读 CLIP 与模型卡 |
-| 2h | 实现固定样本的零样本分类 |
-| 1h | 保存结果与失败样例并解释分数 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `configs/cv/clip_zeroshot.yaml` 和 `scripts/run_clip.py`。沿用 CIFAR 验证索引，每类按固定种子选 20 张并保存实际索引；加载时使用 CLIP 对应 processor，不复用分类 CNN 的归一化。
-
-2. 固定 10 个英文类别与模板，例如 a photo of a {class}。获取图像与文本特征，按参考实现归一化后计算相似度并得到预测，打印实际 embedding 形状。
-
-3. 在 eval 和关闭梯度下跑完 200 张，保存 image_id、真实类、预测类、类别得分及配置标识到 clip_results.csv，报告该固定子集 accuracy 和失败样例。
-
-4. 说明 softmax 得分依赖候选类别与模板；CLIP 预训练零样本结果单列，不与第五周从零训练预算混为同一种设置。按下面步骤准备依赖、固定权重 revision 并保存本地环境。
-
-### 分步操作与自查
+### 操作步骤
 
 <a id="clip-environment"></a>
+
 #### 第一步：补充本地依赖并建立 CLIP 配置
 
 在本地项目根目录激活已经验证过的环境，先检查现有 PyTorch，再按 [Transformers 安装说明（官方中文）](https://huggingface.co/docs/transformers/zh/installation)和 [CLIP 模型卡](https://huggingface.co/openai/clip-vit-base-patch32)补充推理依赖：
@@ -202,6 +181,7 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.tx
 10 个类别各对应一句固定英文模板，例如 `a photo of a cat`。类别顺序与输出列顺序一致，先打印类别列表核对。
 
 <a id="clip-inputs"></a>
+
 #### 第三步：创建 CLIP 对象并处理图文输入
 
 图像由 CLIP processor 调整尺寸和归一化，文本由配套 tokenizer 编码。本周使用预训练模型配套的 processor；第三、五周的 v2 分类预处理不适用于直接生成它的输入。创建原始 CIFAR10 数据集时设置 `transform=None`，取出的 RGB PIL 图片直接传给 processor，不先经过 v2.ToDtype / v2.Normalize，也不添加训练用随机增强，避免重复缩放和归一化。Day 3 的 VLM 同样把 RGB PIL 图片交给其配套 processor，由它按模型要求处理。
@@ -270,7 +250,7 @@ clip_results.csv 每张一行，含 image_id、真实类、预测类、分数和
 
 在 `scripts/run_clip.py::main()` 完成完整 accuracy 统计后，按固定子集顺序选取最多 8 条预测错误的记录；用每条 image_id 取原始 PIL 图片，调用 plt.subplots 建立子图，逐张 imshow，并在标题标注真实类 / 预测类。先创建父目录，再 savefig 到 `experiments/vlm_qa/week8/figures/clip_mistakes.png`，保存后关闭 figure。直接显示原图，不对 PIL 再逆归一化；没有错误时在 README 记录 0 个样例。样例仅用于解释，accuracy 始终从完整 200 张计算。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/run_clip.py --config configs/cv/clip_zeroshot.yaml
@@ -283,9 +263,10 @@ python scripts/run_clip.py --config configs/cv/clip_zeroshot.yaml
 - [ ] 能解释 embedding 相似度与候选类别分数的含义。
 
 <a id="day-2"></a>
+
 ## Day 2：云端 Conda 环境与小型 LLM
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -294,31 +275,15 @@ python scripts/run_clip.py --config configs/cv/clip_zeroshot.yaml
 | [第五周模型计时方法](week5.md#inference-timing)、[第六周 JSONL 写入](week6.md#jsonl-output) | 同步与 perf_counter；每行一个结果对象 | 把资源与完整回答接到推理循环 |
 | [PyTorch 安装说明（中文译文）](https://pytorch.ac.cn/get-started/locally/)（[官方命令向导](https://pytorch.org/get-started/locally/)） | 云端驱动对应 wheel | 验证独立环境 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 建立独立云端环境并验证 GPU |
-| 1h | 阅读模型卡与 Chat Template |
-| 2h | 实现 LLM 推理、记录输入输出与资源 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 同步源码和配置到云端项目，按下面第一步创建独立 Conda `petvision-vlm` 并安装依赖；创建 `environment-vlm.yml`，将云端 GPU、驱动、显存与 pip/Conda 快照单独保存。
-
-2. 创建 `configs/llm/llm_inference.yaml` 与 `scripts/infer_llm.py`，先加载模型和 tokenizer 并固定真实 revision；按当前兼容模型卡选择 API，不直接复制不匹配版本的示例。
-
-3. 用 Chat Template 处理 5 个固定英文 prompt，打印输入 token 形状，生成时只解码新增 token。保存 messages、实际模板/输入标识、生成设置、原始回答与模型信息到 llm_outputs.jsonl。
-
-4. 计时分开记录加载与生成，GPU 生成计时前后同步，记录峰值显存；画 `[B,T]→embedding→causal blocks→[B,T,V]` 并联系自己的 Mini-GPT。
-
-### 分步操作与自查
+结构图标出 `[B,T]→embedding→causal blocks→[B,T,V]`，对照第六周的 Mini-GPT。
 
 <a id="cloud-environment"></a>
+
 #### 第一步：在云端创建并验证独立环境
 
-先通过云平台文件上传或已有同步工具，将 `src/、scripts/、configs/、pyproject.toml` 和本周实验目录传到云端项目根目录，目录层级保持一致；Day 3–4 再补入实际图片与问题清单。进入云端含 pyproject.toml 的目录后执行。首次创建环境：
+先通过云平台文件上传或已有同步工具，将 `src/、scripts/、configs/、pyproject.toml` 和本周实验目录传到云端项目根目录，目录层级保持一致；Day 3-4 再补入实际图片与问题清单。进入云端含 pyproject.toml 的目录后执行。首次创建环境：
 
 ```bash
 conda create -n petvision-vlm -c conda-forge python=3.12 pip numpy matplotlib pyyaml pillow
@@ -358,6 +323,7 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/cloud/pip-freeze.tx
 本地 CLIP 与云端 LLM/VLM 使用不同快照目录；model manifest 中记录各自使用的环境目录，下载云端结果时也保持这两个目录分开。
 
 <a id="llm-inference"></a>
+
 #### 第二步：先创建配置，再加载 LLM 和 tokenizer
 
 创建 `scripts/infer_llm.py`，定义 parse_args(argv=None) 接收必填 Path 类型的 --config；main() 读取 args.config，调用 yaml.safe_load 得到 cfg，随后加载对象并遍历五个 prompt，文件末尾添加入口保护。创建 `configs/llm/llm_inference.yaml`；首次用 `HfApi().model_info("HuggingFaceTB/SmolLM2-360M-Instruct").sha` 查询完整 SHA，填入 model.revision，后续模型和 tokenizer 均传入这个固定 revision。下面是首次配置模板，null 要在加载前替换：
@@ -472,7 +438,7 @@ model_manifest.json 包含 model_id、实际 revision、模型类、tokenizer、
 
 在本周 `experiments/vlm_qa/week8/README.md` 增加 LLM 张量流说明，用实际一题的 B、T、V 写出 `[B,T] → embedding → causal blocks → [B,T,V]`，联系第六周 MiniGPT；模型信息更新已有 model_manifest.json 的 llm 条目。
 
-### 运行与验收
+### 运行与自查
 
 在云端激活 `petvision-vlm` 后执行：
 
@@ -487,9 +453,10 @@ python scripts/infer_llm.py --config configs/llm/llm_inference.yaml
 - [ ] 推理脚本可按固定配置和 revision 重跑。
 
 <a id="day-3"></a>
-## Day 3：真正的图像输入与 VLM 张量流
 
-### 去哪里学、读到哪里
+## Day 3：图像输入与 VLM 张量流
+
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -497,28 +464,10 @@ python scripts/infer_llm.py --config configs/llm/llm_inference.yaml
 | [Idefics3 官方文档](https://huggingface.co/docs/transformers/model_doc/idefics3)、[SmolVLM 实际 config](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct/blob/main/config.json) | 按实际 model_type 查看视觉模块、连接与语言生成接口 | 核对兼容 API，再观察实际模块 |
 | [nn.Module hook（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.nn.Module.html#torch.nn.Module.register_forward_hook) | named_modules、register_forward_hook、register_forward_pre_hook、handle.remove | 临时记录实际模块形状 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读所选模型实现与 processor |
-| 2h | 实现 VLM 单图 smoke 与形状记录 |
-| 1h | 画结构并核对图像确实进入模型 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `configs/vlm/vlm_inference.yaml`、`scripts/infer_vlm.py`，按固定 revision 的模型卡使用 processor 与兼容模型类；读取本地真实图片和文本消息。
-
-2. 先支持 `--image`、`--question`、`--smoke` 的单图检查，打印输入字段、dtype、shape。input_ids 保持整数类型，浮点图像张量按模型精度处理；图片不能仅转换成分类标签传给纯文本 LLM。
-
-3. 查看实际模块与 forward 路径，记录 pixel_values、视觉特征、连接/压缩后的图像 token、与文本组合后的序列及 logits 的形状；可用临时 hook，检查完移除。
-
-4. 创建 `tensor_flow.md`，按实际模型画 Vision Encoder→连接/压缩模块→图像 token 与文本 embedding→Language Model。图像裁剪/多视图与特殊 token 数按 processor 输出记录，不硬套通用固定形状。
-
-### 分步操作与自查
+### 操作步骤
 
 <a id="vlm-image-inputs"></a>
+
 #### 第一步：加载 VLM，使用真实图片和配套 processor
 
 创建 `scripts/infer_vlm.py`，顶层导入依赖，main 先解析 `--config`、`--image`、`--question`、`--smoke`，末尾添加入口保护；单图模式参数关系按第四步校验，Day 4 再添加批量 `--questions` 路径。下面的配置读取、模型加载、输入处理和生成都在这个脚本中接通。
@@ -661,7 +610,7 @@ finally:
 
 将图片加载、messages 构造、processor、设备迁移、generate 和新增 ID 解码封装为文件顶层的 `infer_one(model, processor, image_path, question, device, dtype, generation_config)`，返回 raw_answer、新增 ID 列表和本题测量结果；main 负责加载模型一次，并把 args.image / args.question 传给它。Day 4 循环也调用这个函数，不能让内部仍读取单图模式的 args.image。与 LLM 一样校验 batch_size==1，单图模式要求同时提供 image、question 和 smoke；批量模式禁止 smoke，避免参数被静默忽略。单图通过后更新 model_manifest 的 vlm 条目，记录完整 cfg、模型类、processor 和实际依赖。
 
-### 运行与验收
+### 运行与自查
 
 在云端已激活的 `petvision-vlm` 中执行：
 
@@ -676,36 +625,17 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --image data
 - [ ] 模块名、模型类、revision、输入尺寸与实际形状有记录。
 
 <a id="day-4"></a>
+
 ## Day 4：20 张图、40 个问题的完整评估
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [所选 VLM 模型卡](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) | 输入方式与已知能力边界 | 固定正式推理设置 |
 | [总计划 VLM 验收](StudyPlan.md#stage-4) | 图片数、问题、原始输出和判定 | 准备完整样本记录 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 选 20+ 图片，先写问题与参考标准 |
-| 1h | 批量推理并检查覆盖率 |
-| 1.5h | 人工逐条判定和标记错误类型 |
-| 0.5h | 核对记录完整性 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `images_manifest.csv`，记录至少 20 张可查看图片的 image_id、local_path、来源与 SHA256；图片放 datasets/raw/vqa。每张准备至少 2 题，在 questions.jsonl 写 qid、image_id、question、reference/criterion、question_type。
-
-2. 题目整体覆盖类别、颜色、数量、位置和无法从图片判断的内容。参考答案或允许答案范围在推理前写好；信息不足题的正确行为可定义为明确说明无法判断。
-
-3. 让 infer_vlm 支持 `--questions`，逐题独立构造 messages，写 vlm_outputs.jsonl：qid、原始回答、model/revision、生成设置、耗时、峰值显存与状态；读取或推理抛出的错误也保留记录。
-
-4. 创建 judgments.csv，由人工按预先标准标 correct/partial/wrong，并记录错误类型和简短理由。核对每张至少 2 条、总数至少 40，统计正确数时报告总题数与失败数，不只保留成功回答。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：先建立两个可对应的清单
 
@@ -730,7 +660,7 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 5. 按同样方式补足至少 20 张图和每图至少两题，检查五类问题是否覆盖。图片难以判断的题可以保留为“信息不足”，但标准必须事先明确。
 6. 完成全部清单校验后固定这版文件，再开始正式推理。清单缺文件、ID 冲突或 hash 不匹配时先修正输入；正式运行中发生的单题推理错误则按下一步保留记录。
 
-先用 csv.DictReader 读取图片清单、逐行 json.loads 读取问题；断言**图片清单中的 image_id 唯一、问题清单中的 qid 唯一**。问题清单里的 image_id 允许且需要重复：同一张图的两道问题有不同 qid，但共享 image_id。所有问题的 image_id 都必须在图片清单中，每张图片至少对应两题。逐图确认 local_path 可打开，并用 `hashlib.sha256(Path(local_path).read_bytes()).hexdigest()` 核对图片 bytes。标准可记录允许答案与部分正确条件，推理前固定并保存；正式生成后再判定。
+先用 csv.DictReader 读取图片清单、逐行 json.loads 读取问题；断言图片清单中的 image_id 唯一、问题清单中的 qid 唯一。问题清单里的 image_id 允许且需要重复：同一张图的两道问题有不同 qid，但共享 image_id。所有问题的 image_id 都必须在图片清单中，每张图片至少对应两题。逐图确认 local_path 可打开，并用 `hashlib.sha256(Path(local_path).read_bytes()).hexdigest()` 核对图片 bytes。标准可记录允许答案与部分正确条件，推理前固定并保存；正式生成后再判定。
 
 #### 第二步：一次生成保留全部原始结果
 
@@ -768,7 +698,7 @@ judgments.csv 为每个 qid 标 correct/partial/wrong 及错误类型和理由�
 
 用一个手算例子检查统计：40 题中成功生成 38、失败 2，人工判定 correct=30、partial=5、wrong=5（含 2 条推理失败），严格正确比例为 `30/40=0.75`，部分正确另报 5 条；不能改用 38 作分母。统计前分别检查三份记录的 qid 唯一性，再比较集合相等，避免重复记录被集合去重掩盖。
 
-### 运行与验收
+### 运行与自查
 
 确认图片、题目和判定标准均已固定后，在云端执行：
 
@@ -783,35 +713,17 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 - [ ] 评估标准提前确定，结论限定在本次样本与模型配置。
 
 <a id="day-5"></a>
+
 ## Day 5：跨模块复盘与最终报告初稿
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [总计划验收清单](StudyPlan.md#acceptance) | 基础、视觉、语言、多模态与复现要求 | 逐项核对证据 |
 | [本项目总计划目录](StudyPlan.md#layout) | 模块与报告分工 | 整理已有实验入口 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 核查八周成果与缺口 |
-| 2h | 撰写最终报告并链接实际结果 |
-| 1h | 完成模型结构与失败分析 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `docs/final_report.md`，按基础训练、视觉对照、语言建模、CLIP/LLM/VLM 组织，链接各周 README 和真实结果，不重复复制全部日志。
-
-2. 视觉部分说明固定划分、三类对照与最终测试；语言部分说明同 tokenizer 与跨 tokenizer 的指标边界；VLM 部分列样本范围、判断标准、失败类型和资源开销。
-
-3. 补全 LLM/VLM 模型 manifest 与 tensor_flow，记录本地/云端环境、权重 revision、运行命令、精度和耗时方法。
-
-4. 对总计划逐项标记已完成、待补、拓展；无法证明的能力如实保留，不把运行过预训练模型等同于完成微调。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：按问题组织最终报告
 
@@ -842,11 +754,11 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 
 #### 第四步：如实保留缺口
 
-对照总计划列已完成、待补和拓展。运行过脚本、检查通过、能够解释、能够有限参考重写分别对应不同证据，不能互相替代。
+在最终报告中对照总计划列出已完成、待补和拓展项。分别写清脚本运行、检查、解释和重写的证据。
 
-继续更新 `experiments/vlm_qa/week8/model_manifest.json` 和 `experiments/vlm_qa/week8/tensor_flow.md`，核对 CLIP/LLM/VLM 的实际 SHA、模型类、精度、运行命令、两端环境目录和测时范围，并从 final_report.md 链接这两份文件。总计划中的验收勾选只对应已有证据，未通过项保留待补。
+继续更新 `experiments/vlm_qa/week8/model_manifest.json` 和 `experiments/vlm_qa/week8/tensor_flow.md`，核对 CLIP/LLM/VLM 的实际 SHA、模型类、精度、运行命令、两端环境目录和测时范围，并从 final_report.md 链接这两份文件。完成状态记录在最终报告和本周 README，缺少证据的项目列为待补。
 
-### 运行与验收
+### 运行与自查
 
 今天根据已有实验记录整理报告，不新增训练任务。逐项核对 `docs/final_report.md`、`model_manifest.json` 和 `tensor_flow.md`：报告链接能打开，指标注明 split/tokenizer/判定口径，模型条目能找到对应实际环境和配置。缺少结果的项明确保留为待补。
 
@@ -855,36 +767,17 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 - [ ] 未完成事项与八周之后的拓展范围清楚。
 
 <a id="day-6"></a>
+
 ## Day 6：复现抽查、解释与最终整理
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [总计划六个问题](StudyPlan.md#routine) | 梯度、训练、视觉、Attention、GPT 与 VLM | 检查能否自己解释 |
-| [各周 README](../README.md#文档导航) | 选择一项代表实验回看复现说明 | 修复导航与命令 |
+| [各周 README](../README.md#八周安排) | 选择一项代表实验回看复现说明 | 修复导航与命令 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 抽查代表性脚本、checkpoint 和链接 |
-| 1.5h | 解释核心模块与实际失败案例 |
-| 1h | 修订最终报告和后续优先级 |
-| 0.5h | 完成本周 README 与文档导航 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 从 NumPy 梯度、分类加载、因果 Mask、tokenizer 往返、VLM 单图中各选一个小检查；按现有说明抽查，避免为了收尾重跑全部大实验。
-
-2. 口头或在报告中解释六个核心问题，并选择一个误分类、一个生成问题和一个视觉问答失败，说明证据与下一步。
-
-3. 更新本周 README 的实际命令、模型版本、指标和结果链接；根 README 继续专注介绍与文档导航，首次操作、排错和验收留在逐日指南，实际复现索引留在各周 README。
-
-4. 把基础关卡未通过项排到下一轮前面，再安排 Encoder–Decoder、迁移学习、LoRA/QLoRA、VLM 微调或 App；依据实际兴趣和时间选择，不将其补进本轮必做。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：按说明抽查最小复现
 
@@ -910,7 +803,7 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 4. 写出能判断完成的标准和预估学习时段；若任务还包含多个不明确动作，继续拆分，不直接安排长时间训练。
 5. 先选择最前面的一个任务开始，其他项保留在 final_report 的下一轮计划中。更多模型、更多数据和微调根据这次缺口决定先后。
 
-### 运行与验收
+### 运行与自查
 
 在本地项目根目录的 `petvision` 中抽查基础、分类加载和核心模块：
 
@@ -933,7 +826,6 @@ python -m pytest tests/test_attention.py tests/test_tokenizer.py -q
 - [ ] 20+ 图片、40+ 问答有预先标准、全部原始输出和人工判定。
 - [ ] 最终报告链接各周真实结果，未完成项与拓展如实区分。
 
-先用本周 6 小时机动补齐未完成项；仍未通过时，下一周先处理该关卡，后续任务顺延。周末小结控制在约 10–20 分钟，记录实际配置、关键结果、一个解释和仍需巩固的部分。
+在最终报告列出仍需补做的基础项，再从 Encoder-Decoder、宠物迁移、微调或 App 中选择下一轮任务。
 
 主线结束后，按总计划整理未完成事项，再决定八周之后的拓展路线。
-

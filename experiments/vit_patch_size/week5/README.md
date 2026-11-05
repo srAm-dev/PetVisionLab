@@ -3,9 +3,10 @@
 学习指南：[第五周逐日任务](../../../docs/week5.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
+本周尚未记录实测结果。按第五周指南完成两种 Patch 的训练后，记录验证对照，再冻结六个视觉变体并汇总测试结果。
 
 <a id="environment"></a>
+
 ## 环境准备
 
 沿用 Conda `petvision`、第二周安装的 torch / torchvision、PyYAML、pytest。依赖没有变化时复用此前版本记录；改变精度、batch、设备需同步记入两组配置。
@@ -18,13 +19,14 @@ python -m pip check
 从零训练，不下载预训练 ViT 权重。实际显存不足时统一减小同一对实验的 batch，保持比较口径。
 
 <a id="commands"></a>
-## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。参数是本周要实现的接口约定。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
+## 实现后的运行命令
+
+以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
-| Day 1–2 | `python -m pytest tests/test_vit.py -q` | Patch、CLS、位置、前反向检查 |
+| Day 1-2 | `python -m pytest tests/test_vit.py -q` | Patch、CLS、位置、前反向检查 |
 | Day 2 | `python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --smoke` | ViT 短运行 |
 | Day 2 | `python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --overfit-samples 64` | 小样本拟合 |
 | Day 3 | `python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml` | Patch=4 |
@@ -38,7 +40,7 @@ python -m pip check
 | Day 5 | `python scripts/evaluate.py --config configs/cv/vit_cifar10.yaml --checkpoint outputs/vit_patch4/best.pt --split test` | Patch=4 测试 |
 | Day 5 | `python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpoint outputs/vit_patch8/best.pt --split test` | Patch=8 测试 |
 
-## 配置与结果
+## 计划配置与待保存结果
 
 P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS 分类 token，所以 P=4/8 的序列长度为 65/17。C 是每个 token 的特征长度，不是 RGB 通道数；完整形状与参数解释见[本周符号表](../../../docs/week5.md#vit-shapes)，F1 统计见[Day4](../../../docs/week5.md#day-4)。
 
@@ -48,7 +50,7 @@ P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS
 
 数据处理复用第三周的 [torchvision.transforms.v2 流程](../../../docs/week3.md#cifar-v2-transforms)：ToImage 保留 uint8 像素，训练时加入随机裁剪和翻转，再用 ToDtype(torch.float32,scale=True) 缩放、Normalize 归一化；验证和测试省略随机增强。各变体按冻结配置对应的确定性预处理评估：CNN / ViT 的模型输入为 32×32，ResNet 在 ToDtype 之前 Resize 到 96×96。
 
-修改 `scripts/evaluate.py::main`，调用本文件的 evaluate_classification 完整统计混淆矩阵、loss 与样本数，再调用 benchmark_forward 记录推理测量；F1 计算由 `src/petvision/evaluation/classification.py::metrics_from_confusion` 完成，细节见[Day 4](../../../docs/week5.md#classification-metrics)；冻结清单写在本 README，列出六个变体实际的配置、best 路径和验证结果。
+修改 `scripts/evaluate.py::main`，调用该脚本的 evaluate_classification 完整统计混淆矩阵、loss 与样本数，再调用 benchmark_forward 记录推理测量；F1 计算由 `src/petvision/evaluation/classification.py::metrics_from_confusion` 完成，细节见[Day 4](../../../docs/week5.md#classification-metrics)；冻结清单写在本 README，列出六个变体实际的配置、best 路径和验证结果。
 
 | 文件或目录 | 内容与产生时间 |
 | --- | --- |
@@ -59,14 +61,12 @@ P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS
 | `runs/patch4 / runs/patch8` | 各组 config、history、run_summary.json、val/test_metrics.json 和图表 |
 | `outputs/vit_patch4 / outputs/vit_patch8` | 项目根下：best/last checkpoint |
 
-结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。
+运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
 
 ## 周总结
 
-- 完成情况与仍需补齐的关卡：待本周结束后填写。
-- 关键实验结果与结论：待实际运行后填写。
-- 一两条关键理解与典型错误：待填写。
-- 后续要巩固的部分：待填写。
+- Patch 对照：待填写 P4/P8 的验证结果、token 数、参数量与实测耗时。
+- 视觉测试：待链接六个冻结变体的测试表，说明输入尺寸和预算差异。
+- 错误与理解：待填写一个误分类分析、ViT 重写检查和后续要巩固的部分。
 
-保留已有曲线、结果表和配置快照，周末用约 10–20 分钟简要总结。日常验收直接检查代码、输出、图表与解释。
-
+周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

@@ -1,22 +1,22 @@
-# 第一周逐日学习指南：Python、NumPy、数学与线性回归
+# 第一周：Python、NumPy、数学与线性回归
 
-> 更新日期：2026-11-01<br>
-> 对应计划：[StudyPlan.md 第一周](StudyPlan.md#stage-1)  
-> 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 表示你的第一个学习日，可以从任意星期开始。  
-> 本周成果：独立写出 NumPy 线性回归，解释预测、损失、梯度和参数更新，保存真实曲线，并在周末整理简短小结。  
-> 环境：本地 CPU + Conda 命名环境 `petvision`，以 Python 3.12、NumPy、Matplotlib 起步；PyTorch 与 GPU 环境安排在第二周。
+从列表和数组开始，把线性回归的预测、MSE、梯度和参数更新连起来。周末要能自己写出训练循环，并说明每个数组的形状。
 
-## 怎么使用这份指南
+对应[总计划第 1 周](StudyPlan.md#week-1)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-每天按“看指定内容 → 写练习 → 运行检查 → 解释结果”的顺序完成。学习资料只读当天列出的部分，其余内容后续再学。
+环境：本地 CPU + Conda 命名环境 `petvision`，以 Python 3.12、NumPy、Matplotlib 起步；PyTorch 与 GPU 环境安排在第二周。
 
-本指南按学习日提供环境准备、练习步骤、运行命令与自查；[第一周 README](../experiments/basics/week1/README.md) 保存实际进度、环境、复现命令索引、结果和周总结。代码文件按任务创建，环境快照和实验结果在实际运行时保存；周末集中补充简短总结，代码由你亲手完成。每个脚本从项目根目录运行；代码中的函数名用于统一练习，具体实现留给你。
+## 开始前
 
-每小时适当休息。每天 1 小时机动用于语法、数学、报错和复盘；如果当天核心任务仍未通过验收，下一学习日先补齐。
+先确认终端能进入项目根目录、Conda 已安装。编程和数学从基础练起，本周使用 CPU。
 
-## 本周目录蓝图
+按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/basics/week1/README.md)。
 
-下图表示本周结束时逐步形成的目录，注释标明创建时间。生成的曲线、指标和环境快照来自实际运行。
+更新日期：2026-11-06。
+
+## 本周文件
+
+按注释中的学习日逐步创建或修改文件，曲线和指标由运行产生。
 
 ```text
 PetVisionLab/
@@ -49,27 +49,26 @@ PetVisionLab/
                 └── learning_rates.png # Day 6：学习率对照
 ```
 
-在编辑器文件树中按路径新建目录、文件即可。`scripts/` 用于代码，`experiments/basics/week1/` 保存环境快照、实验结果与周总结。
+按当天步骤创建文件。`scripts/` 用于代码，`experiments/basics/week1/` 保存环境快照、实验结果与周总结。
 
 命名环境由 Conda 管理，项目保存定义和实际版本快照。每天开始学习时，先执行 `conda activate petvision`，再运行当天脚本；编辑器的 Python 解释器也选择该环境。
 
-## 六天总览
+## 六天安排
 
-| 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
-| --- | --- | --- | --- | --- |
-| Day 1 | 环境、Python、NumPy 起步 | 4h | 1h | 两个练习脚本与环境记录 |
-| Day 2 | 数组、广播、类与模块 | 4h | 1h | 形状练习、LinearModel 类 |
-| Day 3 | 线性代数、导数、梯度下降 | 4h | 1h | 形状自查与一维更新脚本 |
-| Day 4 | 偏导、链式法则、MSE 梯度 | 4h | 1h | 梯度推导与单步更新 |
-| Day 5 | NumPy 线性回归训练 | 4h | 1h | 完整脚本、loss 曲线 |
-| Day 6 | 梯度检查、对照、重写与总结 | 4h | 1h | 学习率表、梯度检查、周总结 |
-| Day 7 | 休息 | 0h | 0h | — |
-| 合计 | — | 24h | 6h | 30h |
+| 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
+| --- | --- | --- |
+| [Day 1](#day-1) | 创建 `scripts/python_basics.py`、`scripts/numpy_basics.py`，记录环境 | Python MSE≈1/6；矩阵预测为 0.5、2.5、4.5 |
+| [Day 2](#day-2) | 补充 `scripts/numpy_basics.py`，创建 `scripts/linear_model.py` | 能复现错误广播；类的预测与矩阵公式一致 |
+| [Day 3](#day-3) | 创建 `scripts/math_basics.py`，手算矩阵形状和梯度更新 | 一维更新从 w=2 得到 1.6；后续损失下降 |
+| [Day 4](#day-4) | 创建 `scripts/gradient_basics.py`，实现 MSE 梯度 | dw 与 w 同形状；更新后重新计算的 loss 下降 |
+| [Day 5](#day-5) | 创建 `scripts/linear_regression_numpy.py`，保存训练曲线 | 500 次更新得到 501 个 loss；参数接近 3、-2、1 |
+| [Day 6](#day-6) | 创建梯度检查、学习率对照和重写脚本，更新本周 README | 全部参数梯度检查通过；三组对照共享数据；重写结果一致 |
 
 <a id="day-1"></a>
+
 ## Day 1：把环境和第一组练习跑起来
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -78,16 +77,6 @@ PetVisionLab/
 | [Python：控制流](https://docs.python.org/zh-cn/3/tutorial/controlflow.html) | if、for、range、定义函数、return | 写循环和函数 |
 | [Python：数据结构](https://docs.python.org/zh-cn/3/tutorial/datastructures.html) | 列表、字典的基本使用 | 用列表保存数据、字典保存结果 |
 | [NumPy 初学者指南（中文译文）](https://numpy.net.cn/doc/stable/user/absolute_beginners.html) | 导入、array、shape、dtype | 创建并打印数组 |
-
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 创建最小文件、Conda 环境、安装依赖并记录环境 |
-| 1.5h | Python 函数 / 循环练习，实现普通 Python MSE |
-| 1h | NumPy 数组与矩阵预测练习 |
-| 0.5h | 核对输出，解释函数与数组形状 |
-| 1h 机动 | 处理环境、语法和 shape 疑问 |
 
 ### 第一步：核对文件并安装依赖
 
@@ -179,7 +168,7 @@ conda create -n petvision-repro --file experiments/basics/week1/conda-explicit.t
 2. 创建字典，保存学习日、学习时长、遇到的问题，并打印每个键和值。
 3. 实现 `mse(y_true, y_pred)`：逐项求差、平方、累加，再除以样本数。
 
-MSE 即均方误差，本指南定义为所有平方误差的平均值：
+MSE 即均方误差，这里定义为所有平方误差的平均值：
 
 ```text
 MSE = sum((预测值 - 真实值)^2) / 样本数
@@ -210,7 +199,7 @@ print(X.shape, w.shape, y_hat.shape)
 print(y_hat)
 ```
 
-需要解释：
+运行前先回答：
 
 1. X 有几个样本、每个样本几个特征？
 2. 为什么 X 与 w 可以相乘？输出形状如何得到？
@@ -218,7 +207,7 @@ print(y_hat)
 
 自查：形状依次为 `(3,2)`、`(2,1)`、`(3,1)`；三个预测值为 `0.5、2.5、4.5`。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/python_basics.py
@@ -231,9 +220,10 @@ python scripts/numpy_basics.py
 - [ ] 能说明一次变量名报错的原因，并验证修复后的代码可运行。
 
 <a id="day-2"></a>
+
 ## Day 2：掌握数组形状，并写一个小类
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 阅读范围 |
 | --- | --- |
@@ -241,16 +231,6 @@ python scripts/numpy_basics.py
 | [NumPy：广播（中文译文）](https://numpy.net.cn/doc/stable/user/basics.broadcasting.html) | 从末尾维度比较，维度相等或其中之一为 1 时可广播；看基础例子 |
 | [Python：类](https://docs.python.org/zh-cn/3/tutorial/classes.html) | 初识类、__init__、实例属性、方法与 self |
 | [Python：模块](https://docs.python.org/zh-cn/3/tutorial/modules.html) | import、模块作为脚本运行、__name__ |
-
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 选读数组、广播、类与模块资料 |
-| 1.5h | 补充 numpy_basics.py，完成数组操作与错误广播练习 |
-| 1h | 创建 linear_model.py，练习类与模块导入 |
-| 0.5h | 自查输出，用注释或口头说明形状变化 |
-| 1h 机动 | 补语法、转置、axis 或模块导入问题 |
 
 ### 第一步：补充 scripts/numpy_basics.py
 
@@ -285,7 +265,7 @@ python scripts/numpy_basics.py
 
 入口保护里的内容包括创建示例数据、实例化模型和打印结果；类和函数定义留在顶层。用同一组 X、w、b 分别调用 `model.predict(X)` 与矩阵公式，比较每个元素，最大绝对差应小于 `1e-10`。下方第三条命令只导入模块，应正常退出且没有演示输出。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/numpy_basics.py
@@ -299,9 +279,10 @@ python -c "import sys; sys.path.insert(0, 'scripts'); import linear_model"
 - [ ] 能通过代码输出或注释解释形状变化与广播结果。
 
 <a id="day-3"></a>
+
 ## Day 3：把矩阵和梯度下降连接起来
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 阅读范围 |
 | --- | --- |
@@ -309,16 +290,6 @@ python -c "import sys; sys.path.insert(0, 'scripts'); import linear_model"
 | [D2L 2.4：微积分](https://zh.d2l.ai/chapter_preliminaries/calculus.html) | 导数、变化率与梯度的含义 |
 
 先读公式、图示和解释，数值练习使用 NumPy。书中框架实现可以在第二周对照。
-
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读标量、向量、矩阵与乘法 |
-| 1.5h | 手算形状、点积和线性预测 |
-| 0.75h | 阅读导数，手算一次梯度更新 |
-| 0.75h | 创建 math_basics.py，核对手算并解释结果 |
-| 1h 机动 | 补矩阵乘法或导数的基础疑问 |
 
 ### 第一步：在纸上手算形状与线性预测
 
@@ -357,7 +328,7 @@ b 是标量
 
 X 的每一行是一条样本，每一列是一种特征。w 为每种特征分配一个权重：第一个特征乘 2，第二个特征乘 -1；b 是所有样本共用的偏置。`y_hat` 表示模型预测，`y` 表示真实标签，两者在本练习中都采用 `(3,1)` 的形状；真实标签的数值不能由预测直接确定。
 
-**1. 一行与 w 做点积，得到该样本的特征加权和；再加 b 才得到预测。**
+1. 一行与 w 做点积，得到该样本的特征加权和；再加 b 才得到预测。
 
 对应位置的特征与权重相乘，再将乘积相加：
 
@@ -381,7 +352,7 @@ X @ w = [[0],      y_hat = X @ w + b = [[0.5],
 
 数学上每行的点积是一个数。NumPy 中，`X[0] @ w` 的结果形状为 `(1,)`，`X[0:1] @ w` 为 `(1,1)`；这是索引是否保留行维度带来的区别，两者都只包含第一个样本的加权和 0。
 
-**2. X.T 的形状为 `(d,N)`，因为转置交换矩阵的行与列。**
+2. X.T 的形状为 `(d,N)`，因为转置交换矩阵的行与列。
 
 X 原来的第一列成为转置后的第一行，第二列成为第二行：
 
@@ -392,7 +363,7 @@ X.T = [[1, 3, 5],
 形状：(N,d) → (d,N)，本例是 (3,2) → (2,3)
 ```
 
-**3. `X.T @ X` 的形状为 `(d,d)`，本例是 `(2,2)`。**
+3. `X.T @ X` 的形状为 `(d,d)`，本例是 `(2,2)`。
 
 先检查形状，再计算每个位置的点积：
 
@@ -409,7 +380,7 @@ X.T @ X = [[1×1 + 3×3 + 5×5,  1×2 + 3×4 + 5×6],
 
 输出中的每个元素，都是 X 的两列对应元素乘积的总和。例如右上角 44 来自第一列 `[1,3,5]` 与第二列 `[2,4,6]` 的点积。
 
-**4. 特征数从 2 变成 5 时，w 需要从 `(2,1)` 变为 `(5,1)`。**
+4. 特征数从 2 变成 5 时，w 需要从 `(2,1)` 变为 `(5,1)`。
 
 每个特征需要一个权重，因此需要提供五个权重。样本数仍为 3 时，X 变为 `(3,5)`，预测过程为 `(3,5) @ (5,1) → (3,1)`。每条样本仍然输出一个预测，b 仍是标量。
 
@@ -430,7 +401,7 @@ f(w) = w²
 
 这里“减去梯度”来自局部斜率：w=2 时导数为正，向较小的 w 移动会在足够小的范围内降低 f；w 为负时导数为负，减去它会让 w 增大。学习率决定移动距离，步子过大仍会越过低点甚至发散。因此梯度给出局部方向，不保证任意学习率下每次更新都降低损失。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/math_basics.py
@@ -441,9 +412,10 @@ python scripts/math_basics.py
 - [ ] 能口头或通过代码注释解释：梯度指什么、为什么更新时减去梯度、学习率控制什么。
 
 <a id="day-4"></a>
+
 ## Day 4：手推并实现线性回归梯度
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 阅读范围 |
 | --- | --- |
@@ -451,16 +423,6 @@ python scripts/math_basics.py
 | [D2L 3.1：线性回归](https://zh.d2l.ai/chapter_linear-networks/linear-regression.html) | 线性模型、损失函数、用梯度下降学习参数 |
 
 本指南的 MSE 是平方误差的平均值。阅读不同资料时留意损失前是否带有 1/2，推导和代码使用同一个定义。
-
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读偏导、链式法则与线性回归损失 |
-| 1.5h | 手推单个样本、多个样本的梯度与形状 |
-| 1h | 创建 gradient_basics.py，计算梯度并执行一次更新 |
-| 0.5h | 核对公式、形状和 loss，解释更新过程 |
-| 1h 机动 | 补推导中不理解的一步 |
 
 ### 第一步：在纸上推导 MSE 梯度
 
@@ -513,7 +475,7 @@ def gradients(X, y, w, b):
 
 本例初始 MSE 为 `14/3`，`dw=[[-44/3],[-56/3]]`、`db=-4`；更新后 w 约为 `[[0.1466666667],[0.1866666667]]`、b 为 `0.04`，重新计算的 MSE 约为 `0.6721185185`。按「更新前 loss → 梯度 → 新参数 → 更新后 loss」打印；若新参数正确而 loss 未变，检查是否仍在使用更新前的预测。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/gradient_basics.py
@@ -525,9 +487,10 @@ python scripts/gradient_basics.py
 - [ ] 推导与真实输出一致，关键形状可标在代码注释中。
 
 <a id="day-5"></a>
+
 ## Day 5：训练第一份完整模型
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 阅读范围 |
 | --- | --- |
@@ -535,16 +498,6 @@ python scripts/gradient_basics.py
 | [NumPy：随机数生成器（中文译文）](https://numpy.net.cn/doc/stable/reference/random/generator.html) | default_rng 与 normal 的基本用法 |
 | [Matplotlib：折线图（中文译文）](https://matplotlib.net.cn/stable/gallery/lines_bars_and_markers/simple_plot.html) | subplots、plot、坐标轴标签与网格 |
 | [pathlib（官方中文）](https://docs.python.org/zh-cn/3.12/library/pathlib.html) | Path、路径拼接与 mkdir |
-
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 查阅随机数和折线图的基本用法 |
-| 1h | 创建训练脚本，生成数据，检查预测与梯度 |
-| 1.5h | 实现训练循环，打印 loss 与参数 |
-| 1h | 保存曲线，核对 loss、参数与训练设置 |
-| 1h 机动 | 排查 loss、shape、更新或绘图问题 |
 
 ### 第一步：创建文件与目录
 
@@ -636,7 +589,7 @@ plt.close(fig)
 
 横轴取 `0..500`，与 501 个 loss 一一对应。打开实际 PNG 核对标签、曲线和最终数值；相同设置再运行一次，比较初始/最终 loss 和参数，数值差应小于 `1e-10`。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/linear_regression_numpy.py
@@ -649,26 +602,16 @@ python scripts/linear_regression_numpy.py
 - [ ] 脚本输出初始 / 最终 loss、最终 w / b、步数与学习率，曲线保存到指定路径。
 
 <a id="day-6"></a>
+
 ## Day 6：检查梯度、做对照、重写并复盘
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 阅读范围 |
 | --- | --- |
 | [D2L 2.4：微积分](https://zh.d2l.ai/chapter_preliminaries/calculus.html) | 回顾导数与有限变化量的关系 |
 | [D2L 11.3：梯度下降](https://zh.d2l.ai/chapter_optimization/gd.html) | 一维梯度下降与学习率影响，选读相关图示 |
 | [csv（官方中文）](https://docs.python.org/zh-cn/3.12/library/csv.html) | DictWriter、writeheader、writerows、newline |
-
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 阅读梯度检查方法，回顾学习率 |
-| 1h | 创建 gradient_check.py，核对全部参数梯度 |
-| 1h | 完成三组学习率对照，保存 CSV 和曲线 |
-| 1h | 关掉参考，创建 linear_regression_rewrite.py，重写核心流程 |
-| 0.5h | 更新实验目录 README 的周总结，核对本周清单 |
-| 1h 机动 | 补未通过的检查或重写练习 |
 
 ### 第一步：创建 scripts/gradient_check.py
 
@@ -747,20 +690,20 @@ experiments/basics/week1/figures/learning_rates.png
 
 在 `scripts/linear_regression_rewrite.py` 中自行定义 predict、mse、gradients、train；main() 用同一份数据调用这些函数并打印最终 w、b、loss。通过后分别运行 `python scripts/linear_regression_numpy.py` 和 `python scripts/linear_regression_rewrite.py`，按下一段的固定条件比较输出；绘图部分在本文件 main() 的训练调用之后，用返回的 loss_history 创建图，先创建父目录，再保存到 `experiments/basics/week1/figures/loss_curve2.png`。
 
-比较时固定同一份 X、y、零初始化、学习率 0.05 和 500 步，核对两份实现的最终 loss、w、b；相同 float64 条件下，最大绝对差以 `1e-8` 为自查目标。重写脚本自身必须执行并打印这些结果，已有脚本的运行成功不能代替这项检查。
+比较时固定同一份 X、y、零初始化、学习率 0.05 和 500 步，核对两份实现的最终 loss、w、b；相同 float64 条件下，最大绝对差以 `1e-8` 为自查目标。运行重写脚本并打印这些结果，再与原脚本比较。
 
 ### 第四步：更新 experiments/basics/week1/README.md
 
-周末用约 10–20 分钟更新这份小结，其余时间核对本周验收。集中写清：
+周末用约 10-20 分钟更新这份小结，其余时间核对本周验收。集中写清：
 
 1. 本周完成的练习与仍需补齐的部分。
 2. 训练命令、配置与关键结果，链接现有曲线和 CSV。
 3. 一两条关键理解，例如 MSE 梯度、数组形状或学习率的影响。
 4. 遗留问题与典型错误的解决方法，有实际问题时再补充。
 
-公式与推导保留有助于理解的关键步骤即可；用相对链接引用 `figures/loss_curve.png`、`figures/learning_rates.png` 和 `results.csv`，避免重复抄写整份结果。新增运行入口与环境变更补充到本周实验目录的 README。
+公式和推导保留关键步骤；用相对链接引用 `figures/loss_curve.png`、`figures/learning_rates.png` 和 `results.csv`，避免重复抄写整份结果。新增运行入口与环境变更补充到本周实验目录的 README。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/gradient_check.py

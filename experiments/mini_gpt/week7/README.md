@@ -3,9 +3,10 @@
 学习指南：[第七周逐日任务](../../../docs/week7.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本文件保存实际环境、复现命令索引、结果链接和周总结。首次学习时按上方逐日指南中的安装、操作、运行与排错步骤顺序完成；这里便于之后查找和重跑。脚本、配置与结果在学习中逐步建立，实际指标在运行后填写。
+本周尚未记录实测结果。完成第七周的 BPE、采样和续训检查后，记录编码比较、恢复误差与三个模型各自的测试结果。
 
 <a id="environment"></a>
+
 ## 环境准备
 
 沿用 `petvision`，BPE 核心用 Python 标准库实现，不需要额外 tokenizer 库。已有 torch/pytest 足够完成检查，完整操作按[第七周指南](../../../docs/week7.md)进行。依赖若变化，记录实际命令与快照。
@@ -18,13 +19,14 @@ python -m pip check
 训练原文与 `experiments/mini_gpt/week6/split_manifest.json` 复用第六周，不重新随机划分。BPE 字节词表和 merges 作为独立 JSON 配套保存，字符 tokenizer 保留。
 
 <a id="commands"></a>
-## 运行练习
 
-以下命令均从项目根目录执行，先激活对应 Conda 环境。参数是本周要实现的接口约定。形状与数值检查直接打印结果；环境记录、实验指标、生成样例和模型输出按下表保存。
+## 实现后的运行命令
+
+以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
-| Day 1–2 | `python -m pytest tests/test_tokenizer.py -q` | 合并、保存加载、Unicode 往返 |
+| Day 1-2 | `python -m pytest tests/test_tokenizer.py -q` | 合并、保存加载、Unicode 往返 |
 | Day 2 | `python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000` | 训练教学 BPE |
 | Day 3 | `python -m pytest tests/test_sampling.py -q` | 采样分布与复现 |
 | Day 3 | `python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --top-k 20 --output experiments/mini_gpt/week7/samples.jsonl` | 较集中采样 |
@@ -38,7 +40,7 @@ python -m pip check
 | Day 6 | `python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml --evaluate-only --checkpoint outputs/mini_gpt/best.pt --split test` | 字符 GPT 最终测试 |
 | Day 6 | `python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --evaluate-only --checkpoint outputs/mini_gpt_bpe/best.pt --split test` | BPE GPT 单列最终测试 |
 
-## 配置与结果
+## 计划配置与待保存结果
 
 BPE 学习相邻 token 的合并规则；pair 是有序 ID 对，merge rank 是规则的学习顺序。在 `scripts/generate.py::filter_logits` 中，温度先缩放 logits，top-k 再按第 k 高分设过滤阈值，阈值处并列项全部保留；sample_next_token 对过滤结果执行 softmax 和采样；它们不改变训练好的词表。术语和例子见[本周约定](../../../docs/week7.md#bpe-terms)与[采样步骤](../../../docs/week7.md#day-3)。
 
@@ -61,14 +63,12 @@ ByteBPETokenizer.decode 默认 errors="replace"；`tests/test_tokenizer.py::test
 | 各模型 `experiment_dir/test_metrics.json` | Day 6：字符 Bigram、字符 GPT、BPE GPT 各自独立的最终评估结果 |
 | `outputs/mini_gpt_bpe/` | 项目根下：模型、优化器、随机状态与 tokenizer 标识 |
 
-结果产生后将路径改为可点击链接，并填写对应运行命令和配置；不提前填写指标。大权重与原始数据保存在忽略目录。
+运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
 
 ## 周总结
 
-- 完成情况与仍需补齐的关卡：待本周结束后填写。
-- 关键实验结果与结论：待实际运行后填写。
-- 一两条关键理解与典型错误：待填写。
-- 后续要巩固的部分：待填写。
+- BPE 检查：待填写 Unicode 往返、保存加载及同原文编码比较。
+- 续训证据：待填写 40 与 20+20 步的参数误差、状态比较及命令。
+- 最终评估：待链接三个模型各自的测试结果、采样失败例子和后续问题。
 
-保留已有曲线、结果表和配置快照，周末用约 10–20 分钟简要总结。日常验收直接检查代码、输出、图表与解释。
-
+周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

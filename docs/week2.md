@@ -1,28 +1,24 @@
-# 第二周逐日学习指南：PyTorch、MNIST MLP 与完整训练流程
+# 第二周：PyTorch、MNIST MLP 与完整训练流程
 
-> 更新日期：2026-11-01<br>
-> 对应计划：[总学习计划](StudyPlan.md#stage-1)  
-> 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
-> 本周成果：用 autograd 对照手写梯度，完成 MNIST 数据划分、MLP 训练、小批过拟合、最佳 checkpoint、独立测试与加载一致性检查。  
-> 环境：本地 Conda 环境 `petvision`，Python 3.12；按官方安装向导补充匹配驱动的 PyTorch / torchvision，显存以实际检查为准。
+用 autograd 核对手写梯度，再完成一次 MNIST 分类：固定划分、训练 MLP、保存 best、重新加载，最后评估测试集。
 
-## 怎么使用这份指南
+对应[总计划第 2 周](StudyPlan.md#week-2)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-先确认[上一周指南](week1.md)的基础关卡已通过。应能解释第一周的 MSE 梯度和 `(N,d) @ (d,1)`；本周将手写梯度对应到自动求导，并把回归任务扩展为分类。
+环境：本地 Conda 环境 `petvision`，Python 3.12；按官方安装向导补充匹配驱动的 PyTorch / torchvision，显存以实际检查为准。
 
-本指南按学习日写出环境准备、文件创建、操作步骤、运行命令和自查方法，跟做时从当天内容顺序往下读即可。[本周 README](../experiments/mnist_mlp/week2/README.md) 保存实际环境、复现命令索引、结果链接和周总结。源码、配置、数据与结果按学习日逐步创建；下面的命令在完成相应实现后执行，代码由你亲手完成。
+## 开始前
 
-复习时在草稿中重写核心步骤，再与已有实现比较；Day 3 的固定尺寸 MLP、Day 4 的中间态入口是逐步学习的中间版本，不能用它们覆盖后续完整实现。下方勾选框统一作为自查模板，实际完成状态见本周 README。
+能手推第一周的 MSE 梯度，解释 `(N,d) @ (d,1)`，并运行 NumPy 线性回归。
 
-**跨周接口约定**：本周先学习在加载函数内部创建预处理、通过 mean/std 配置归一化；[第三周 Day 1 第二步](week3.md#unified-loader-interface)再将接口统一为显式接收 train_transform / eval_transform。完成第三周迁移后复用本周片段时，应按新接口创建并传入变换，保留数据划分和归一化设置；迁移进度记录在第三周 README。
+按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mnist_mlp/week2/README.md)。
 
-每天按“读指定部分 → 写代码 → 运行检查 → 解释结果”执行。检查通过后再扩大数据或训练预算；日常通过代码、输出和解释验收，周末集中更新本周 README。学习时间包含机动时间；训练等待与阅读重叠时只计一次。
+复习现有仓库时注意：下面 Day 2、Day 4 展示数据接口的演进过程。完成[第三周接口迁移](week3.md#unified-loader-interface)后，`build_mnist_loaders` 已改为显式接收 train_transform / eval_transform；按现有签名传参，保留本周的划分与归一化设置。早期的固定 MLP 和入口片段也只用于理解过程，修改时保留已有完整实现。
 
-文件路径均相对于项目根目录；可复用源码放在 `src/petvision/`。新增源码子目录时，在每层包目录放入空的 `__init__.py`；已有目录和文件继续修改，保留此前通过检查的内容。`scripts/` 放运行入口，`tests/` 放检查，结果由脚本运行后生成。
+更新日期：2026-11-06。
 
-## 本周目录蓝图
+## 本周文件
 
-以下为本周逐步形成的文件，注释标明计划创建或修改的时间。实际完成情况、指标、归档和检查范围统一记录在[第二周 README](../experiments/mnist_mlp/week2/README.md)。复习时按目录定位文件，再回到当天任务核对原理。
+先按路径找到当天要改的文件。实际结果与归档范围记录在[第二周 README](../experiments/mnist_mlp/week2/README.md)。
 
 ```text
 PetVisionLab/
@@ -57,23 +53,22 @@ PetVisionLab/
 
 新增源码按 `src/petvision/` 布局；用最小 `pyproject.toml` 安装本地包后统一 `from petvision...` 导入。配置用 YAML；读取只需 `yaml.safe_load`，先写普通函数，不增加复杂 Trainer 框架。`train_cv.py` 接收 `--config`、`--smoke`、`--overfit-samples`；`evaluate.py` 接收 `--config`、`--checkpoint`、`--split val|test`。配置字段至少含 model、data、training、experiment_dir、output_dir。
 
-## 六天总览
+## 六天安排
 
-| 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
-| --- | --- | --- | --- | --- |
-| Day 1 | Tensor、自动求导与 GPU 环境 | 4h | 1h | 环境检查、手写梯度与 autograd 一致 |
-| Day 2 | 数据加载与独立划分 | 4h | 1h | MNIST 55k/5k 索引与 DataLoader |
-| Day 3 | MLP、logits 与交叉熵 | 4h | 1h | 三层 MLP、分类损失与反向传播 |
-| Day 4 | 训练循环与小批过拟合 | 4h | 1h | 参数化模型 / 数据接口、配置接线与小样本检查 |
-| Day 5 | 最佳 checkpoint 与加载一致性 | 4h | 1h | best/last 保存及独立评估入口 |
-| Day 6 | 配置冻结、独立测试与周总结 | 4h | 1h | MNIST 测试结果、误分类与复现说明 |
-| Day 7 | 休息 | 0h | 0h | — |
-| 合计 | — | 24h | 6h | 30h |
+| 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
+| --- | --- | --- |
+| [Day 1](#day-1) | 创建 `scripts/check_environment.py`、`scripts/torch_basics.py` | 设备信息可保存；NumPy 与 autograd 梯度误差小于 1e-8 |
+| [Day 2](#day-2) | 创建 `src/petvision/data/datasets.py`、`scripts/inspect_mnist.py`，安装本地包 | 划分为 55k/5k/10k；索引不重叠；批次形状正确 |
+| [Day 3](#day-3) | 创建 `src/petvision/models/cv/mlp.py`、`tests/test_cv_training.py` | B=1/4 均输出 [B,10]；交叉熵和参数梯度有限 |
+| [Day 4](#day-4) | 编写训练器、种子工具和 `scripts/train_cv.py`，连接 YAML 参数 | 两批 smoke 通过；固定 64 样本可拟合；检查模式不写正式结果 |
+| [Day 5](#day-5) | 创建 checkpoint 工具、`scripts/evaluate.py`，正式训练 5 epochs | best/last 规则正确；独立验证 5000 条与 best 日志一致 |
+| [Day 6](#day-6) | 补充 `scripts/evaluate.py` 的测试输出，更新本周 README | 冻结 best 后测试 10000 条，保存指标和误分类；能重写训练与验证 |
 
 <a id="day-1"></a>
+
 ## Day 1：Tensor、自动求导与 GPU 环境
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -85,33 +80,12 @@ PetVisionLab/
 | [pathlib（官方中文）](https://docs.python.org/zh-cn/3.12/library/pathlib.html) | 基础使用，以及 Path.mkdir、Path.write_text | 拼接路径、创建目录、写入 UTF-8 文本 |
 | [Python 模块（官方中文）](https://docs.python.org/zh-cn/3.12/tutorial/modules.html#executing-modules-as-scripts) | 复习 6.1.1「以脚本方式执行模块」中的 __name__ 与入口保护 | 让直接运行执行练习，导入只提供定义 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 检查环境与官方安装方式，完成设备验证 |
-| 1.5h | 创建 Tensor，完成零参数、非零参数的 NumPy / autograd 对照 |
-| 0.5h | 练习命令行参数、路径与环境记录写入 |
-| 1h | 验证梯度累加、清零、detach 与入口保护，核对当天验收项 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 按下面第一步激活环境、补齐 Conda 工具依赖、安装兼容的 PyTorch / torchvision，再验证 GPU；记录实际命令、版本、驱动、GPU 型号、总显存与解释器路径。
-
-2. 创建 `scripts/check_environment.py`：打印 Python、torch、torchvision、CUDA 是否可用、设备名及 `torch.cuda.mem_get_info()`；先按下面第二步练习参数解析和文本写入，再接入实际检查信息。提供 `--output-dir` 时保存本周 `environment.txt`，不提供时只打印；CPU 路径也能完成检查。
-
-3. 创建 `scripts/torch_basics.py`，按第三步分别完成零参数与非零参数的 MSE、NumPy 解析梯度和 autograd 梯度对照；两组都打印 loss 与梯度误差，误差目标 `1e-8`。
-
-4. 按第四步保留同一组非零参数，每次重新计算 loss 后再 backward，观察「单次 → 累加两次 → 清零后单次」三个阶段；期间保持参数数值不变。
-
-5. 按第五步打印 Tensor 属性、比较 detach 前后的梯度记录、转换为 NumPy，并检查梯度是否有限。
-
-6. 按第六步将演示放进 `main()`，添加入口保护；用直接运行和导入两种方式验证执行范围。
-
-### 分步操作与自查
+环境脚本用 `torch.cuda.mem_get_info()` 读取显存；梯度练习分别检查零参数、非零参数和清零前后的梯度累加。
 
 <a id="environment"></a>
+
 #### 第一步：在 petvision 中安装并验证 PyTorch
 
 在项目根目录打开终端，先沿用第一周环境，再补充本周使用的 YAML 读取与检查工具：
@@ -131,7 +105,7 @@ Python 应为 3.12，解释器路径应属于 `petvision`。PyYAML 用于读取�
 nvidia-smi
 ```
 
-保存 GPU 型号、Driver Version 和显存总量。第一周环境记录是 WSL2；若继续在 WSL2 学习，PyTorch 安装向导的操作系统选择 **Linux**。WSL 使用 Windows 主机提供的 NVIDIA 驱动，驱动问题应先检查主机与 WSL 的支持情况，具体见 [NVIDIA WSL 说明](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。
+保存 GPU 型号、Driver Version 和显存总量。第一周环境记录是 WSL2；若继续在 WSL2 学习，PyTorch 安装向导的操作系统选择 Linux。WSL 使用 Windows 主机提供的 NVIDIA 驱动，驱动问题应先检查主机与 WSL 的支持情况，具体见 [NVIDIA WSL 说明](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。
 
 打开 [PyTorch 安装说明（中文译文）](https://pytorch.ac.cn/get-started/locally/)（[官方命令向导](https://pytorch.org/get-started/locally/)），逐项选择：
 
@@ -197,6 +171,7 @@ python -m pip freeze > experiments/mnist_mlp/week2/pip-freeze.txt
 Conda explicit 清单记录 Conda 包；pip 补充安装还需相应版本清单和原安装命令。依赖不变时，不必每天重新导出。
 
 <a id="environment-output"></a>
+
 #### 第二步：让脚本接收输出目录并保存环境信息
 
 先读当天资料中的 argparse 入门和 pathlib 指定部分。命令行参数用来把终端输入传给脚本；例如运行 `python scripts/check_environment.py --output-dir experiments/mnist_mlp/week2` 时，脚本需要读到后面的目录路径。
@@ -243,11 +218,12 @@ if __name__ == "__main__":
 用 `python scripts/check_environment.py --help` 查看参数说明，再分别尝试不带参数和带 `--output-dir` 的运行方式。打开生成的 `environment.txt`，确认环境字段与终端打印一致；再次运行应能够更新记录。后面的 Day 4 在此基础上增加训练配置与检查模式的参数。
 
 <a id="torch-numpy-check"></a>
+
 #### 第三步：在脚本里独立比较 NumPy 与 autograd
 
 下面第三至第六步都写在 `scripts/torch_basics.py` 中。先完成各段计算，最后按第六步的结构整理到 `main()`；解释可以写成代码注释或口头复盘。
 
-沿用第一周数据：X=`[[1,2],[3,4],[5,6]]`、y=`[[1],[2],[3]]`。今天的数值对照统一使用 **CPU、float64**，保持 y 为 `(3,1)`，避免与预测相减时错误广播。
+沿用第一周数据：X=`[[1,2],[3,4],[5,6]]`、y=`[[1],[2],[3]]`。今天的数值对照统一使用 CPU、float64，保持 y 为 `(3,1)`，避免与预测相减时错误广播。
 
 先做零参数例子，理解一次前向与反向：
 
@@ -300,9 +276,10 @@ print("autograd db:", b.grad)
 两组都应打印 MSE、NumPy 解析梯度、autograd 梯度和误差。上表用于人工核对；脚本中的解析梯度仍由 NumPy 公式实际算出。只打印 `w.grad、b.grad`，还没有完成独立对照。
 
 <a id="torch-gradient-accumulation"></a>
+
 #### 第四步：用同一组参数验证梯度累加与清零
 
-接着第三步的**非零参数**例子继续做。此时已经完成一次 backward，`w.grad` 应为 `[[-27.0],[-34.4]]`，`b.grad` 应为 `-7.4`。
+接着第三步的非零参数例子继续做。此时已经完成一次 backward，`w.grad` 应为 `[[-27.0],[-34.4]]`，`b.grad` 应为 `-7.4`。
 
 这一小节保持 X、y 和参数值不变，始终使用同一组 w、b；重新创建参数或更新参数数值都会干扰本题的累加对照。重新计算 loss 会建立新的计算图，但不会自动清除参数上已有的 `.grad`。
 
@@ -315,7 +292,7 @@ print("autograd db:", b.grad)
 
    `.clone()` 复制当前数值。`first_dw = w.grad` 只是让两个名字指向同一个 Tensor，后续累加可能使「首次记录」也跟着改变。
 
-2. **保留当前梯度**，重新前向计算，再做第二次 backward：
+2. 保留当前梯度，重新前向计算，再做第二次 backward：
 
    ```python
    loss2 = ((X @ w + b - y) ** 2).mean()
@@ -345,6 +322,7 @@ print("autograd db:", b.grad)
 每次 backward 前都重新前向建图。对同一份已经反向过的 loss 直接再次调用 backward，通常会遇到计算图已释放的报错。本题通过重新计算 loss 练习常见训练流程，不需要设置 `retain_graph=True`。虽然参数上的梯度发生了累加，参数值没有更新，因此三个阶段的 MSE 都应仍为 `15.85`。
 
 <a id="torch-detach-check"></a>
+
 #### 第五步：打印 Tensor 属性，观察 detach 与 NumPy 转换
 
 先打印 X、y、w、b 的 `shape、dtype、device、requires_grad、is_leaf`，对照本题的预期：
@@ -385,6 +363,7 @@ assert torch.isfinite(b.grad).all().item()
 能解释两个问题：为什么本题只为 w、b 启用梯度？为什么 `detach()` 与将 `.grad` 设为 None 分别用于不同操作？
 
 <a id="torch-entry"></a>
+
 #### 第六步：加入入口保护，分别验证直接运行与导入
 
 将数据创建、前向、backward、打印和断言放进 `main()`；导入语句和函数定义放在文件顶层。文件结构如下，`pass` 用你已完成的各段练习替换：
@@ -407,7 +386,7 @@ if __name__ == "__main__":
 
 用下面的第三条命令验证导入。`sys.path.insert(0, 'scripts')` 只为这次命令临时加入脚本搜索目录，便于从项目根目录导入 `torch_basics` 及其同目录模块；本周 Day 2 再建立正式的 src 包。
 
-### 运行与验收
+### 运行与自查
 
 完成两个脚本后，在已激活环境的项目根目录执行：
 
@@ -419,18 +398,19 @@ python -c "import sys; sys.path.insert(0, 'scripts'); import torch_basics"
 
 第一条打印并保存实际环境；第二条输出下列学习结果；第三条应正常退出，且没有练习输出。运行成功后，逐项核对：
 
-- [ ] **环境与参数**：能解释 --output-dir 如何变成 Path，理解目录创建与文本写入；environment.txt 与终端的环境字段一致，不提供参数时只打印，CPU 分支也能完成检查。
-- [ ] **NumPy 独立对照**：零参数与非零参数两组都打印 MSE、NumPy 解析梯度、autograd 梯度；loss、dw、db 的误差均小于 `1e-8`。
-- [ ] **梯度累加与清零**：同一组非零参数展示三阶段梯度，验证「单次 → 两倍 → 单次」；每次反向前重新前向，参数值与 MSE 保持不变。
-- [ ] **Tensor 属性与有限值**：打印并解释 shape、dtype、device、requires_grad、is_leaf；参数与梯度同形状，梯度没有 NaN 或 Inf。
-- [ ] **detach 与 NumPy**：展示原 Tensor 和 detach 结果的 requires_grad 不同，原 Tensor 属性保持不变；能转换为 NumPy，能区分 detach 与清除梯度。
-- [ ] **入口保护**：直接运行执行全部练习，导入只加载定义，没有练习输出或自动 backward。
-- [ ] **设备记录**：GPU 可用性和显存有真实记录；安装问题未解决时先完成 CPU 小样本检查。实际安装命令、版本和驱动记录保存到本周实验 README，周末集中整理。
+- [ ] 环境与参数：能解释 --output-dir 如何变成 Path，理解目录创建与文本写入；environment.txt 与终端的环境字段一致，不提供参数时只打印，CPU 分支也能完成检查。
+- [ ] NumPy 独立对照：零参数与非零参数两组都打印 MSE、NumPy 解析梯度、autograd 梯度；loss、dw、db 的误差均小于 `1e-8`。
+- [ ] 梯度累加与清零：同一组非零参数展示三阶段梯度，验证「单次 → 两倍 → 单次」；每次反向前重新前向，参数值与 MSE 保持不变。
+- [ ] Tensor 属性与有限值：打印并解释 shape、dtype、device、requires_grad、is_leaf；参数与梯度同形状，梯度没有 NaN 或 Inf。
+- [ ] detach 与 NumPy：展示原 Tensor 和 detach 结果的 requires_grad 不同，原 Tensor 属性保持不变；能转换为 NumPy，能区分 detach 与清除梯度。
+- [ ] 入口保护：直接运行执行全部练习，导入只加载定义，没有练习输出或自动 backward。
+- [ ] 设备记录：GPU 可用性和显存有真实记录；安装问题未解决时先完成 CPU 小样本检查。实际安装命令、版本和驱动记录保存到本周实验 README，周末集中整理。
 
 <a id="day-2"></a>
+
 ## Day 2：MNIST 数据加载与固定划分
 
-今天处理的数据集是 **MNIST 手写数字数据集**：图片为 28×28 的单通道灰度图，标签是 0–9。今天要完成的顺序是：下载并读取 MNIST → 固定训练 / 验证划分 → 组成数据批次 → 检查图片和标签。第一步的包配置是为了让这些数据处理代码能被后续训练脚本复用。
+今天处理的数据集是 MNIST 手写数字数据集：图片为 28×28 的单通道灰度图，标签是 0-9。今天要完成的顺序是：下载并读取 MNIST → 固定训练 / 验证划分 → 组成数据批次 → 检查图片和标签。第一步的包配置是为了让这些数据处理代码能被后续训练脚本复用。
 
 三份数据的职责不同，今天先准备好它们，后续再训练和评估：
 
@@ -440,7 +420,7 @@ python -c "import sys; sys.path.insert(0, 'scripts'); import torch_basics"
 | val，验证集 | 官方训练集中的另外 5,000 张 | 比较配置、选择最佳 checkpoint；不用于反向传播 |
 | test，测试集 | 官方独立测试集的 10,000 张 | 模型和配置确定后评估最终效果，不根据它调参 |
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -452,37 +432,19 @@ python -c "import sys; sys.path.insert(0, 'scripts'); import torch_basics"
 | [本地可编辑安装（pip 官方英文）](https://pip.pypa.io/en/stable/topics/local-project-installs/#editable-installs) | Editable installs 小节 | 理解 install -e 与修改源码后的效果 |
 | [json（官方中文）](https://docs.python.org/zh-cn/3.12/library/json.html) | dump/load、字典与列表、UTF-8 文件读写 | 保存并重新读取划分索引 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读数据接口，建立最小包配置 |
-| 2h | 实现加载、固定划分和 DataLoader |
-| 1h | 检查索引、形状、类别与可视化 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 按下面第一步先理解 Python 包，再创建 `src/petvision/`、两个空的 `__init__.py` 和根目录的 `pyproject.toml`。将项目安装到当前 petvision 环境，使脚本能统一导入自己写的数据函数；检查导入路径指向本仓库。
-
-2. 在 `src/petvision/data/datasets.py` 中实现 `build_mnist_loaders()`。先用 `torchvision.datasets.MNIST` 下载并读取官方训练集和测试集，根目录设为 `datasets/raw/`。
-
-3. 从官方训练集的 60,000 张图片中，用种子 42 固定选出 55,000 张用于训练、5,000 张用于验证；保存 `experiments/mnist_mlp/week2/mnist_split.json`，后续读取同一份索引。官方测试集的 10,000 张图片单独保留。
-
-4. 为三份数据分别创建 DataLoader 并返回。训练、验证和测试使用相同固定数值预处理；训练 shuffle=True，验证和测试 shuffle=False，不丢弃尾批。
-
-5. 创建 `scripts/inspect_mnist.py` 调用数据函数。检查索引无重叠、范围正确且覆盖官方训练集；打印一个批次的图片 `[B,1,28,28]`、标签 `[B]`、dtype 和取值范围，显示少量图片及标签。今天只核对测试集来源和长度，不用它选配置。
-
-### 分步操作与自查
+数据源为 `torchvision.datasets.MNIST`；一个图片批次应为 `[B,1,28,28]`。
 
 <a id="package-setup"></a>
+
 #### 第一步：理解 Python 包，建立目录并验证本地安装
 
 这一步是在整理后续要复用的 Python 代码。第一周的多个脚本放在 scripts 中，可以导入同目录的 gradient_basics；接下来数据、模型、训练函数会被多个脚本和检查共同使用，统一放进 petvision 包，用明确的完整名称导入。
 
 先认识三个概念：一个 `.py` 文件叫模块；包含 `__init__.py` 的目录在本项目中作为普通 Python 包；包中还可以继续放子包。`src` 是存放源码的目录，本项目从 petvision 开始导入。
 
-**1. 按目录图创建文件，两个 __init__.py 暂时留空。**
+1. 按目录图创建文件，两个 __init__.py 暂时留空。
 
 ```text
 PetVisionLab/
@@ -505,7 +467,7 @@ from petvision.data.datasets import build_mnist_loaders
 
 这条路径逐段对应 `petvision/ → data/ → datasets.py → 函数名`。只写 `import petvision` 会加载顶层包；需要某个数据函数时再按完整路径导入。今天两个空文件分别属于 petvision 和 data；后续新增 models、training 等包目录时，也分别添加自己的 __init__.py。
 
-**2. 在项目根目录创建 pyproject.toml，告诉安装工具怎样找到这些代码。**
+2. 在项目根目录创建 pyproject.toml，告诉安装工具怎样找到这些代码。
 
 pyproject.toml 是文本配置文件，使用 TOML 格式：`[名称]` 表示一组配置，下面的 `键 = 值` 描述这组设置。setuptools 是负责查找包、准备安装内容的工具，pip 按这里指定的方式调用它。先使用以下完整最小配置：
 
@@ -537,7 +499,7 @@ where = ["src"]
 
 安装名 petvision-lab 来自配置中的 name；导入名 petvision 来自源码包目录，所以代码写 `import petvision`。Conda 环境也叫 petvision，它负责管理 Python 与依赖；这里同名的 Python 包负责组织你写的代码。
 
-**3. 激活环境，在含 pyproject.toml 的项目根目录做本地可编辑安装。**
+3. 激活环境，在含 pyproject.toml 的项目根目录做本地可编辑安装。
 
 ```bash
 conda activate petvision
@@ -554,7 +516,7 @@ python -m pip check
 - `.`：当前目录，也就是含 pyproject.toml 的 PetVisionLab 根目录。
 - `--no-deps`：跳过安装项目声明的运行依赖，本项目依赖已在前一天准备；构建工具仍可能按 build-system 准备。
 
-**4. 看导入路径，确认环境找到的是刚建立的包。**
+4. 看导入路径，确认环境找到的是刚建立的包。
 
 你的本地输出预期类似：
 
@@ -567,6 +529,7 @@ python -m pip check
 本步完成时应能解释「目录负责组织代码，配置负责描述项目，安装让当前解释器找到项目包」。数据读取函数在下一步实现。
 
 <a id="mnist-data"></a>
+
 #### 第二步：下载并读取 MNIST，确认数据来源
 
 在 `src/petvision/data/datasets.py` 中实现以下接口；第二至四步的片段是同一个函数的组成部分，导入语句放在文件顶层，下载和数据处理放在函数内：
@@ -610,19 +573,20 @@ test_set = MNIST(
 - `download=True`：缺少数据时下载；已有完整数据时直接使用。
 - `train=True`：读取官方 60,000 张训练图片；下一步再从中划出训练 / 验证子集。
 - `train=False`：读取官方 10,000 张测试图片；它不表示验证集。
-- `ToTensor()`：把本题的灰度图片转为 `[1,28,28]` 浮点 Tensor，并将像素从 0–255 缩放到 0–1。
+- `ToTensor()`：把本题的灰度图片转为 `[1,28,28]` 浮点 Tensor，并将像素从 0-255 缩放到 0-1。
 - `Normalize(...)`：逐像素计算 `(x-0.5)/0.5`，得到约 [-1,1] 的范围。三份数据使用同一固定变换。
 
-先在函数中临时打印 `len(train_base)`、`len(test_set)`，应为 `60000`、`10000`。再取 `image, label = train_base[0]`：图片应为 `[1,28,28]` 的 float32 Tensor，label 是 0–9 中的一个 Python 整数。单张标签在 DataLoader 组成批次后才变为 `[B]` 的 long Tensor。
+先在函数中临时打印 `len(train_base)`、`len(test_set)`，应为 `60000`、`10000`。再取 `image, label = train_base[0]`：图片应为 `[1,28,28]` 的 float32 Tensor，label 是 0-9 中的一个 Python 整数。单张标签在 DataLoader 组成批次后才变为 `[B]` 的 long Tensor。
 
 <a id="mnist-split"></a>
+
 #### 第三步：从 MNIST 官方训练集生成并保存划分索引
 
 本步只划分第二步的 train_base：60000 张图片中的 55000 张用于训练，5000 张用于验证；官方 test_set 的 10000 张图片保持独立。保存的是图片编号，不是复制图片文件。
 
 下面三段代码按顺序放在 `build_mnist_loaders()` 内，接在创建 train_base / test_set 之后、第四步创建 DataLoader 之前。文件顶层的 json、Path、torch 和 Subset 已在第二步导入。如果你已经写了 `split_path = Path(split_path)`，这一行保留一次即可。
 
-**1. 判断已有文件：有则读取，没有才生成。**
+1. 判断已有文件：有则读取，没有才生成。
 
 ```python
 split_path = Path(split_path)
@@ -656,7 +620,7 @@ else:
 
 JSON 中的 dataset、version、seed、n_total 说明这份划分适用于哪个数据集和设置；train_indices / val_indices 保存两份实际编号。
 
-**2. 对新生成和已读取的划分，执行同一套检查。**
+2. 对新生成和已读取的划分，执行同一套检查。
 
 ```python
 # 读取和首次生成的划分都使用相同的完整性检查。
@@ -699,7 +663,7 @@ if train_index_set | val_index_set != set(range(n_total)):
 
 检查失败时抛出 ValueError，并保留已有文件。比如用相同路径传入不同 seed，不应自动覆盖旧划分；确实要做另一组实验时使用新的 split_path。
 
-**3. 检查通过后保存新文件，再创建两个 Subset。**
+3. 检查通过后保存新文件，再创建两个 Subset。
 
 ```python
 # 只有首次生成且检查通过后，才保存到约定路径。
@@ -714,7 +678,7 @@ val_set = Subset(train_base, val_indices)
 
 mkdir 创建 JSON 所在目录，json.dump 将已检查的字典写入 UTF-8 文件；只有本次首次生成时才写盘。Subset 把原始 dataset 和编号关联起来：`train_set[i]` 读取的实际图片是 `train_base[train_indices[i]]`，没有复制整份图片。
 
-**本步自查：**
+本步自查：
 
 1. 在函数末尾临时打印 `len(train_set), len(val_set), len(test_set)`，应为 `55000 5000 10000`。
 2. 首次调用应生成 `experiments/mnist_mlp/week2/mnist_split.json`；再次调用应读回同一组编号，文件内容不变。
@@ -723,6 +687,7 @@ mkdir 创建 JSON 所在目录，json.dump 将已检查的字典写入 UTF-8 文
 完成第三步时函数尚未返回 DataLoader；下一步接上三个 loader 的构造和 return。当前只验证索引与子集，不需要运行模型训练。
 
 <a id="mnist-loaders"></a>
+
 #### 第四步：创建并返回三个 DataLoader
 
 Dataset 提供一张图片与标签；DataLoader 负责按照 batch_size 取出多张并组成批次。沿用第二步文件顶层的导入，在同一个函数内接上：
@@ -821,7 +786,7 @@ if __name__ == "__main__":
 
 将今天使用的条件记录在 `experiments/mnist_mlp/week2/README.md`：data_dir、split_path、seed、batch_size、num_workers、drop_last，以及 ToTensor → Normalize(mean=(0.5,), std=(0.5,)) 和各 loader 的 shuffle 设置。保留划分 JSON 和图片。Day 4 再将这些字段接入训练 YAML，Day 5 保存正式运行的配置快照。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/inspect_mnist.py
@@ -834,9 +799,10 @@ python scripts/inspect_mnist.py
 - [ ] 脚本可从根目录运行，包导入不依赖手工修改 sys.path。
 
 <a id="day-3"></a>
+
 ## Day 3：MLP、logits 与交叉熵
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -844,26 +810,9 @@ python scripts/inspect_mnist.py
 | [优化模型参数（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/basics/optimization_tutorial.html) | CrossEntropyLoss 与训练步骤 | 理解 logits 到 loss |
 | [pytest 入门（官方英文）](https://docs.pytest.org/en/stable/getting-started.html) | 第一个测试、assert、pytest.raises | 将形状和数值检查写成 test_ 函数 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读模型与交叉熵，手算一个三分类例子 |
-| 2h | 实现 MLP 与一次反向传播 |
-| 1h | 检查 logits、标签、梯度和参数量 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `src/petvision/models/cv/mlp.py`，实现输入展平、两层隐藏层与输出层，按本周固定结构返回 `[B,10]` logits。
-
-2. 用三个手写 logits 和一个正确类别，理解 `-log softmax(logits)[target]`。交叉熵直接接收 logits；准确率用 argmax，展示概率时再 softmax。
-
-3. 创建 `tests/test_cv_training.py` 的首批检查：batch=1 与 batch=4 均得到 `[B,10]`；CrossEntropyLoss 为有限标量；反向后参与计算的参数梯度存在且有限。
-
-4. 打印可训练参数量，解释每个 Linear 的 weight 与 bias 形状。将模型移到选定 device，图片与标签也一起迁移。
-
-### 分步操作与自查
+先用三分类小例子计算 `-log softmax(logits)[target]`，再检查 MLP 的前向和反向。
 
 #### 第一步：按尺寸写出 MLP
 
@@ -911,9 +860,9 @@ target 保存类别编号；训练不必先做 one-hot。预测使用 argmax(dim
 
 #### 第三步：完成最小前反向检查
 
-本步只回答一个问题：**第一步写的 MLP，能否把图片变成分类输出、计算损失，并为模型参数算出梯度？** 先在 CPU 上使用随机图片和随机标签检查计算过程。
+本步只回答一个问题：第一步写的 MLP，能否把图片变成分类输出、计算损失，并为模型参数算出梯度？ 先在 CPU 上使用随机图片和随机标签检查计算过程。
 
-**1. 创建测试文件，明确代码写在哪里。**
+1. 创建测试文件，明确代码写在哪里。
 
 在项目根目录创建 `tests/`，在其中创建 `test_cv_training.py`。下面是一份完整的最小示例，写入这个测试文件；模型类仍保存在 `src/petvision/models/cv/mlp.py`，通过 import 使用。
 
@@ -949,11 +898,11 @@ def test_mlp_forward_backward():
         print(f"batch={batch_size}, logits={tuple(logits.shape)}, loss={loss.item():.6f}")
 ```
 
-**2. 按计算顺序理解这段检查。**
+2. 按计算顺序理解这段检查。
 
 | 顺序 | 代码 | 检查什么 |
 | --- | --- | --- |
-| 准备输入 | 创建 images 和 labels | B 张单通道 28×28 图片，每张对应一个 0–9 的标签 |
+| 准备输入 | 创建 images 和 labels | B 张单通道 28×28 图片，每张对应一个 0-9 的标签 |
 | 前向 | `logits = model(images)` | 输出形状是 `[B,10]`；B=1 时也保留 batch 维 |
 | 计算损失 | `cross_entropy(logits, labels)` | loss 是一个标量，且不是 NaN 或无穷大 |
 | 反向 | `loss.backward()` | 根据本次损失计算模型参数的梯度 |
@@ -963,7 +912,7 @@ def test_mlp_forward_backward():
 
 每个 batch_size 都重新创建模型；这里的 zero_grad 用于明确“清梯度 → 前向 → loss → backward”的顺序。反向只计算梯度，更新参数需要 Day 4 学习的优化器与 step。
 
-**3. 从项目根目录运行测试。**
+3. 从项目根目录运行测试。
 
 ```bash
 python -m pytest tests/test_cv_training.py -q -s
@@ -975,9 +924,9 @@ pytest 会自动执行名称以 `test_` 开头的函数，不需要在文件末�
 
 #### 第四步：检查参数量和设备
 
-第三步通过后，把下面两个测试函数**追加到同一个 `tests/test_cv_training.py`**，保留前面的导入和测试函数。
+第三步通过后，把下面两个测试函数追加到同一个 `tests/test_cv_training.py`，保留前面的导入和测试函数。
 
-**1. 核对参数量。**
+1. 核对参数量。
 
 ```python
 def test_mlp_parameter_count():
@@ -991,7 +940,7 @@ def test_mlp_parameter_count():
 
 Linear(in,out) 的 weight 形状为 `[out,in]`，bias 为 `[out]`，参数数为 `in*out+out`。三层分别为 `784*256+256`、`256*128+128`、`128*10+10`，合计 235146；Flatten 与 ReLU 没有可训练参数。
 
-**2. 核对模型和数据能一起迁移设备。**
+2. 核对模型和数据能一起迁移设备。
 
 ```python
 def test_mlp_device():
@@ -1015,7 +964,7 @@ def test_mlp_device():
 
 这里选择 CUDA（可用时）或 CPU；模型、图片和标签要在同一设备。图片保持浮点类型，标签保持 long，迁移设备不会把标签变成浮点数。第三步始终检查 CPU 路径，本测试额外检查当前可用的设备。
 
-### 运行与验收
+### 运行与自查
 
 从项目根目录再次执行：
 
@@ -1034,9 +983,10 @@ python -m pytest tests/test_cv_training.py -q -s
 - [ ] 能区分前向计算、损失计算、反向计算梯度和优化器更新参数。
 
 <a id="day-4"></a>
+
 ## Day 4：训练循环与小批过拟合
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -1045,31 +995,10 @@ python -m pytest tests/test_cv_training.py -q -s
 | [itertools.islice（Python 官方中文）](https://docs.python.org/zh-cn/3.12/library/itertools.html#itertools.islice) | `from itertools import islice`、`islice(loader, 2)` | smoke 模式只遍历前两个批次 |
 | [Python argparse（官方中文）](https://docs.python.org/zh-cn/3.12/library/argparse.html)、[PyYAML 文档](https://pyyaml.org/wiki/PyYAMLDocumentation) | 复习 Day 1 的参数解析；新增 required、store_true、互斥参数组和 type=int；PyYAML 看 safe_load 和 safe_dump | 将参数与配置字典接入训练入口 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 复习一轮训练与评估的顺序 |
-| 2h | 按最小示例实现参数/配置读取、训练与验证 |
-| 1h | 进行 smoke 与 64 样本过拟合检查 |
-| 0.5h | 固定正式预算，准备日志与曲线输出 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 按第一步创建 `src/petvision/utils/seed.py`、`src/petvision/training/cv_trainer.py`，实现随机种子、train_one_epoch 与 evaluate。训练切 train、验证切 eval/no_grad，图片和标签迁移到同一设备。
-
-2. 按第二步在 `tests/test_cv_training.py` 追加统计检查：loss 按每批实际样本数加权，accuracy 按总正确数/总样本数计算；尾批和部分遍历的 n_samples 均应正确。
-
-3. 按第三步创建 `scripts/check_mnist_training.py`，先独立运行两个训练批次和两个验证批次，再新建模型，固定同一批 64 条训练样本、关闭随机增强并循环约 200 次更新。目标训练准确率接近 100%；后续再把这两项接入训练入口的 --smoke / --overfit-samples 分支。
-
-4. 按第四步先改造 `src/petvision/models/cv/mlp.py` 和 `src/petvision/data/datasets.py`，使模型尺寸、验证集大小、归一化与 num_workers 由参数控制；保留旧调用的默认值，验证参数生效后再创建 `configs/cv/mlp_mnist.yaml`。第五步创建 `scripts/train_cv.py` 并解析配置，第六步将字段传给这些接口。
-
-5. 过拟合关卡通过后固定 5 epochs 正式预算，准备每轮 train/val loss、accuracy 的日志与画图函数。Day 5 接通 checkpoint 保存后，再从新模型和优化器开始正式训练并生成 `history.csv`、曲线，避免先训练完才发现没有保存 best。
-
-### 分步操作与自查
+### 操作步骤
 
 <a id="training-seed"></a>
+
 #### 第一步：准备随机种子工具，再写训练 / 评估函数
 
 创建 `src/petvision/utils/`、`src/petvision/training/` 及各自空的 `__init__.py`，再创建 `src/petvision/utils/seed.py`，实现以下小函数；导入它不会立即改变随机状态，由训练入口在创建新模型前调用：
@@ -1136,7 +1065,7 @@ batch 是一次送进模型的一批样本，step 通常指一次优化器更新
 
 这一步检查第一步的函数是否正确汇总多个批次。先做纸上计算，再用一份答案已知的小数据实际调用 evaluate；模型训练能否学会内容，留到第三步检查。
 
-**1. 先算清楚为什么不能直接平均每批指标。**
+1. 先算清楚为什么不能直接平均每批指标。
 
 假设两批分别有 128、16 条样本，平均 loss 分别为 1、3，正确数分别为 64、16：
 
@@ -1148,7 +1077,7 @@ accuracy = (64 + 16) / 144 ≈ 0.555556
 
 不能把 loss 算成 `(1+3)/2=2`，也不能把 accuracy 算成 `(0.5+1)/2=0.75`，因为两批的样本数不同。你在第一步写的累计逻辑应当与上面的公式一致。
 
-**2. 在现有测试文件中追加一个真正调用 evaluate 的测试。**
+2. 在现有测试文件中追加一个真正调用 evaluate 的测试。
 
 打开 `tests/test_cv_training.py`，保留 Day 3 的三个函数和顶层的 `import torch`，在文件末尾追加下面这个函数。这里使用 3 条小数据、batch_size=2，故意产生大小为 2 和 1 的两个批次，方便核对尾批；它与上面的 144 条手算例子是同一种统计规则。
 
@@ -1189,7 +1118,7 @@ def test_evaluate_metrics():
 
 `expected_loss` 将三条数据一次性交给交叉熵，作为全体样本平均损失的参考答案；evaluate 则分两批累计。如果误把每批 loss 直接平均，两个结果就会不同。再用 islice 只读第一批，检查 n_samples 是否真的只计已处理的 2 条。
 
-**3. 从项目根目录运行。**
+3. 从项目根目录运行。
 
 ```bash
 python -m pytest tests/test_cv_training.py -q -s
@@ -1201,7 +1130,7 @@ python -m pytest tests/test_cv_training.py -q -s
 
 这一步分成两项：smoke 检查数据、模型、优化器与训练 / 验证函数能否接通；固定小样本拟合检查参数更新是否真正有效。今天先按顺序运行这两项，后面第四至第六步再将它们接入 YAML 和 `train_cv.py` 的参数分支。
 
-**1. 创建独立检查脚本。**
+1. 创建独立检查脚本。
 
 创建 `scripts/check_mnist_training.py`，写入下面的完整示例。它直接使用已经实现的 MLP() 和四参数数据函数，不依赖尚未创建的训练 YAML；后续扩展构造函数时保留默认值，这份检查仍能使用。
 
@@ -1274,7 +1203,7 @@ if __name__ == "__main__":
     main()
 ```
 
-**2. 先理解 smoke 部分，再运行整个脚本。**
+2. 先理解 smoke 部分，再运行整个脚本。
 
 ```bash
 python scripts/check_mnist_training.py
@@ -1282,7 +1211,7 @@ python scripts/check_mnist_training.py
 
 在 `scripts/check_mnist_training.py::main()` 的 smoke 部分，train_one_epoch 接收 `islice(train_loader,2)`，evaluate 接收 `islice(val_loader,2)`，两边各处理前两个批次。batch_size=128，因此两份 n_samples 都应为 256；loss 必须有限，准确率只需是合法比例，不设达标目标。smoke 的目的在于确认代码能执行，不代表模型已经训练好。
 
-**3. 看懂固定 64 条样本是怎么做到的。**
+3. 看懂固定 64 条样本是怎么做到的。
 
 - `Subset(train_loader.dataset, list(range(64)))` 选取训练子集中的前 64 条；这些编号属于训练子集，不会取验证或测试图片。
 - 只执行一次 `next(iter(fixed_loader))`，把这 64 张图片和标签读到 images / labels。MNIST 当前只有固定的数值预处理，没有随机增强。
@@ -1290,7 +1219,7 @@ python scripts/check_mnist_training.py
 - 200 次调用 train_one_epoch 时，每次只处理这一个批次，因此总计 200 次参数更新。每 20 次用 evaluate 在同样的 64 条训练样本上检查拟合结果。
 - 过拟合检查重新设置 seed、新建模型和优化器，避免继承前面 smoke 的训练状态。
 
-**4. 判断是否通过。**
+4. 判断是否通过。
 
 loss 应从初始值明显下降，固定 64 条训练样本的 accuracy 应接近 100%；示例用至少 98% 作自查门槛。将实际更新次数、初始 / 最终 loss、accuracy 和设备记录在本周 README。这里证明模型能记住这 64 条训练数据，不能据此推断验证或测试准确率。
 
@@ -1299,11 +1228,12 @@ loss 应从初始值明显下降，固定 64 条训练样本的 accuracy 应接�
 本脚本只打印检查结果，不保存正式 history、配置快照、曲线或 checkpoint。后续将两项逻辑分别接入 `scripts/train_cv.py` 的 `--smoke` 和 `--overfit-samples 64` 分支；检查模式结束后返回，正式训练按 Day 5 安排，重新创建模型和优化器。
 
 <a id="mnist-configurable-interfaces"></a>
+
 #### 第四步：先改造模型与数据接口，再写 MNIST 配置
 
 YAML 只保存配置值。要让它控制程序，必须先有接收参数的模型 / 数据函数，再由训练入口读取 YAML 并传入参数。本步按“改造接口 → 验证参数生效 → 写配置”的顺序完成，第六步才创建完整训练对象。
 
-**1. 将固定 MLP 改成接收尺寸参数的模型。**
+1. 将固定 MLP 改成接收尺寸参数的模型。
 
 打开 `src/petvision/models/cv/mlp.py`，把原来的 `__init__(self)` 和写死尺寸的层替换为下面的实现。forward 仍然只返回 logits。hidden_dims 接收非空的尺寸列表或元组，通过循环创建隐藏层；本周基线配置仍使用 [256,128]，即两个隐藏层。
 
@@ -1339,7 +1269,7 @@ class MLP(nn.Module):
 
 循环要写 `range(len(hidden_dims)-1)`，因为整数本身不能被遍历。`add_module(name,module)` 接收字符串名称和实际的层对象；这里用 `str(len(self.net))` 为新层编号，保持默认模型的 state_dict 键名与原实现一致。最后一层先创建 `nn.Linear(hidden_dims[-1],num_classes)` 再加入 Sequential，输出层后面不加 ReLU。hidden_dims=(8,) 和 (8,4,2) 分别创建一个、三个隐藏层；空序列明确报错。传入 hidden_dims=(512,256) 后，才会创建不同宽度的隐藏层；只在 YAML 写这个值而不传给构造函数，不会改变模型。
 
-**2. 将 MNIST 数据函数中的固定设置改成参数。**
+2. 将 MNIST 数据函数中的固定设置改成参数。
 
 打开 `src/petvision/data/datasets.py`，把接口扩展为下面的形式；省略号位置保留原函数体，并逐项按后面的清单修改，不要把函数体替换成省略号：
 
@@ -1360,7 +1290,7 @@ def build_mnist_loaders(
 
 这样，原有四参数调用仍使用 5000、0、(0.5,)、(0.5,)；后续训练入口也能明确传入 YAML 中的数值。官方测试集仍是独立的 10000 条，不参与验证集大小的调整。
 
-**3. 验证“传了参数，结果真的改变”。**
+3. 验证“传了参数，结果真的改变”。
 
 完成模型改造后，在 `tests/test_cv_training.py` 追加下面的测试，保留所有已有测试：
 
@@ -1380,7 +1310,7 @@ def test_mlp_configurable_dimensions():
 
 这是独立的小形状检查，不是更改 MNIST 正式配置；4→8→4→3 的参数数为 `(4*8+8)+(8*4+4)+(4*3+3)=91`。它与已有的默认模型 235146 参数检查一起，确认新参数被使用、旧默认行为仍兼容。
 
-在已有 `tests/test_cv_training.py` 末尾新增 `test_mnist_configurable_loaders(tmp_path)`，在函数内调用 `build_mnist_loaders` 检查数据参数：默认参数读取原划分时仍为 55000/5000/10000；使用独立临时 split_path 和 validation_size=10000 时应为 50000/10000/10000；相同旧路径传入不同 validation_size 应明确报错，而不是覆盖原划分。把 mean/std 改为 (0.0,)/(1.0,) 后，图片应保留 ToTensor 的 0–1 范围，验证传入值确实影响预处理。检查使用临时路径，不修改正式基线的 YAML 或划分文件。
+在已有 `tests/test_cv_training.py` 末尾新增 `test_mnist_configurable_loaders(tmp_path)`，在函数内调用 `build_mnist_loaders` 检查数据参数：默认参数读取原划分时仍为 55000/5000/10000；使用独立临时 split_path 和 validation_size=10000 时应为 50000/10000/10000；相同旧路径传入不同 validation_size 应明确报错，而不是覆盖原划分。把 mean/std 改为 (0.0,)/(1.0,) 后，图片应保留 ToTensor 的 0-1 范围，验证传入值确实影响预处理。检查使用临时路径，不修改正式基线的 YAML 或划分文件。
 
 ```bash
 python -m pytest tests/test_cv_training.py -q -s
@@ -1389,7 +1319,7 @@ python -m pytest tests/test_cv_training.py -q -s
 接口检查通过后再继续。若出现 unexpected keyword argument，说明被调用类或函数的签名尚未完成改造；不能通过删掉入口参数而让配置悄悄失效。
 
 <a id="mnist-config"></a>
-**4. 将已经支持的参数写入 YAML。**
+4. 将已经支持的参数写入 YAML。
 
 创建 `configs/cv/mlp_mnist.yaml`，以下作为本周起始配置。YAML 的缩进表示字典层级；后续周沿用 `data.batch_size`、`data.split_path`、`training.learning_rate` 等字段名，不另起 `batch`、`lr` 的同义字段。
 
@@ -1435,6 +1365,7 @@ output_dir: outputs/mnist_mlp
 读取后的 `cfg["data"]["batch_size"]` 应为整数 128，`cfg["training"]["learning_rate"]` 为数值 0.001。按配置选择 Adam，weight_decay=0；模型尺寸、归一化和路径都从相应字段读取，避免 YAML 写了一套、代码实际用了另一套。
 
 <a id="cli-config"></a>
+
 #### 第五步：把命令行参数与配置字典接起来
 
 创建 `scripts/train_cv.py`，将下面的最小入口示例写入这个文件；先理解并运行它，再把普通训练函数接到 main 中。它目前只解析和打印，不会自动训练模型。
@@ -1477,6 +1408,7 @@ if __name__ == "__main__":
 `--config` 后面的值是文件路径；`--smoke` 是开关，不需要再写 True；`--overfit-samples 64` 在 Python 中对应 `args.overfit_samples == 64`。两个检查模式互斥，都不传时表示正式训练。所有相对路径统一从项目根目录解释，按下方命令核对参数和两个检查模式。
 
 <a id="training-objects"></a>
+
 #### 第六步：把配置连接到数据、模型和优化器
 
 本步以[第四步接口改造与检查](#mnist-configurable-interfaces)已经完成为前提：MLP 已接收三个尺寸参数，build_mnist_loaders 已接收 validation_size、num_workers、mean、std，默认调用检查仍然通过。现在将以下步骤接到 scripts/train_cv.py 的 main 读出 cfg 之后，逐字段创建对象；不要把本步的参数调用提前接到仍使用旧签名的类或函数上。本周仍只使用 FP32。
@@ -1527,6 +1459,7 @@ optimizer = torch.optim.Adam(
 对象创建后先判断检查模式：smoke 将传给两个循环的批次各限制为最多 2 个，顶层 `from itertools import islice` 后可用 `islice(loader, 2)`；overfit 固定 64 条训练样本反复更新。 进入 overfit 分支时先检查 args.overfit_samples 不超过 len(train_loader.dataset)，超出时明确报错，再创建 Subset；参数大于 0 的检查由第五步的 parse_args 完成。正式分支才逐 epoch 调用 `train_one_epoch(model, train_loader, optimizer, criterion, device)` 和 `evaluate(model, val_loader, criterion, device)`。今天先完成检查模式，正式分支的落盘与训练在 Day 5 接通。
 
 <a id="run-modes"></a>
+
 #### 第七步：隔离检查模式与正式结果
 
 本步继续修改 `scripts/train_cv.py`，在已有训练循环外补上结果管理。顺序是：检查模式结束后返回 → 正式分支保存配置 → 每轮收集并打印指标 → 训练结束后统一保存 CSV 和曲线。以下代码先接好，正式五轮训练仍等 Day 5 加入 checkpoint 保存后再执行。
@@ -1537,7 +1470,7 @@ optimizer = torch.optim.Adam(
 | overfit | 新建模型/优化器，固定 64 条训练样本、约 200 次更新 | 只打印本次检查结果 |
 | 正式训练 | 新运行从固定种子、新模型和新优化器开始，按完整配置训练 | 写配置快照、history 和曲线；Day 5 再保存 best/last |
 
-**1. 给两个检查分支加 return。**
+1. 给两个检查分支加 return。
 
 保留现有的 if / elif / else 结构，在下面两个位置各补一行 `return`：
 
@@ -1546,7 +1479,7 @@ optimizer = torch.optim.Adam(
 
 当前 if / elif / else 已将三个分支互斥隔离，即使省略显式 return，检查模式也不会进入 else。这里加 return 是为了在检查结束时明确退出 main，避免以后追加在整段条件语句之后的保存操作被执行。创建 experiment_dir、写 config.yaml 和 history 的操作均放在正式 else 内；smoke / overfit 不创建这些结果，已有正式文件也保持不变。
 
-**2. 在文件顶层补两个导入。**
+2. 在文件顶层补两个导入。
 
 ```python
 import csv
@@ -1555,7 +1488,7 @@ import matplotlib.pyplot as plt
 
 原来的 `from pathlib import Path`、yaml、torch 等导入继续保留。
 
-**3. 在 parse_args 后、main 前定义保存与绘图函数。**
+3. 在 parse_args 后、main 前定义保存与绘图函数。
 
 下面两个函数放在文件顶层，不缩进到 main 或 parse_args 里面：
 
@@ -1600,9 +1533,9 @@ save_history 接收本次运行完整的 history 列表，用固定五列写 CSV
 
 未来耗时较长的实验可以改为逐轮追加：每轮只传入最新的 row，用 a 模式和 writer.writerow(row) 写入，表头仅在新文件中写一次。新实验与恢复训练还需要区分输出文件，避免把不同运行的指标混在一起。当前步骤先保持结束后统一保存。
 
-plot_history 只读取 history 中已经算好的指标：左图为 train/val loss，右图为 train/val accuracy，横轴都是 epoch。准确率保存为 0–1 的比例；画图不会重新训练或重新评估。savefig 后关闭画布，不需要 show。
+plot_history 只读取 history 中已经算好的指标：左图为 train/val loss，右图为 train/val accuracy，横轴都是 epoch。准确率保存为 0-1 的比例；画图不会重新训练或重新评估。savefig 后关闭画布，不需要 show。
 
-**4. 替换现有 else 分支里的内容。**
+4. 替换现有 else 分支里的内容。
 
 保留 `else:` 这一行，将它原来的内容（包括已写的 config.yaml 保存代码）整体替换为下面片段。下方代码放在 main 的 else 内，整体缩进 8 个空格；不要重复保留旧的训练循环。
 
@@ -1663,13 +1596,13 @@ experiments/mnist_mlp/week2/
 
 当前只实现指标与图表保存，模型权重保存按 Day 5 接入；正式运行时，两者必须来自同一次训练。smoke 和 overfit 各自启动一次新进程时，现有 main 会先固定种子、创建新模型和优化器，因此检查状态不会继承到后续正式运行。
 
-**5. 今天先验证检查模式，不启动正式五轮。**
+5. 今天先验证检查模式，不启动正式五轮。
 
 完成上述修改后，仍使用下方“运行与验收”里的 --smoke、--overfit-samples 64 和 pytest 命令。检查运行前后，config.yaml、history.csv、曲线和 checkpoint 不应因检查而新增或被改写。
 
 自查时将 experiment_dir 指向临时目录，先用 2 epochs 的小数据运行 main()，检查生成 config.yaml、含两行指标的 history.csv 和曲线；再分别执行 smoke / overfit，确认这两种模式不新建或覆盖正式结果。实际命令和结果记录在本周 README。Day 5 完成 checkpoint 保存后，再用不带检查开关的命令运行正式训练。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/train_cv.py --help
@@ -1687,35 +1620,17 @@ python -m pytest tests/test_cv_training.py -q
 - [ ] 日志与曲线输出函数已接好，正式训练安排在 Day 5 保存流程完成后。
 
 <a id="day-5"></a>
+
 ## Day 5：最佳 checkpoint 与加载一致性
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [保存与加载模型（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/saving_loading_models.html) | 保存 state_dict、重建模型、eval 与断点信息 | 比较加载前后的验证 logits |
 | [pytest 临时目录（官方英文）](https://docs.pytest.org/en/stable/how-to/tmp_path.html) | tmp_path 参数和路径拼接 | 保存加载检查写入临时目录 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读 checkpoint 与最佳模型选择 |
-| 2h | 实现保存、加载和独立 evaluate 入口 |
-| 1h | 完成正式训练并检查加载一致性 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 在 `src/petvision/utils/checkpoint.py` 保存模型 state_dict、模型配置、epoch、验证指标与种子。验证准确率改善时写 `outputs/mnist_mlp/best.pt`；每轮写 last.pt，避免只保留内存中会继续改变的最佳权重引用。
-
-2. 创建 `scripts/evaluate.py`：按配置重建模型，接受 `--checkpoint` 与 `--split`；先仅评估 val。评估不得更新模型，打印指标及实际样本数。
-
-3. 固定一个验证批次，在 eval 模式下比较保存前与重新加载后的 logits 和验证指标，FP32 起始误差参考 `1e-6`，记录设备差异造成的合理数值波动。
-
-4. 接通保存后，从新模型和优化器完成正式 5 epochs；补充 checkpoint 与验证统计检查，汇总该次运行的训练曲线、最佳 epoch 和一例实际调试问题。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：定义 best 和 last
 
@@ -1728,6 +1643,7 @@ best 按验证 accuracy 选择，持平时可约定保留更早一次；last 是
 保存到磁盘时写 state_dict；若先在内存保留最佳状态，需要深拷贝，避免后续训练改变同一份引用。
 
 <a id="checkpoint-io"></a>
+
 #### 第二步：保存到文件，再重建并加载模型
 
 创建 `src/petvision/utils/checkpoint.py`，先定义两个文件读写函数。它们只负责读写传入的字典，模型选择和 best 判断仍由入口负责，后续视觉 / 语言任务可以复用：
@@ -1790,7 +1706,7 @@ model = model.to(device).eval()
 
 创建 `scripts/evaluate.py`，定义 `parse_args(argv=None)`，在 argparse.ArgumentParser 中添加 `--config、--checkpoint、--split`；`--config`、`--checkpoint` 为必填路径，`--split` 限定 val/test。文件顶层从 petvision 包导入 MLP、数据函数和 `training.cv_trainer.evaluate`，在 main 中核对 YAML 中模型配置与 checkpoint 一致，再用保存的划分创建 loader，按 split 选择 val_loader 或 test_loader，最后调用已有 evaluate，打印 loss、accuracy、n_samples。文件末尾加入口保护；它不创建优化器，也不调用训练循环。
 
-按下面顺序完成这个新文件，不能只复制上面的加载片段就直接运行：
+按下面顺序补齐文件，再运行加载检查：
 
 1. 顶层补齐 argparse、hashlib、Path、yaml、torch，以及上述包导入。parse_args 中 `--config` / `--checkpoint` 使用 `type=Path, required=True`；`--split` 使用 `choices=("val", "test"), default="val"`。
 2. main 读取 YAML 并用 load_checkpoint 读权重；检查 `cfg["model"] == checkpoint["model_config"]`，当前 model.name 必须为 mlp。对照保存的 config，核对 data.name、validation_size、normalize 和 training.seed；读取实际 split 文件并比较 split_sha256。发现不匹配明确报错，不重新生成另一份划分。data.root 可按实际缓存位置调整，batch_size 和评估设备可改变。
@@ -1822,7 +1738,7 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 
 修改 `tests/test_cv_training.py`：在 `test_checkpoint_roundtrip(tmp_path)` 中创建小 MLP 与固定输入，保存 state_dict 后新建同配置模型加载，在 eval/no_grad 下比较 logits、loss 和预测类别；logits / loss 最大差小于 1e-6。再新增 `test_checkpoint_best_and_last(tmp_path,monkeypatch)`，调用实际 train_cv.main()，用 monkeypatch 让验证函数依次返回 accuracy `[0.80,0.85,0.82,0.85]`，把配置的 epochs 设为 4、输出指向 tmp_path；运行后读取真正保存的 best.pt / last.pt，断言 best.epoch==2、last.epoch==4，验证持平时保留更早模型。临时检查通过后才运行正式五轮训练。
 
-测试从新 checkpoint 模块导入实际 save_checkpoint / load_checkpoint，保存原模型的真实 state_dict 后新建 MLP 并加载。best / last 检查也读取实际生成的两个文件、核对 epoch；上述第 4 轮 accuracy=0.85 与第 2 轮持平，best 仍应保留第 2 轮。不要只比较两个相同字典或文件是否存在，那不能证明模型恢复与选择规则正确。
+测试从新 checkpoint 模块导入实际 save_checkpoint / load_checkpoint，保存原模型的真实 state_dict 后新建 MLP 并加载。best / last 检查也读取实际生成的两个文件、核对 epoch；上述第 4 轮 accuracy=0.85 与第 2 轮持平，best 仍应保留第 2 轮。以重新加载后的输出和真实保存的 epoch 检查恢复与选择规则。
 
 #### 第四步：输出应能回答什么
 
@@ -1834,7 +1750,7 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 4. 从临时保存加载检查中取出 logits 最大绝对差，注明使用的设备、dtype 和容差；这项检查回答的是“同一权重能否恢复”，与验证准确率是否高是两个问题。
 5. 将权重路径、best epoch、验证指标和加载误差写入本周 README。某项未检查就写“未检查”，不要从文件存在推断它已经通过。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_cv_training.py -q
@@ -1842,43 +1758,26 @@ python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml
 python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
 ```
 
-先通过保存加载的小规模检查，再从新模型正式训练。训练应写出 `config.yaml`、五行 epoch 指标、训练曲线和 `best.pt/last.pt`；独立评估应覆盖 `5000` 条验证样本，并与 best 所在 epoch 的验证结果对应。若文件不存在，先查保存分支和 `output_dir`，不要把尚未保存误判为加载 API 出错。
+先通过保存加载的小规模检查，再从新模型正式训练。训练应写出 `config.yaml`、五行 epoch 指标、训练曲线和 `best.pt/last.pt`；独立评估应覆盖 `5000` 条验证样本，并与 best 所在 epoch 的验证结果对应。若文件不存在，先查保存分支和 `output_dir`。
 
 - [ ] best 按验证准确率选择，last 保存最后一轮，能解释两者何时相同。
 - [ ] 独立进程重建模型加载 best，完整验证集 5000 条的 loss / accuracy 与对应日志一致。
 - [ ] 知道 eval() 与关闭梯度分别解决什么问题。
 
 <a id="day-6"></a>
+
 ## Day 6：配置冻结、独立测试与周总结
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [保存加载教程（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/saving_loading_models.html) | 推理入口与最终评估 | 完成独立测试 |
 | [PyTorch 基础总览（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/basics/intro.html) | 回顾本周不熟悉的小节 | 有限参考重写训练步骤 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 冻结配置并进行独立测试 |
-| 1.5h | 检查误分类与复现关键结果 |
-| 1h | 有限参考重写训练核心与形状解释 |
-| 0.5h | 补充每周 README 和环境快照 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 固定本周结构、epoch 与验证选出的 best checkpoint，首次在官方测试集评估，保存 `experiments/mnist_mlp/week2/test_metrics.json` 与少量误分类图。测试后保持该模型配置，后续尝试另列实验。
-
-2. 检查测试样本数为 10,000，指标注明 test；97%+ 仅是参考目标，若偏低先解释流程与错误，不通过反复看测试集来挑参。
-
-3. 关掉参考，在草稿中重写一次清梯度→前向→loss→反向→更新，解释 `[B,1,28,28]→[B,784]→[B,10]`。不额外要求每日记录文件。
-
-4. 更新本周 README：真实版本、划分、运行命令、最佳 epoch、验证/测试结果与一个失败分析；保存实际 Conda/pip 版本清单，确认未把原始数据和权重当小型结果提交。
-
-### 分步操作与自查
+本日输出包括 `experiments/mnist_mlp/week2/test_metrics.json`；重写时说明 `[B,1,28,28]→[B,784]→[B,10]`。
 
 #### 第一步：冻结配置再评估测试集
 
@@ -1935,7 +1834,7 @@ JSON 保存、样例收集与绘图都要缩进到 `if args.split == "test":` �
 3. 写训练部分：切 train → 清梯度 → 前向 → 计算 loss → backward → step。先检查 loss 有限，再逐项比较参数与副本，确认至少一个参与参数发生变化。
 4. 取一批验证数据，重新保存当前参数副本，也记录当前已有的梯度。写验证部分：切 eval → 在 no_grad 中前向 → 计算 loss 和预测；这部分不调用清梯度、backward 或 step。
 5. 确认验证 logits 为 `[B,10]`、loss 有限，所有参数和已有梯度均未因验证改变。比较时不要误用训练更新前的副本。
-6. 打开 cv_trainer.py，对照自己遗漏的步骤，并用自己的话说明各操作的职责，以及 55k、5k、10k 各用于什么决定。改完草稿后重新执行，不能只在文字上补一句“已理解”。
+6. 打开 cv_trainer.py，对照自己遗漏的步骤，并用自己的话说明各操作的职责，以及 55k、5k、10k 各用于什么决定。改完草稿后重新执行，确认自己的版本也能通过检查。
 
 这里各处理一批即可，不要求跑完整 epoch，也不写正式配置、权重或实验指标。
 
@@ -1945,7 +1844,7 @@ JSON 保存、样例收集与绘图都要缩进到 `if args.split == "test":` �
 
 在[第二周 README](../experiments/mnist_mlp/week2/README.md)逐项填写结果来源、验证 / 测试指标、误分类分析、单批次检查范围、环境版本、驱动和包清单。安装命令、耗时或峰值显存若没有留存，应如实标明缺项；整理记录时读取已有产物，不为补说明重新训练或重跑测试集。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split test
@@ -1964,7 +1863,6 @@ python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outpu
 - [ ] 配置冻结后有独立测试结果；能解释 logits、交叉熵与模式切换。
 - [ ] 环境、运行命令、结果与实际调试案例集中在本周 README，安装方式及记录范围已注明。
 
-先用本周 6 小时机动补齐未完成项；仍未通过时，下一周先处理该关卡，后续任务顺延。周末小结控制在约 10–20 分钟，记录实际配置、关键结果、一个解释和仍需巩固的部分。
+第三周继续使用 `train_one_epoch`、`evaluate` 和 checkpoint 工具，并给数据函数增加显式 transform 参数。保留本周划分、配置和模型结果。
 
 通过后进入[第三周](week3.md)。
-

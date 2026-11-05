@@ -1,24 +1,22 @@
-# 第七周逐日学习指南：简化字节级 BPE、采样与中断续训
+# 第七周：简化字节级 BPE、采样与中断续训
 
-> 更新日期：2026-11-01<br>
-> 对应计划：[总学习计划](StudyPlan.md#stage-3)  
-> 时间：6 个学习日，每天 4 小时明确任务 + 1 小时机动，共 30 小时；第 7 天休息。Day 1 为本周第一个学习日，可从任意星期开始。  
-> 本周成果：手写字节级 BPE 与 Unicode 往返检查，加入 Temperature/Top-k 和完整恢复训练，整理字符/BPE 分开评估的语言模型报告。  
-> 环境：本地 Conda `petvision`；复用第六周模型和原文划分。BPE 编解码在 CPU，训练在本地 GPU；续训一致性先用 CPU FP32、dropout=0 的小预算检查。
+手写字节级 BPE，给生成加入采样参数，再检查中断续训。最后分别评估字符模型和 BPE 模型，说明哪些指标可以直接比较。
 
-## 怎么使用这份指南
+对应[总计划第 7 周](StudyPlan.md#week-7)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-先确认[上一周指南](week6.md)的基础关卡已通过。第六周 Bigram/GPT 比较、因果性和保存加载应已通过。保留同一份原文 split manifest 与字符 tokenizer，本周为 BPE 新建词表和模型。
+环境：本地 Conda `petvision`；复用第六周模型和原文划分。BPE 编解码在 CPU，训练在本地 GPU；续训一致性先用 CPU FP32、dropout=0 的小预算检查。
 
-本指南按学习日写出环境准备、文件创建、操作步骤、运行命令和自查方法，跟做时从当天内容顺序往下读即可。[本周 README](../experiments/mini_gpt/week7/README.md) 保存实际环境、复现命令索引、结果链接和周总结。源码、配置、数据与结果按学习日逐步创建；下面的命令在完成相应实现后执行，代码由你亲手完成。
+## 开始前
 
-每天按“读指定部分 → 写代码 → 运行检查 → 解释结果”执行。检查通过后再扩大数据或训练预算；日常通过代码、输出和解释验收，周末集中更新本周 README。学习时间包含机动时间；训练等待与阅读重叠时只计一次。
+字符 Bigram/GPT 已完成验证对照、因果性检查和保存加载。保留第六周原文划分和字符词表。
 
-文件路径均相对于项目根目录；可复用源码放在 `src/petvision/`。新增源码子目录时，在每层包目录放入空的 `__init__.py`；已有目录和文件继续修改，保留此前通过检查的内容。`scripts/` 放运行入口，`tests/` 放检查，结果由脚本运行后生成。
+按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week7/README.md)。
 
-## 本周目录蓝图
+更新日期：2026-11-06。
 
-以下为本周逐步形成的文件，注释标明创建或修改时间。`README.md` 已提供；其余文件和结果在执行对应任务时产生。
+## 本周文件
+
+按注释中的学习日逐步创建或修改文件；已有文件继续使用，结果在运行后保存。
 
 ```text
 PetVisionLab/
@@ -43,7 +41,7 @@ PetVisionLab/
 # checkpoints：outputs/mini_gpt_bpe/，模型与 tokenizer 配套保存
 ```
 
-## 开始前：激活环境并检查已有模块
+## 环境检查
 
 以下命令从项目根目录执行，每个学习日先激活同一个环境：
 
@@ -53,14 +51,14 @@ python -c "import sys, torch, torchvision, yaml, pytest, petvision; print(sys.ex
 python -m pip check
 ```
 
-解释器应位于 Conda 的 `petvision` 环境，`petvision.__file__` 应指向当前仓库的 `src/petvision/`。若出现 `No module named petvision`，先确认第二周已建立 `pyproject.toml` 和包目录，再在根目录执行 `python -m pip install -e . --no-deps`；若缺少 torch 或 CUDA 不可用，按[第二周 Day 1 的安装与排错步骤](week2.md#environment)逐项核对。
+确认解释器属于 `petvision`，`petvision.__file__` 指向当前仓库的 `src/petvision/`。导入失败时先在根目录运行 `python -m pip install -e . --no-deps`；依赖或 CUDA 问题按[第二周环境排查](week2.md#environment)处理。
 
-保留第六周的原文划分、字符 tokenizer 与两组模型，另外建立 BPE 词表和模型。 本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
+保留第六周的原文划分、字符 tokenizer 与两组模型，另外建立 BPE 词表和模型。本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
 
 ## 固定条件与接口约定
 
 <a id="bpe-terms"></a>
-本周的 BPE 是 Byte Pair Encoding（字节对编码）。这里“训练 tokenizer”是统计相邻 token 并学习合并规则，不是用反向传播训练神经网络；GPT 的参数训练在 Day5 单独进行。
+本周的 BPE 是 Byte Pair Encoding（字节对编码）。训练 tokenizer 时统计相邻 token，学习合并规则；GPT 参数通过反向传播训练，安排在 Day 5。
 
 | 名称 | 具体含义 |
 | --- | --- |
@@ -75,23 +73,22 @@ python -m pip check
 
 BPE 模型从零初始化，按 BPE 的实际 V 新建 embedding 与输出词表，不把字符 checkpoint 当 BPE 模型直接继续；模型内部仍按第六周共享 token embedding / head 权重。起始 GPT 结构与第六周相同，context=128、batch=16、2000 steps；token 数相同不代表原文字节预算相同，需分别记录。跨 tokenizer 对照只比较同一原文的编码长度、耗时、参数量与样例，token 级 loss/PPL 分开报告。
 
-## 六天总览
+## 六天安排
 
-| 学习日 | 主题 | 明确任务 | 机动时间 | 核心交付 |
-| --- | --- | --- | --- | --- |
-| Day 1 | 手算 BPE 与字节词表 | 4h | 1h | pair 统计、合并与字节解码 |
-| Day 2 | BPE 训练、保存与 Unicode 往返 | 4h | 1h | 可加载的 512 词表与边界检查 |
-| Day 3 | Temperature、Top-k 与生成复现 | 4h | 1h | 采样参数与固定 prompt 样例 |
-| Day 4 | 完整 checkpoint 与中断续训 | 4h | 1h | 连续/中断训练一致性检查 |
-| Day 5 | BPE GPT 小预算训练与编码比较 | 4h | 1h | BPE 训练、编码长度与耗时 |
-| Day 6 | 最终语言评估与周总结 | 4h | 1h | 语言模型报告与恢复训练证据 |
-| Day 7 | 休息 | 0h | 0h | — |
-| 合计 | — | 24h | 6h | 30h |
+| 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
+| --- | --- | --- |
+| [Day 1](#day-1) | 在 `models/llm/tokenizer.py` 增加字节 BPE，创建 tokenizer 测试 | pair 统计与非重叠替换正确；先遇到的同频 pair 优先 |
+| [Day 2](#day-2) | 创建 `scripts/train_tokenizer.py`，保存 `bpe_tokenizer.json` | 只用 train 学 merges；空白、中文、emoji 严格往返；保存加载一致 |
+| [Day 3](#day-3) | 扩展 `scripts/generate.py`，创建 `tests/test_sampling.py` | 温度、top-k 阈值和并列项正确；固定 seed 的 IDs 可复现 |
+| [Day 4](#day-4) | 扩展 checkpoint/训练入口，创建 `tests/test_resume.py` | CPU 小模型连续 40 步与 20+20 步的状态、下一批和 loss 一致 |
+| [Day 5](#day-5) | 创建 BPE GPT 配置和 `scripts/compare_tokenizers.py` | 新模型完成预算；同一 val 原文的编码长度、字节数与时间有记录 |
+| [Day 6](#day-6) | 给训练入口增加仅评估模式，更新本周报告 | 三个模型各自完整测试；字符 loss 可比较，BPE 单列 |
 
 <a id="day-1"></a>
+
 ## Day 1：手算 BPE 与字节词表
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -100,26 +97,9 @@ BPE 模型从零初始化，按 BPE 的实际 V 新建 embedding 与输出词表
 | [Python Unicode 指南（官方中文）](https://docs.python.org/zh-cn/3.12/howto/unicode.html) | str.encode 与 bytes.decode | 检查中文字节拼接与两种解码模式 |
 | [Tokenizer 作者课程](https://www.youtube.com/watch?v=zduSFxRajkE)（按需选看） | UTF-8、字节与最小 BPE 合并算法 | 对照手算中不清楚的步骤 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读字节编码与 BPE |
-| 2h | 实现 pair 统计和一次非重叠合并 |
-| 1h | 检查平频、重复 pair 与空输入 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 在 `src/petvision/models/llm/tokenizer.py` 增加 ByteBPETokenizer，先把输入字符串编码为 UTF-8 bytes，基础 token 为 0–255；不要先用字符 ID 代替字节 ID。
-
-2. 用 `aaabdaaabac` 等短串手算最高频 pair、替换后序列和新 ID；检查 `aaaa` 中相邻 pair 统计与从左到右非重叠替换的区别。
-
-3. 实现确定性的平频规则与有序 merges；创建 `tests/test_tokenizer.py`，覆盖空串、单字节、重复 pair、无 pair 时提前停止。
-
-4. decode 先拼接所有 token 对应 bytes，再整体解码 UTF-8；一个 token 的 bytes 片段不一定独立构成完整字符。
-
-### 分步操作与自查
+基础字节 ID 为 0..255。可用 `aaabdaaabac` 手算最高频 pair，用 `aaaa` 区分相邻统计与非重叠替换。
 
 #### 第一步：从 abab 手算一次合并
 
@@ -179,7 +159,7 @@ ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in 
 
 在 256 个基础字节词表上，`'中'.encode('utf-8')` 为 `[228,184,173]`；检查 decode 这三个 ID 得到「中」。单独的 228 不是完整 UTF-8 字符：`decode([228], errors="strict")` 应抛出 UnicodeDecodeError，默认 `decode([228])` 则得到替换字符 U+FFFD。再检查空列表解码为空串、单字节 97 解码为 a，明确测试的是 bytes 拼接后的结果。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_tokenizer.py -q
@@ -192,38 +172,20 @@ python -m pytest tests/test_tokenizer.py -q
 - [ ] 短串训练具有确定性，空输入不会报不必要的错误。
 
 <a id="day-2"></a>
+
 ## Day 2：BPE 训练、保存与 Unicode 往返
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [minbpe 作者实现](https://github.com/karpathy/minbpe) | BasicTokenizer 的 train/encode/decode/save/load | 完成独立教学实现 |
 | [Tokenizer 作者课程](https://www.youtube.com/watch?v=zduSFxRajkE) | 编解码与 Unicode 片段 | 检查完整 bytes 往返 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 复习 merge rank 与序列替换 |
-| 2h | 完成 BPE 训练和序列化 |
-| 1h | Unicode、空白与加载一致性 |
-| 0.5h | 记录词表与训练数据来源 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `scripts/train_tokenizer.py`，只读取第六周 train.txt，按本周配置训练目标词表 512。达到词表预算或没有可合并 pair 时停止，不读取 val/test 来学习规则。
-
-2. 将有序 merge 列表、ID 对应 bytes（用整数列表或 hex 表示）、基础词表、训练数据 hash 与格式版本写入 `bpe_tokenizer.json`。
-
-3. encode 使用训练得到的优先级；decode(encode(text)) 必须对空串、多个空格、Tab、换行、中文、emoji 和混合文本保持原样，不能用 errors='ignore' 掩盖错误。
-
-4. 比较保存前后对相同文本的 ID 与解码结果。检查脚本打印结果即可，无需额外保存检查 CSV。
-
-### 分步操作与自查
+### 操作步骤
 
 <a id="bpe-training-entry"></a>
+
 #### 第一步：固定训练材料和词表预算
 
 创建 `scripts/train_tokenizer.py`，顶层导入 argparse、Path 和 `from petvision.models.llm.tokenizer import ByteBPETokenizer`；训练、保存和打印写在 main，文件末尾加入口保护。修改 `src/petvision/models/llm/tokenizer.py` 的 ByteBPETokenizer.train / encode / save / load 方法，操作顺序见本节各步。在已有 `tests/test_tokenizer.py` 中新增 `test_bpe_roundtrip`，用本节 cases 逐条 strict 解码；新增 `test_bpe_save_load(tmp_path)`，比较保存前后 merges、vocab 和相同文本的 IDs；新增 `test_bpe_vocab_budget`，检查预算小于 256 报错、空文本提前停止；新增 `test_bpe_encode_merge_rank`，检查新输入按保存的 rank 合并。
@@ -275,7 +237,7 @@ for text in cases:
 
 encode 得到的 ID 来自可严格编码为 UTF-8 的原文本，往返用 `decode(ids, errors="strict")` 检查，必须保持原文；默认 decode 的替换策略用于模型生成，与 minbpe 一致。生成时先保留完整 IDs 与拼接后的 raw_bytes，再尝试 strict 解码以记录 decode_ok；失败时用默认 decode 展示替换字符，同时保存 raw_bytes_hex。给同一组无效字节分别检查 strict 报错与默认替换，不能用 errors="ignore" 或 strip 掩盖问题。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_tokenizer.py -q
@@ -289,35 +251,19 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 - [ ] 能解释为什么 bytes 拼接后再解码。
 
 <a id="day-3"></a>
+
 ## Day 3：Temperature、Top-k 与生成复现
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py) | GPT.generate 中 temperature、top-k 阈值和 multinomial | 按第 k 高分过滤，保留阈值处的并列项 |
 | [Tokenizer 作者课程](https://www.youtube.com/watch?v=zduSFxRajkE) | 生成 token 与字节解码关系 | 保留实际输出和 token IDs |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 阅读采样公式并手算小 logits |
-| 2h | 扩展生成入口与检查 |
-| 1h | 固定设置生成并解释差异 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 扩展 `generate.py` 接收 `--temperature` 与可选 `--top-k`；先除以正数 temperature，再将低于第 k 高分阈值的 logits 填 -inf，softmax 后采样；阈值处并列项全部保留。
-
-2. 创建 `tests/test_sampling.py`：temperature 必须是有限正数；top-k 为正整数并按 min(top_k,V) 处理，最高分唯一时 top-k=1 与 argmax 一致；过滤后概率和为 1，相同种子在固定环境下可复现。
-
-3. 先在同一个字符 GPT checkpoint 上，以相同 prompt 和 seed 比较 temperature=0.7/top-k=20 与 temperature=1.0/不启用 top-k；两组保存真实文本和配置到 samples.jsonl。
-
-4. 后续 BPE 生成也保留原始 token IDs。任意模型生成的 bytes 可能不是合法 UTF-8，展示时可用替换字符并记录次数；输入文本的编解码往返仍严格检查。
-
-### 分步操作与自查
+先以同一个字符 GPT 和固定 prompt/seed 比较两组采样参数；BPE 生成在 Day 5 再接入，届时保留原始 token IDs 和解码状态。
 
 #### 第一步：用四个 logits 理解采样顺序
 
@@ -368,7 +314,7 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 
 两组同时改变了 temperature 和 top-k，因此只说明这两种采样组合的观察结果；若之后想单独归因于温度或 top-k，再增加一次只改变其中一项的对照，放到拓展时间。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_sampling.py -q
@@ -383,9 +329,10 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 - [ ] 能解释分布更集中/更分散与实际样例的关系。
 
 <a id="day-4"></a>
+
 ## Day 4：完整 checkpoint 与中断续训
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
@@ -394,28 +341,9 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 | [pytest 临时目录（官方英文）](https://docs.pytest.org/en/stable/how-to/tmp_path.html) | tmp_path；普通断言与异常检查沿用第二周 | 将 40 步对照的 checkpoint 写入临时路径 |
 | [Python random（官方中文）](https://docs.python.org/zh-cn/3.12/library/random.html#random.getstate)、[NumPy 状态（中文译文）](https://numpy.net.cn/doc/stable/reference/random/generated/numpy.random.get_state.html)、[Torch Generator（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.Generator.html) | getstate/setstate、get_state/set_state；只查下表用到的状态操作 | 保存已经推进的随机流，而非仅保存 seed |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 梳理需要恢复的状态 |
-| 2h | 实现 resume 和最小检查 |
-| 1h | 比较连续运行与中断运行 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 扩展 checkpoint：model、optimizer、step、config、tokenizer/hash、原文划分 hash、Python/NumPy/Torch/CUDA 随机状态、训练采样 Generator；有 scheduler/GradScaler 时一并保存。同时保存 best_val_loss、best_step、累计处理 token/bytes 数；若在验证间隔中间保存，还需保存当前训练 NLL 累加值与目标计数，保证恢复后日志统计口径连续。字段使用普通容器、Python 数值和 Tensor。
-
-2. 扩展 `train_gpt.py --resume`，恢复后从已完成 step 的下一步继续，训练/验证模式正确。总 steps 表示最终累计目标，不额外再跑一整个预算。
-
-3. 创建 `tests/test_resume.py`：固定小模型 C=32、context=16、batch=4、CPU FP32、dropout=0；比较连续 40 步与 20 步保存后新建对象恢复再到 40 步。检查下一批采样位置、参数、optimizer step/矩状态和最终 loss，起始容差 1e-6。
-
-4. 验证不消耗训练采样 Generator；checkpoint 已恢复后再生成训练 batch。旧的仅含模型权重 checkpoint 继续用于推理，完整续训检查用新增状态格式重新产生的 last。
-
-今天的 40 步与 20+20 步检查在 `test_resume.py` 内固定小模型配置与教学 token 数据，checkpoint 写入 pytest 的临时目录；不读取尚未创建的 `mini_gpt_bpe.yaml`，也不依赖 `outputs/mini_gpt_bpe/last.pt`。正式 BPE 运行与按需恢复安排在 Day 5。
-
-### 分步操作与自查
+今天只在临时目录检查 40 步与 20+20 步恢复，使用固定的 C=32、context=16、batch=4、CPU FP32、dropout=0 小模型和教学 token。它不依赖 `mini_gpt_bpe.yaml` 或 `outputs/mini_gpt_bpe/last.pt`；正式 BPE 训练在 Day 5 开始。
 
 #### 第一步：明确保存发生在哪个时刻
 
@@ -458,7 +386,7 @@ completed_steps = checkpoint["step"]
 
 模型、optimizer 及启用时的 scheduler / scaler 都加载后，再按下表恢复全部随机状态，最后才取得下一批。累计目标取当前核验后的 training.steps，更新循环执行 `range(completed_steps + 1, target_steps + 1)`；旧 checkpoint 缺少 optimizer_state 等必需字段时明确拒绝续训，不能默认为从零开始。
 
-采用与第二周一致的字典/Tensor 格式；NumPy 随机状态里的 ndarray 先转换成普通列表或 Tensor，恢复时再还原为所用 NumPy RNG 的状态格式，使本项目 checkpoint 可以按 `weights_only=True` 加载，相关格式见 [PyTorch 序列化说明](https://docs.pytorch.org/docs/stable/notes/serialization.html)。恢复不仅要重新设置 seed，还要回到保存时已经推进过的具体随机状态。
+采用与第二周一致的字典/Tensor 格式；NumPy 随机状态里的 ndarray 先转换成普通列表或 Tensor，恢复时再还原为所用 NumPy RNG 的状态格式，使本项目 checkpoint 可以按 `weights_only=True` 加载，相关格式见 [PyTorch 序列化说明](https://docs.pytorch.org/docs/stable/notes/serialization.html)。恢复时还原保存时已推进的具体随机状态。
 
 只有模型参数相同，下一步训练仍可能不同。恢复流程应先构造模型/优化器并加载，再恢复随机状态，最后取下一批数据。
 
@@ -488,7 +416,7 @@ NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载
 3. 恢复 best_val_loss、best_step、训练统计累计值和日志进度，核对现有 history 没有超出该 checkpoint 的记录；冲突按前文规则归档处理。
 4. 创建训练采样 Generator，完成其他对象初始化后，最后恢复它和实际使用的各随机流。恢复之后直接进入下一次实际采样，不额外抽样打印“看看随机数”。
 5. 从 completed_steps+1 开始更新；如果已达到累计目标就退出训练。首次恢复更新后确认 step 恰好加一，日志仍按原验证间隔追加。
-6. 接线完成后再编写下方 test_resume_matches_continuous；测试通过替换 parse_args 的返回值调用 train_gpt.main()，实际执行它的从零 / resume 分支与 save_checkpoint / load_checkpoint，不在测试中另写一套恢复模型和 RNG 的业务逻辑。
+6. 恢复流程接入后，再编写下方 test_resume_matches_continuous；测试通过替换 parse_args 的返回值调用 train_gpt.main()，实际执行它的从零 / resume 分支与 save_checkpoint / load_checkpoint，不在测试中另写一套恢复模型和 RNG 的业务逻辑。
 
 创建 `tests/test_resume.py` 并定义 `test_resume_matches_continuous(tmp_path,monkeypatch)`。用 monkeypatch.syspath_prepend 将项目 scripts 目录临时加入搜索路径，然后导入 train_gpt；MiniGPT、sample_batch、load_checkpoint 从 petvision 对应模块导入。测试内使用 C=32、context=16、batch=4、CPU FP32、dropout=0 的临时配置；将语料读取替换为固定教学 token 数据，将配置、history、checkpoint 输出都指向 tmp_path。连续路径让 main() 跑到 40 步，中断路径先跑 20 步，再传入 --resume 对应的临时 last 跑到累计 40 步。此测试不读取正式 BPE 配置或输出文件。
 
@@ -514,7 +442,7 @@ sample_batch 当前只返回 x/y，没有返回起点。测试中若要核对起
 
 steps 是累计目标。last 已完成 500 步，目标为 1000 时再更新 500 步；若目标也是 500，应直接结束。验证不能消费训练采样随机流，恢复后先确认 step 与下一批位置。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python -m pytest tests/test_resume.py -q
@@ -527,36 +455,17 @@ python -m pytest tests/test_resume.py -q
 - [ ] 能解释为什么只加载模型参数不足以等价续训。
 
 <a id="day-5"></a>
+
 ## Day 5：BPE GPT 小预算训练与编码比较
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [困惑度与 tokenizer（中文译文）](https://hugging-face.cn/docs/transformers/perplexity) | tokenization 对 PPL 的影响 | 分开报告 token 级指标 |
 | [第六周指南](week6.md) | 原文边界、训练和验证口径 | 复用相同原文 |
 
-### 时间与操作
-
-| 时间 | 做什么 |
-| --- | --- |
-| 0.5h | 固定 BPE 模型配置与预算 |
-| 2h | 从零训练 BPE GPT 并记录结果 |
-| 1h | 同原文编码/耗时对照 |
-| 0.5h | 保存生成与配置记录 |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 创建 `configs/llm/mini_gpt_bpe.yaml`，绑定 bpe_tokenizer.json 和第六周原文划分，从零初始化 V 匹配的新模型；运行 2000 步起始预算。
-
-2. 独立报告 BPE 的 val loss、参数量、训练耗时与处理 token/原文字节数。字符与 BPE 的 context 都为 128 token，但对应原文跨度不同，需在结论中说明。
-
-3. 创建 `scripts/compare_tokenizers.py`，对相同 val 原文计算字符/BPE token 数、UTF-8 字节数与编码耗时；先预热、重复少量次取平均，写入 tokenizer_comparison.csv，注明 OOV 和原文 hash。
-
-4. 用相同可编码 prompt 比较字符/BPE 的生成样例，记录采样参数、token 数和耗时；时间对照说明测量的是编码还是生成，不把不同 tokenizer 的 token/s 直接当原文吞吐率。
-
-### 分步操作与自查
+### 操作步骤
 
 #### 第一步：新 tokenizer 对应新模型词表
 
@@ -638,7 +547,7 @@ BPE 验证 loss 单独报告，不能因数字低于字符 loss 就断言更好�
 
 本周 BPE 曲线由 train_gpt.py 读取本次 history 后传给 plot_lm_history，保存为 `experiments/mini_gpt/week7/runs/bpe/figures/loss_curves.png`；run_summary.json 同目录保存训练时间、峰值显存和累计输入 token / bytes。生成计时在模型加载、prompt 编码完成后开始，GPU 前后同步，记录整个自回归循环的 generate_seconds；输出字节数由实际输出计算，不能用 max_new_tokens 代替。字符与 BPE 样例均用同一字段定义。
 
-### 运行与验收
+### 运行与自查
 
 首次运行使用新模型：
 
@@ -659,43 +568,26 @@ python scripts/compare_tokenizers.py
 python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --top-k 20 --output experiments/mini_gpt/week7/samples.jsonl
 ```
 
-编码对照应读取相同 val 原文，保存到 `tokenizer_comparison.csv`；BPE 样例追加到本周 `samples.jsonl`。不要把从零训练和按需恢复两条命令当作必须连续执行的两个训练阶段。
+编码对照应读取相同 val 原文，保存到 `tokenizer_comparison.csv`；BPE 样例追加到本周 `samples.jsonl`。从零训练命令用于首次运行，恢复命令仅用于尚未达到累计目标的中断运行。
 
 - [ ] BPE 模型与自己的词表配套，没有直接套用字符模型输出头。
 - [ ] 跨 tokenizer 的比较使用相同原文，loss/PPL 分开报告。
 - [ ] BPE 训练、曲线、编码结果和生成样例均来自实际运行。
 
 <a id="day-6"></a>
+
 ## Day 6：最终语言评估与周总结
 
-### 去哪里学、读到哪里
+### 阅读范围
 
 | 资料 | 今天只读这些内容 | 阅读后立刻做 |
 | --- | --- | --- |
 | [困惑度评估说明（中文译文）](https://hugging-face.cn/docs/transformers/perplexity) | 相同 tokenizer 下的比较口径 | 整理最终指标 |
 | [总计划语言模型验收](StudyPlan.md#acceptance) | BPE、续训和样例要求 | 核查两周成果 |
 
-### 时间与操作
+### 操作步骤
 
-| 时间 | 做什么 |
-| --- | --- |
-| 1h | 冻结配置，评估保留测试原文 |
-| 1.5h | 整理 tokenizer/采样/续训结论 |
-| 1h | 有限参考解释 BPE 与恢复流程 |
-| 0.5h | 更新每周 README |
-| 1h 机动 | 补基础、定位报错、核对形状与复盘当天卡点 |
-
-### 当天任务概览
-
-1. 在配置冻结后，分别评估字符 Bigram、字符 GPT 与 BPE GPT 的 test 原文；为 train_gpt 增加 `--evaluate-only --checkpoint --split`，报告有效目标 token 数、原文范围和各自 tokenizer。
-
-2. 字符两组可比较 token loss；BPE 单列，跨 tokenizer 只解释编码长度、耗时与固定 prompt 样例。将实际结果写入周 README，不按跨词表 loss 数值大小排列优劣。
-
-3. 记录中断续训检查的配置、最大参数差与命令，并有限参考说明 merge rank、Unicode 拼接和应恢复的状态。
-
-4. 完成两周语言模型报告，保留失败例子与尚未通过的关卡。更多上下文长度、更多语料和完整 tokenizer 产品化留作拓展。
-
-### 分步操作与自查
+为训练入口增加 `--evaluate-only --checkpoint --split`，三个冻结模型分别评估自己的测试原文。
 
 #### 第一步：分别评估各自 tokenizer 的测试原文
 
@@ -730,7 +622,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 如果 Unicode 往返、续训一致性或指标口径仍不清楚，记录具体失败输入和下一步。更多语料、上下文长度和 tokenizer 产品化放入后续路线。
 
-### 运行与验收
+### 运行与自查
 
 ```bash
 python scripts/train_gpt.py --config configs/llm/bigram_char.yaml --evaluate-only --checkpoint outputs/bigram_char/best.pt --split test
@@ -751,7 +643,6 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --evaluate-on
 - [ ] 完整中断续训与连续训练小规模对照通过。
 - [ ] 字符/BPE 指标分开，编码长度、耗时、原始输出与失败分析齐全。
 
-先用本周 6 小时机动补齐未完成项；仍未通过时，下一周先处理该关卡，后续任务顺延。周末小结控制在约 10–20 分钟，记录实际配置、关键结果、一个解释和仍需巩固的部分。
+保留 tokenizer 文件、续训误差、三组测试结果和失败样例，供第八周总结。更多上下文长度与语料实验另行安排。
 
 通过后进入[第八周](week8.md)。
-
