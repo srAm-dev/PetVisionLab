@@ -191,36 +191,94 @@ transpose 后内存可能不连续，合并时用 contiguous().view 或 reshape�
 
 #### 第二步：明确模块接口
 
-继续修改 `src/petvision/models/transformer/attention.py`，补充 `from torch import nn`，定义继承 nn.Module 的 MultiHeadSelfAttention；投影层在 __init__ 中创建，下方是类的方法，不能作为文件顶层的普通函数。
+在 `src/petvision/models/transformer/attention.py` 中实现 `MultiHeadSelfAttention`：构造函数负责建立层和检查参数，forward 按本节顺序完成多头计算。已有实现时逐项核对输入输出和结构。Day 1 的 `scaled_dot_product_attention` 函数保留，演示脚本继续使用它。
+
+类里有两个方法，接口如下。这里列出签名，具体初始化代码看同一文件中的构造函数：
 
 ```python
-def forward(self, x, attn_mask=None, key_padding_mask=None,
-            return_weights=False):
-    # x: [B,T,C]；返回输出及可选的 dropout 前权重
-    ...
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads, dropout=0.0, bias=False):
+        ...
+
+    def forward(self, x, attn_mask=None, key_padding_mask=None,
+                return_weights=False):
+        ...
 ```
 
-类的构造接口约定为 `MultiHeadSelfAttention(embed_dim, num_heads, dropout=0.0, bias=False)`；embed_dim 对应 C，num_heads 对应 heads。默认 forward 只返回输出 Tensor；return_weights=True 时返回 `(output, weights)`，weights 为 `[B,heads,T,T]` 的 dropout 前权重，EncoderBlock 使用默认返回值。
+`__init__` 在创建模型时执行一次，保存尺寸并注册层；`forward` 在每次调用 `attention(x)` 时执行，用已有层处理当前输入。投影层放在构造函数中，这样多次前向会使用同一套可学习参数。
 
-参数包含 q_proj、k_proj、v_proj、out_proj，分别对应教材的 W_q、W_k、W_v、W_o。教材接收 queries、keys、values，本周只实现 self-attention，因此同一个 x 同时作为三者；bias 默认 False，与教材一致，ViT 也用 False，GPT 显式使用 True。C%heads 不为 0 时在构造阶段报错，避免后续 reshape 才出现模糊异常。
+构造参数分别控制：
 
-写 forward 时，每完成下面一项就用上面的 `[2,3,8]` 小输入打印一次形状，先跑通不带 Mask 的版本：
+| 参数 | 含义 | 本节例子 |
+| --- | --- | --- |
+| `embed_dim` | 每个 token 的总特征数 C | 8 |
+| `num_heads` | 头数 h，要求 C 能被 h 整除 | 2 |
+| `dropout` | 对注意力权重随机置零的概率 | 先设为 0.0，便于检查 |
+| `bias` | 四个 Linear 是否带偏置 | 默认 False，GPT 后续显式使用 True |
 
-1. 从输入读取 B、T、C，检查最后一维与构造时的 embed_dim 一致；不能将某个演示里的 T=3 写死在类中。
+构造函数先调用 `super().__init__()`，再检查 embed_dim、num_heads 为正整数且可以整除。随后建立以下属性：
+
+| 属性 | 结构或数值 | 用途 |
+| --- | --- | --- |
+| `self.embed_dim` | C=8 | 核对输入最后一维，合头后恢复总特征数 |
+| `self.num_heads` | h=2 | 拆分特征维时使用 |
+| `self.head_dim` | C//h=4 | 每个头的特征数，也是缩放公式中的 d |
+| `self.q_proj` | `nn.Linear(C,C,bias=bias)` | 从 x 得到 Q |
+| `self.k_proj` | `nn.Linear(C,C,bias=bias)` | 从 x 得到 K |
+| `self.v_proj` | `nn.Linear(C,C,bias=bias)` | 从 x 得到 V |
+| `self.out_proj` | `nn.Linear(C,C,bias=bias)` | 合头后再次投影，得到最终输出 |
+| `self.dropout` | `nn.Dropout(dropout)` | 处理 softmax 后的权重，随后用它们加权 V |
+
+四个 Linear 是独立对象，各有自己的参数。Q/K/V 投影都接收同一个 x，这是 self-attention 的输入方式；它们的权重分别对应教材的 W_q、W_k、W_v，out_proj 对应 W_o。
+
+forward 的参数和返回值约定如下：
+
+| 参数 | 含义与本日处理方式 |
+| --- | --- |
+| `x` | 浮点 Tensor，形状 `[B,T,C]`；C 等于 embed_dim，B、T 从本次输入读取 |
+| `attn_mask` | Day 3 接入的 `[T,T]` 布尔 Mask，本日使用 None |
+| `key_padding_mask` | Day 3 接入的 `[B,T]` 布尔 Mask，本日使用 None |
+| `return_weights` | False 时只返回 output；True 时返回 `(output, weights)` |
+
+output 的形状为 `[B,T,C]`，weights 的形状为 `[B,h,T,T]`。返回的 weights 是 softmax 后、dropout 前的权重；每个头保留自己的权重，不对头取平均。后面的 EncoderBlock 使用默认调用，只接收 output。
+
+先用 `MultiHeadSelfAttention(8,2)` 创建对象，打印模型结构和 `attention.head_dim`：应看到四个 8→8 的 Linear、一个 Dropout，head_dim 为 4。从接口骨架开始练习时，按下面步骤填入前向计算，再运行检查；本日仅在收到非 None 的 Mask 时抛出 NotImplementedError。
+
+以输入 `[2,3,8]` 为例，完整前向结构为：
+
+```text
+x [2,3,8]
+  ├─ q_proj → Q [2,3,8] ─ reshape、transpose → [2,2,3,4]
+  ├─ k_proj → K [2,3,8] ─ reshape、transpose → [2,2,3,4]
+  └─ v_proj → V [2,3,8] ─ reshape、transpose → [2,2,3,4]
+
+Q @ K.transpose(-2,-1) / sqrt(4) → scores [2,2,3,3]
+softmax(scores, dim=-1)          → weights [2,2,3,3]，保留供返回
+dropout(weights) @ V             → 每头输出 [2,2,3,4]
+transpose(1,2)                   → [2,3,2,4]
+reshape(2,3,8)                   → 合头输出 [2,3,8]
+out_proj                         → output [2,3,8]
+```
+
+写 forward 时，每完成下面一项就用 `[2,3,8]` 小输入打印一次形状：
+
+1. 检查 x.ndim 为 3，读取 B、T、C，并核对 C 等于 self.embed_dim。本日两个 Mask 参数都使用 None；若收到非 None 的 Mask，先明确抛出 NotImplementedError，Day 3 再补处理。
 2. 将同一个 x 分别送入 q_proj、k_proj、v_proj，得到三个 `[B,T,C]`；它们是三套参数对同一输入的投影。
 3. 对 Q、K、V 各自执行“拆特征维，再交换头轴与序列轴”，得到 `[B,heads,T,head_dim]`。
-4. 用 Q 乘 K 最后两轴的转置，除以 sqrt(head_dim)，得到 scores。今天先不屏蔽位置，明天将 Mask 插在这里与 softmax 之间。
+4. 用 Q 乘 K 最后两轴的转置，除以 sqrt(self.head_dim)，得到 scores。Day 3 的屏蔽步骤将插在这里与 softmax 之间。
 5. 沿 scores 最后一轴做 softmax，保留这份 weights 供检查；再对它应用权重 dropout，乘 V，得到各头的加权结果。
-6. 将头轴交换回序列轴之后，再合并 heads 与 head_dim，恢复 `[B,T,C]`。最后调用 out_proj，不能在合并后直接返回而漏掉输出投影。
-7. 根据 return_weights 返回一个 Tensor 或二元组；分别实际调用两种模式，确认 EncoderBlock 默认拿到的是 Tensor。
+6. 将头轴交换回序列轴之后，再合并 heads 与 head_dim，恢复 `[B,T,C]`，最后调用 out_proj。
+7. 根据 return_weights 返回一个 Tensor 或二元组，并替换掉骨架末尾的 NotImplementedError。分别实际调用两种模式，检查 output 为 `[B,T,C]`、weights 为 `[B,heads,T,T]`。
 
-构造函数先检查 embed_dim、num_heads 为正整数，再检查能否整除，设置 `self.head_dim = embed_dim // num_heads`。四个投影均为 `nn.Linear(embed_dim, embed_dim, bias=bias)`；权重 dropout 用 `nn.Dropout(dropout)` 注册。forward 先保存原始 softmax 权重 weights，再用 dropout(weights) 与 V 相乘；return_weights=True 返回原始 weights。因此训练时用于加权的 dropout 权重不必行和为 1，检查归一化仍针对 dropout 前的权重。
+实现时把 dropout 后的权重另存到一个变量，例如 dropped_weights；返回时继续使用原始 weights。训练时被 dropout 处理过的权重不必行和为 1，归一化检查针对原始 weights。验证这两种返回方式后，再进入第三步做官方数值对照。
 
 <a id="reference-check"></a>
 
 #### 第三步：逐项复制到官方参考
 
 创建 `tests/test_attention.py`，顶层导入 pytest、torch 和自己模块中的 MultiHeadSelfAttention。新增 `test_attention_shapes_and_gradients`，固定 C=32、heads=4、dropout=0，对 B=1/2、T=1/8 的随机输入检查输出 `[B,T,C]` 和有限梯度；新增 `test_attention_invalid_heads`，在 pytest.raises(ValueError) 内创建 C=8、heads=3 的模块，检查不能整除时明确拒绝；新增 `test_attention_reference`，把下方权重映射、相同输入 / probe 的输出与梯度对照写入该函数。
+
+将参考对照参数化为 bias=False/True、B=1/2、T=1/8，共八组。两层均使用 CPU float64、dropout=0，并切换到 eval；前向与反向仍保留梯度记录。固定模型初始化种子，另用独立 Generator 生成两边共用的输入数值和 probe，便于重复核对误差。
 
 先在 `test_attention_reference` 中创建下面两个独立对象；MultiHeadSelfAttention 从自己实现的 attention.py 导入：
 
@@ -232,6 +290,8 @@ reference = torch.nn.MultiheadAttention(
 ```
 
 参考 in_proj 的前三段依次为 Q、K、V；weight 按 dim=0 拼接，bias 同顺序。out_proj 的 weight/bias 单独对应。
+
+需要同时比较每个头的权重时，自写层传 return_weights=True；参考层传 need_weights=True、average_attn_weights=False，使两边权重都为 `[B,heads,T,T]`。后一个参数用于保留各头权重，参考层默认会对头取平均。
 
 例如自写模块名为 `attention`，参考层名为 `reference` 时，权重映射的核心关系为：
 
@@ -294,7 +354,7 @@ python -m pytest tests/test_attention.py -q
 
 先把教材接口对应到本项目：教材 valid_lens=[2,3]、T=4 时，表示两条序列各自只有前 2、3 个有效 key，对应本项目 padding mask 的 `[[False,False,True,True],[False,False,False,True]]`。教材按 query 提供 1、2、…、T 的有效长度时，对应下方上三角 causal mask。本项目用 PyTorch 风格的布尔表表达同一屏蔽关系，保留现有 attn_mask / key_padding_mask 接口；这不要求更改注意力公式。
 
-修改 `src/petvision/models/transformer/attention.py` 的 `MultiHeadSelfAttention.forward`：在 scores 缩放之后、softmax 之前加入两个 Mask 的校验、OR 合并与 masked_fill。修改 `tests/test_attention.py`：保留 test_attention_shapes_and_gradients、test_attention_invalid_heads、test_attention_reference，按本节输入与断言新增下表列出的四个测试函数。
+修改 `src/petvision/models/transformer/attention.py` 的 `MultiHeadSelfAttention.forward`：先删除入口处 Day 2 用于拒绝非 None Mask 的 NotImplementedError 分支，再在 scores 缩放之后、softmax 之前加入两个 Mask 的校验、OR 合并与 masked_fill。修改 `tests/test_attention.py`：保留 test_attention_shapes_and_gradients、test_attention_invalid_heads、test_attention_reference；删除 Day 2 的 test_attention_rejects_unimplemented_masks，用本节下表的四个测试检查实际 Mask 行为。
 
 本项目 True 表示屏蔽，T=4 时为：
 
