@@ -1292,7 +1292,7 @@ def build_mnist_loaders(
 
 3. 验证“传了参数，结果真的改变”。
 
-完成模型改造后，在 `tests/test_cv_training.py` 追加下面的测试，保留所有已有测试：
+完成 mlp.py 和 datasets.py 的接口改造后，再打开 `tests/test_cv_training.py`，一次追加下面的模型与数据检查，保留所有已有测试：
 
 ```python
 def test_mlp_configurable_dimensions():

@@ -259,11 +259,13 @@ python scripts/numpy_basics.py
 - `__init__(self, w, b)`：保存参数。
 - `predict(self, X)`：根据参数返回预测。
 
-在 `scripts/numpy_basics.py` 顶层写 `from linear_model import LinearModel`，在演示部分用已有的 X、w 和 b=0.5 创建 `model = LinearModel(w, b)`；分别计算 model.predict(X) 与 `X @ w + b`，核对两者 shape 都为 `(3,1)`，最大绝对差小于 `1e-10`。两个脚本放在同一个 `scripts/` 目录中。
-
-将脚本的演示调用放在 `if __name__ == "__main__":` 下，观察“直接运行”与“被另一个文件导入”的区别。Day 5 的训练脚本采用独立函数，方便 Day 6 检查梯度；本题用于理解状态、方法和模块。
+在 linear_model.py 中，将演示调用放在 `if __name__ == "__main__":` 下，观察“直接运行”与“被另一个文件导入”的区别。Day 5 的训练脚本采用独立函数，方便 Day 6 检查梯度；本题用于理解状态、方法和模块。
 
 入口保护里的内容包括创建示例数据、实例化模型和打印结果；类和函数定义留在顶层。用同一组 X、w、b 分别调用 `model.predict(X)` 与矩阵公式，比较每个元素，最大绝对差应小于 `1e-10`。下方第三条命令只导入模块，应正常退出且没有演示输出。
+
+完成 linear_model.py 后，再修改调用它的 numpy_basics.py：
+
+在 `scripts/numpy_basics.py` 顶层写 `from linear_model import LinearModel`，在演示部分用已有的 X、w 和 b=0.5 创建 `model = LinearModel(w, b)`；分别计算 model.predict(X) 与 `X @ w + b`，核对两者 shape 都为 `(3,1)`，最大绝对差小于 `1e-10`。两个脚本放在同一个 `scripts/` 目录中。
 
 ### 运行与自查
 

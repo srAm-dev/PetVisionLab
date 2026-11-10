@@ -84,8 +84,8 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 
 | 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
 | --- | --- | --- |
-| [Day 1](#day-1) | 创建 `scripts/prepare_text.py`、`data/text.py`、字符 tokenizer | 原文按 80/10/10 划分；保存 manifest 和词表；统计 OOV |
-| [Day 2](#day-2) | 创建 Bigram、`lm_trainer.py`、`scripts/train_gpt.py` 和语言模型测试 | 输入目标错开一位；验证恰好统计 N-1 个目标；先只做小批检查 |
+| [Day 1](#day-1) | 完成 `data/text.py` 和字符 tokenizer，再编写 `scripts/prepare_text.py` | 原文按 80/10/10 划分；保存 manifest 和词表；统计 OOV |
+| [Day 2](#day-2) | 完成窗口、Bigram、`lm_trainer.py` 和语言模型测试，再接配置与 `scripts/train_gpt.py` | 输入目标错开一位；验证恰好统计 N-1 个目标；先只做小批检查 |
 | [Day 3](#day-3) | 创建 `models/llm/mini_gpt.py` 及 GPT 配置 | 前缀不受未来扰动；[B,T] 输出 [B,T,V]；短文本可拟合 |
 | [Day 4](#day-4) | 补齐 `scripts/train_gpt.py` 的验证、日志与 checkpoint | 两组正式训练完成相同预算，按 val loss 选 best 并保存曲线 |
 | [Day 5](#day-5) | 创建 `scripts/generate.py`，保存 `samples.jsonl` | 只取最后位置分布逐 token 生成；加载前后固定 seed 的新增 IDs 一致 |
@@ -119,37 +119,17 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 
 实际映射只来自训练文本，排序后保存，不能每次运行重新按集合遍历顺序编号。另保留 UNK 处理未见字符。
 
-#### 第一步：实现 split_text，保存三份原文和划分 manifest
+#### 第一步：在 data/text.py 完成 split_text
 
-创建 `src/petvision/data/text.py`，将按字符边界切分的逻辑封装为 `split_text(text)`，返回 train_text、val_text、test_text 三个字符串；明天继续在同一模块加入窗口函数。创建 `scripts/prepare_text.py`，从 `petvision.data.text` 导入 split_text，在 main 中读取原文、调用切分、保存文本和 manifest，末尾添加入口保护。下载与文件写入由脚本执行，导入数据模块不自动下载。
+创建 `src/petvision/data/text.py`，将按字符边界切分的逻辑封装为 `split_text(text)`，返回 train_text、val_text、test_text 三个字符串；明天继续在同一模块加入窗口函数。
 
-按字符位置切 train/val/test，保存边界与 hash。不能先对整个原文生成大量重叠窗口，再随机把窗口分给 train/val，那样相邻文本可能泄漏。
+按字符位置切 train/val/test。不能先对整个原文生成大量重叠窗口，再随机把窗口分给 train/val，那样相邻文本可能泄漏。第三步再由脚本保存边界与 hash。
 
-设完整字符串长度为 L，令 `train_end=int(0.8*L)`、`val_end=int(0.9*L)`，依次保存 `text[:train_end]`、`text[train_end:val_end]`、`text[val_end:]` 到 `datasets/processed/tinyshakespeare/{train,val,test}.txt`。三个区间首尾相接，应覆盖全部字符。
+在 split_text 中计算 L、train_end=int(0.8*L)、val_end=int(0.9*L)，按边界切出三个字符串并返回。这里完成切分函数；文本写入、hash 和 manifest 由第三步的数据准备脚本处理。
 
-manifest 至少记录 source_url、原始文件 sha256、encoding、换行处理方式，以及三个 split 的路径、`[start,end)` 区间和各自 hash。下载时保留原始 bytes 的 hash；解码、处理换行后再记录实际使用文本的 hash。再次运行优先核对已有文件，避免悄悄覆盖第七周正在使用的数据。
+#### 第二步：在 tokenizer.py 完成 CharTokenizer 的编解码与保存加载
 
-记录下载文件 hash 和读取/换行规范化方式；同一来源 URL 未来内容变化时，hash 能帮助确认是否还是同一份数据。
-
-先用浏览器从原文链接保存到约定路径，或在 prepare_text 中使用标准库下载；两种方式都读取实际落盘 bytes。hash 的最小用法如下：
-
-```python
-import hashlib
-from pathlib import Path
-
-raw_bytes = Path("datasets/raw/tinyshakespeare/input.txt").read_bytes()
-raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
-text = raw_bytes.decode("utf-8")
-used_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
-```
-
-本轮可直接保留原换行，三个 split 用 `Path.write_bytes(part_text.encode("utf-8"))` 写入，父目录先创建。断言三个字符串按顺序拼接等于 text，再计算各 split 的 UTF-8 bytes hash；manifest 的原文件 hash 与实际文本 hash 分别命名。后续读取已有文件时检查 hash 和区间，不能只看文件名相同。
-
-在 `scripts/prepare_text.py::main()` 写出 train.txt / val.txt / test.txt 后，将来源、边界和 hash 组织成 manifest 字典；先创建 `experiments/mini_gpt/week6/`，再用 `Path(.../split_manifest.json).open("w",encoding="utf-8")` 打开文件，调用 `json.dump(manifest,file,ensure_ascii=False,indent=2)` 保存。记录前面计算出的实际字符数和各 split 长度，保存后读回核对三个区间连续、总长为 L。
-
-#### 第二步：实现并保存 CharTokenizer
-
-创建 `src/petvision/models/llm/` 和空的 `__init__.py`，再创建 `src/petvision/models/llm/tokenizer.py`，将下面的类与 JSON 读写实现写进该文件。在 prepare_text.py 顶层用 `from petvision.models.llm.tokenizer import CharTokenizer` 导入，数据准备脚本只调用它，不再定义另一套字符映射。
+创建 `src/petvision/models/llm/` 和空的 `__init__.py`，再创建 `src/petvision/models/llm/tokenizer.py`，将下面的类与 JSON 读写实现写进该文件。
 
 ```python
 class CharTokenizer:
@@ -161,7 +141,7 @@ class CharTokenizer:
     def load(cls, path): ...
 ```
 
-构造函数接收已经排序的训练字符列表 chars，建立字符→ID 和 ID→字符的对应关系，同时保存 self.chars、self.unk_id 和 self.vocab_size。prepare_text.py 在完成原文划分后调用 `CharTokenizer(sorted(set(train_text)))`，再保存到 `experiments/mini_gpt/week6/char_tokenizer.json`。
+构造函数接收已经排序的训练字符列表 chars，建立字符→ID 和 ID→字符的对应关系，同时保存 self.chars、self.unk_id 和 self.vocab_size。
 
 load 是类方法：它从 JSON 读回 chars，用 `cls(chars)` 创建同一种 tokenizer，再核对 version、unk_id，返回这个对象。重新加载时不再读取文本重建词表。已知字符必须往返一致；UNK 映射无法恢复原字符，需要报告 OOV，不把这种输入当成已知字符往返检查。
 
@@ -176,7 +156,35 @@ load 是类方法：它从 JSON 读回 chars，用 `cls(chars)` 创建同一种 
 5. load 先核对 type/version，再用保存的 chars 重建对象，核对 unk_id；不重新扫描 train.txt，也不改变列表顺序。
 6. 先检查已知短串的编码与往返，再单独加入 `?` 检查 UNK。最后对保存前后的两个对象编码同一输入，要求 ID 列表逐项相同。
 
-#### 第三步：重载词表，比较编码并统计 OOV
+#### 第三步：完成 prepare_text.py，保存数据、词表并核对 OOV
+
+创建 `scripts/prepare_text.py`，从 `petvision.data.text` 导入 split_text，在 main 中读取原文、调用切分、保存文本和 manifest，末尾添加入口保护。下载与文件写入由脚本执行，导入数据模块不自动下载。
+
+在 prepare_text.py 顶层用 `from petvision.models.llm.tokenizer import CharTokenizer` 导入，数据准备脚本只调用它，不再定义另一套字符映射。
+
+先用浏览器从原文链接保存到约定路径，或在 prepare_text 中使用标准库下载；两种方式都读取实际落盘 bytes。hash 的最小用法如下：
+
+```python
+import hashlib
+from pathlib import Path
+
+raw_bytes = Path("datasets/raw/tinyshakespeare/input.txt").read_bytes()
+raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+text = raw_bytes.decode("utf-8")
+used_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+```
+
+设完整字符串长度为 L，令 `train_end=int(0.8*L)`、`val_end=int(0.9*L)`，依次保存 `text[:train_end]`、`text[train_end:val_end]`、`text[val_end:]` 到 `datasets/processed/tinyshakespeare/{train,val,test}.txt`。三个区间首尾相接，应覆盖全部字符。
+
+manifest 至少记录 source_url、原始文件 sha256、encoding、换行处理方式，以及三个 split 的路径、`[start,end)` 区间和各自 hash。下载时保留原始 bytes 的 hash；解码、处理换行后再记录实际使用文本的 hash。再次运行优先核对已有文件，避免悄悄覆盖第七周正在使用的数据。
+
+记录下载文件 hash 和读取/换行规范化方式；同一来源 URL 未来内容变化时，hash 能帮助确认是否还是同一份数据。
+
+本轮可直接保留原换行，三个 split 用 `Path.write_bytes(part_text.encode("utf-8"))` 写入，父目录先创建。断言三个字符串按顺序拼接等于 text，再计算各 split 的 UTF-8 bytes hash；manifest 的原文件 hash 与实际文本 hash 分别命名。后续读取已有文件时检查 hash 和区间，不能只看文件名相同。
+
+在 `scripts/prepare_text.py::main()` 写出 train.txt / val.txt / test.txt 后，将来源、边界和 hash 组织成 manifest 字典；先创建 `experiments/mini_gpt/week6/`，再用 `Path(.../split_manifest.json).open("w",encoding="utf-8")` 打开文件，调用 `json.dump(manifest,file,ensure_ascii=False,indent=2)` 保存。记录前面计算出的实际字符数和各 split 长度，保存后读回核对三个区间连续、总长为 L。
+
+prepare_text.py 在完成原文划分后调用 `CharTokenizer(sorted(set(train_text)))`，再保存到 `experiments/mini_gpt/week6/char_tokenizer.json`。
 
 重新加载 JSON，编码同一短文本，ID 序列应一致；保存词表大小与文件 hash，后续 checkpoint 按这个标识加载。
 
@@ -208,9 +216,9 @@ python scripts/prepare_text.py
 
 ### 操作步骤
 
-#### 第一步：用 ABCDE 手算错位窗口
+#### 第一步：在 data/text.py 完成训练采样与完整验证分窗
 
-继续修改 `src/petvision/data/text.py`，今天新增 sample_batch 和第四步的 iter_eval_windows。创建 `tests/test_language_model.py`，顶层导入 torch、pytest、sample_batch 和 iter_eval_windows。新增 `test_sample_batch_shift` 检查 x/y 错开一位；`test_sample_batch_split_bounds` 检查样本不越过当前 split、数据不足时抛出 ValueError；`test_eval_window_coverage` 将下方 N=8、T=3 的各窗口目标拼接，断言恰好覆盖 ID 1-7 且无重复。
+继续修改 `src/petvision/data/text.py`，今天新增 sample_batch 和本步的 iter_eval_windows。
 
 设 ID 为 `[0,1,2,3,4]`，T=3，起点 0：
 
@@ -230,32 +238,9 @@ y：                 [1,2,3]
 
 调用者在训练开始前创建一次独立 CPU `torch.Generator().manual_seed(42)` 并持续传入，不能每批重新创建或重设种子。输入与 target 都为 long，模型参数是浮点数。本周训练直接从 token 序列取窗口，不需要套用图像 DataLoader。
 
-#### 第二步：实现 BigramLanguageModel 并检查前反向
-
-创建 `src/petvision/models/llm/bigram.py`，顶层写 `from torch import nn`，在其中实现下述 BigramLanguageModel；在 `tests/test_language_model.py` 顶层从 `petvision.models.llm.bigram` 导入 BigramLanguageModel，新增 `test_bigram_forward_backward`：用 V=8、B=1/2、T=4 的合法 long ID 检查 `[B,T,V]` 输出，展平后计算交叉熵并 backward，断言 Embedding 参数梯度非 None 且有限。
-
-Embedding(V,V) 可视为一张转移 logits 表，当前 token ID 取出一行，决定下一 token 的分布。它不利用更早的上下文；GPT 将能利用前缀信息。参数量为 V²。在 bigram.py 定义 `BigramLanguageModel(vocab_size)`，构造函数创建 `nn.Embedding(vocab_size, vocab_size)`，forward(token_ids) 返回查表结果；token_ids 必须是 long Tensor。
-
-Embedding 是可学习的查找表：第一个 V 是“有多少行可供 ID 索引”，第二个 V 是“每行有多少个数”。假设 V=4，输入 ID=2 就取表的第 2 行，得到对下一 token 为 0、1、2、3 的四个 logits；不是把数字 2 乘上权重。输入 `[B,T]` 的每个 ID 都取一行，结果为 `[B,T,V]`。这里特意让每行宽度等于 V，以便直接作为分类分数；GPT 的 token embedding 则为 Embedding(V,C)，先取 C 维特征，再经网络输出 V 维分数。
-
-#### 第三步：展平 logits 与目标，计算下一 token 交叉熵
-
-```text
-输入 x / 目标 y      [B,T]，整数 ID
-Bigram logits        [B,T,V]
-loss 输入 logits     [B*T,V]
-loss 输入 target     [B*T]
-```
-
-在本日 test_bigram_forward_backward 中实际执行这两次 reshape，把原始 logits 和展平后的目标传给 CrossEntropyLoss，检查 loss 为有限标量后反向。每个位置是一个 V 分类问题，目标 ID 范围必须在 0..V-1；交叉熵直接接收 logits。
-
-例如 B=2、T=3、V=4：logits 为 `[2,3,4]`，targets 为 `[2,3]`；展平后分别为 `[6,4]` 和 `[6]`，相当于一次评估六个“四选一”问题。`reshape(-1,V)` 只合并 batch 和位置两轴，不合并词表轴；`targets.reshape(-1)` 使用相同顺序，保证每个位置与自己的下一 token 标签对应。
-
-把自回归概率也对应到这个例子：一个 T+1 片段训练的条件概率是各位置下一 token 概率的乘积；取负对数后变为求和，批次 loss 再除以 `B*T`。Bigram 每一项只依赖当前 ID，GPT 每一项可依赖当前可见前缀。用 `[0,1,2,3]` 逐项指出「0→1、1→2、2→3」，解释为什么目标不能与当前位置输入完全相同。
-
 <a id="eval-windows"></a>
 
-#### 第四步：按固定目标区间分窗，完整统计验证 token
+##### iter_eval_windows
 
 训练按随机窗口采样；验证使用确定性的分窗，不抽取随机验证小批替代完整统计。本周不引入 BOS：当前 split 编码后有 N 个 token，索引 0 没有本 split 内的前驱，不计为目标；索引 1..N-1 各预测一次，目标总数应为 N-1。
 
@@ -290,11 +275,46 @@ def iter_eval_windows(token_ids, context_length):
 
 该规则会在窗口边界重置模型可见上下文；它是本轮约定的固定评估方式，Bigram/GPT 必须一致，不把它和使用滑动长前缀的评估结果混在一列。每个 split 单独处理，不从 train 借前缀给 val，也不跨入 test。
 
+#### 第二步：在 bigram.py 完成 BigramLanguageModel
+
+创建 `src/petvision/models/llm/bigram.py`，顶层写 `from torch import nn`，在其中实现下述 BigramLanguageModel。
+
+Embedding(V,V) 可视为一张转移 logits 表，当前 token ID 取出一行，决定下一 token 的分布。它不利用更早的上下文；GPT 将能利用前缀信息。参数量为 V²。在 bigram.py 定义 `BigramLanguageModel(vocab_size)`，构造函数创建 `nn.Embedding(vocab_size, vocab_size)`，forward(token_ids) 返回查表结果；token_ids 必须是 long Tensor。
+
+Embedding 是可学习的查找表：第一个 V 是“有多少行可供 ID 索引”，第二个 V 是“每行有多少个数”。假设 V=4，输入 ID=2 就取表的第 2 行，得到对下一 token 为 0、1、2、3 的四个 logits；不是把数字 2 乘上权重。输入 `[B,T]` 的每个 ID 都取一行，结果为 `[B,T,V]`。这里特意让每行宽度等于 V，以便直接作为分类分数；GPT 的 token embedding 则为 Embedding(V,C)，先取 C 维特征，再经网络输出 V 维分数。
+
+#### 第三步：在 lm_trainer.py 完成 train_step 与 evaluate_lm
+
+创建 `src/petvision/training/lm_trainer.py`，导入时不启动训练。先按下面的形状组织交叉熵，再完成两个训练 / 评估函数。
+
+```text
+输入 x / 目标 y      [B,T]，整数 ID
+Bigram logits        [B,T,V]
+loss 输入 logits     [B*T,V]
+loss 输入 target     [B*T]
+```
+
+例如 B=2、T=3、V=4：logits 为 `[2,3,4]`，targets 为 `[2,3]`；展平后分别为 `[6,4]` 和 `[6]`，相当于一次评估六个“四选一”问题。`reshape(-1,V)` 只合并 batch 和位置两轴，不合并词表轴；`targets.reshape(-1)` 使用相同顺序，保证每个位置与自己的下一 token 标签对应。
+
+把自回归概率也对应到这个例子：一个 T+1 片段训练的条件概率是各位置下一 token 概率的乘积；取负对数后变为求和，批次 loss 再除以 `B*T`。Bigram 每一项只依赖当前 ID，GPT 每一项可依赖当前可见前缀。用 `[0,1,2,3]` 逐项指出「0→1、1→2、2→3」，解释为什么目标不能与当前位置输入完全相同。
+
+在 lm_trainer.py 实现 `train_step(model, x, y, optimizer)`：切 train、清梯度、前向、将 logits / y 展平计算交叉熵、backward、step，返回本批平均 loss 和目标数。`evaluate_lm(model, token_ids, context_length, device)` 切 eval/no_grad，完整累加所有窗口的 NLL 与目标数，返回 loss 和 n_target_tokens，再恢复原模式。两个函数的输入来自不同 split，不能在内部重新随机划分。
+
+两个函数统一返回 `{"loss": float值, "n_target_tokens": int值}`，键名固定；train_step 的数量为 y.numel()，evaluate_lm 为完整分窗的累计目标数。lm_trainer.py 顶层导入 torch、`torch.nn.functional as F` 和 iter_eval_windows；训练 loss 使用 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))`，验证使用相同展平方式但 reduction="sum"。evaluate_lm 开始先保存 `was_training = model.training`，在 try 中执行 eval/no_grad，在 finally 中 `model.train(was_training)`，确保退出时恢复原模式。
+
+#### 第四步：编写 test_language_model.py 的窗口、模型和评估检查
+
+创建 `tests/test_language_model.py`，顶层导入 torch、pytest、sample_batch 和 iter_eval_windows。新增 `test_sample_batch_shift` 检查 x/y 错开一位；`test_sample_batch_split_bounds` 检查样本不越过当前 split、数据不足时抛出 ValueError；`test_eval_window_coverage` 将下方 N=8、T=3 的各窗口目标拼接，断言恰好覆盖 ID 1-7 且无重复。
+
+在 `tests/test_language_model.py` 顶层从 `petvision.models.llm.bigram` 导入 BigramLanguageModel，新增 `test_bigram_forward_backward`：用 V=8、B=1/2、T=4 的合法 long ID 检查 `[B,T,V]` 输出，展平后计算交叉熵并 backward，断言 Embedding 参数梯度非 None 且有限。
+
+在本日 test_bigram_forward_backward 中实际执行这两次 reshape，把原始 logits 和展平后的目标传给 CrossEntropyLoss，检查 loss 为有限标量后反向。每个位置是一个 V 分类问题，目标 ID 范围必须在 0..V-1；交叉熵直接接收 logits。
+
+修改 `tests/test_language_model.py::test_bigram_forward_backward`：创建 AdamW 后先 clone Embedding 参数，再计算 loss、清梯度、backward、optimizer.step，断言至少一个参数值发生变化。另新增 `test_lm_evaluation_preserves_generator`：创建独立训练 Generator，保存其 get_state().clone()，对固定 val_ids 调用 evaluate_lm，再用 torch.equal 比较 Generator 状态完全相同，同时核对返回的目标数等于 len(val_ids)-1。
+
 <a id="text-inputs"></a>
 
-#### 第五步：建立配置，连接已保存的文本与 tokenizer
-
-创建 `scripts/train_gpt.py` 和 `src/petvision/training/lm_trainer.py`。在 train_gpt.py 顶层导入 argparse、yaml 和 pathlib.Path，定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加必填的 `--config`（type=Path）；main() 调用 parse_args，再以 UTF-8 打开配置文件，用 yaml.safe_load 得到 cfg，随后读数据、创建对象和调度训练。文件末尾添加 `if __name__ == "__main__": main()` 入口保护。lm_trainer.py 定义下文的 train_step / evaluate_lm，导入时不启动训练。
+#### 第五步：创建 bigram_char.yaml
 
 创建 `configs/llm/bigram_char.yaml`，让训练入口读取本次配置而不是借用分类器的 epoch 参数：
 
@@ -320,6 +340,10 @@ training:
 experiment_dir: experiments/mini_gpt/week6/runs/bigram
 output_dir: outputs/bigram_char
 ```
+
+#### 第六步：完成 train_gpt.py 的配置读取与小批调用
+
+创建 `scripts/train_gpt.py`。在 train_gpt.py 顶层导入 argparse、yaml 和 pathlib.Path，定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加必填的 `--config`（type=Path）；main() 调用 parse_args，再以 UTF-8 打开配置文件，用 yaml.safe_load 得到 cfg，随后读数据、创建对象和调度训练。文件末尾添加 `if __name__ == "__main__": main()` 入口保护。
 
 读完 YAML 后，先把保存的文本和 tokenizer 接到入口。在 train_gpt.py 顶层导入这些已实现的对象：
 
@@ -347,15 +371,9 @@ train_generator = torch.Generator().manual_seed(cfg["training"]["seed"])
 
 读取前用 split_manifest 核对文件 hash；按 bytes 解码可保持之前约定的换行。今天测试文本不进入训练 / 验证循环。在 train_gpt.py 顶层导入 `petvision.utils.seed.set_seed`；main() 将 device=auto 解析为 CUDA 可用时 cuda、否则 cpu，并用 torch.device 创建对象，先调用 set_seed(cfg["training"]["seed"])，再新建 `BigramLanguageModel(tokenizer.vocab_size).to(device)` 和 AdamW。一次更新先调用 sample_batch(train_ids, ...)，再将得到的 x / y 交给 train_step；验证把 val_ids 交给 evaluate_lm，按前述 iter_eval_windows 遍历。
 
-在 lm_trainer.py 实现 `train_step(model, x, y, optimizer)`：切 train、清梯度、前向、将 logits / y 展平计算交叉熵、backward、step，返回本批平均 loss 和目标数。`evaluate_lm(model, token_ids, context_length, device)` 切 eval/no_grad，完整累加所有窗口的 NLL 与目标数，返回 loss 和 n_target_tokens，再恢复原模式。两个函数的输入来自不同 split，不能在内部重新随机划分。
-
-两个函数统一返回 `{"loss": float值, "n_target_tokens": int值}`，键名固定；train_step 的数量为 y.numel()，evaluate_lm 为完整分窗的累计目标数。lm_trainer.py 顶层导入 torch、`torch.nn.functional as F` 和 iter_eval_windows；训练 loss 使用 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))`，验证使用相同展平方式但 reduction="sum"。evaluate_lm 开始先保存 `was_training = model.training`，在 try 中执行 eval/no_grad，在 finally 中 `model.train(was_training)`，确保退出时恢复原模式。
-
 入口还需校验 training.steps、eval_interval、model.context_length、data.batch_size 为正整数；目前 name 仅支持已实现模型，optimizer 仅支持 adamw，dtype 仅支持 float32。data.name=tinyshakespeare 对应本周保存的原文文件；其他值明确报错。这样修改配置不会被代码静默忽略。
 
 词表大小从 tokenizer.vocab_size 实际读取；`model.context_length` 控制窗口长度，Bigram 本身仍只依赖当前位置。一次 step 指一个训练 batch 的参数更新，2000 steps 不是遍历完整语料 2000 次。今天先实现参数解析与小批更新，正式结果待 Day 4 写出。
-
-修改 `tests/test_language_model.py::test_bigram_forward_backward`：创建 AdamW 后先 clone Embedding 参数，再计算 loss、清梯度、backward、optimizer.step，断言至少一个参数值发生变化。另新增 `test_lm_evaluation_preserves_generator`：创建独立训练 Generator，保存其 get_state().clone()，对固定 val_ids 调用 evaluate_lm，再用 torch.equal 比较 Generator 状态完全相同，同时核对返回的目标数等于 len(val_ids)-1。
 
 ### 运行与自查
 
@@ -384,9 +402,9 @@ python -m pytest tests/test_language_model.py -q
 
 ### 操作步骤
 
-#### 第一步：按作者定义 GPTBlock，再组装 MiniGPT
+#### 第一步：在 mini_gpt.py 完成 GPTBlock、MiniGPT 构造与 forward
 
-创建 `src/petvision/models/llm/mini_gpt.py`，顶层导入 torch、nn、math，以及第四周的 MultiHeadSelfAttention 和自写 LayerNorm。继续向已有 `tests/test_language_model.py` 添加本日检查。第四周 EncoderBlock 是教材的 post-LN＋ReLU，GPT 在这个文件中定义自己的 pre-LN Block。
+创建 `src/petvision/models/llm/mini_gpt.py`，顶层导入 torch、nn、math，以及第四周的 MultiHeadSelfAttention 和自写 LayerNorm。第四周 EncoderBlock 是教材的 post-LN＋ReLU，GPT 在这个文件中定义自己的 pre-LN Block。
 
 先定义 `GPTBlock(embed_dim, num_heads, ffn_hidden_dim, dropout=0.0)`：
 
@@ -416,8 +434,6 @@ depth 个 causal GPTBlock     [B,T,C]
 
 位置 ID 为 0..T-1，输入 T 不超过 context_length；head 的 V 来自 tokenizer，不与上下文长度混用。训练 loss 继续由训练器根据 logits 和 targets 计算。
 
-#### 第二步：完成 MiniGPT.forward，并检查形状、梯度与 Block 参考结果
-
 ```python
 def forward(self, token_ids):
     # 返回 logits: [B,T,V]
@@ -437,6 +453,10 @@ for block in self.blocks:
 ```
 
 上述 self.token_embedding、self.position_embedding 和 self.blocks 均在构造函数中建立；堆叠后接最终 LayerNorm 和词表输出层。每层收到同一个 causal_mask，当前样本不含 padding。ViT 不传 causal mask，GPT 不能沿用它的双向设置。
+
+#### 第二步：在 test_language_model.py 编写 GPT 形状、梯度与参考检查
+
+继续向已有 `tests/test_language_model.py` 添加本日检查。
 
 修改 `tests/test_language_model.py`，顶层补充 `from torch import nn` 和 GPTBlock 的导入，新增 `test_gptblock_reference`，将以下四项写入该函数；模型形状 / 梯度另写入 `test_gpt_forward_backward`，未来隔离另写入 `test_gpt_causal_mask`：
 
@@ -605,7 +625,9 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 
 #### 第一步：创建 generate.py，从 checkpoint 重建模型与 tokenizer
 
-创建 `scripts/generate.py`，顶层导入 argparse、json、Path、torch、CharTokenizer、BigramLanguageModel 和 MiniGPT。在 main 中解析任务概览列出的五个参数，按本步从 checkpoint 重建对象，再调用第二步生成循环和第三步的 JSONL 保存逻辑；文件末尾添加入口保护。只导入脚本不会加载权重或自动生成文本。
+创建 `scripts/generate.py`，顶层导入 argparse、json、Path、torch、CharTokenizer、BigramLanguageModel 和 MiniGPT。在 main 中解析 checkpoint、prompt、max-new-tokens、seed、output 五个参数，按本步从 checkpoint 重建对象，再调用第二步生成循环和第三步的 JSONL 保存逻辑；文件末尾添加入口保护。只导入脚本不会加载权重或自动生成文本。
+
+参数解析时 max-new-tokens 与 seed 用 type=int，checkpoint 和 output 用 Path，prompt 为字符串；max-new-tokens 要为非负数。
 
 新进程读取结构、context 与 tokenizer，创建模型并加载；固定 seed，在 eval/no_grad 下生成。脚本不应依赖训练程序内存中的对象。
 
@@ -636,7 +658,7 @@ with torch.no_grad():
         token_ids = torch.cat((token_ids, next_id), dim=1)
 ```
 
-参数解析时 max-new-tokens 与 seed 用 type=int，checkpoint 和 output 用 Path，prompt 为字符串；max-new-tokens 要为非负数。每次追加一个 ID 后再次前向，重复 max_new_tokens 次。上下文裁剪影响模型每次可见输入，不要把累积输出文本也截掉。循环后用 `all_ids = token_ids[0].cpu().tolist()` 得到完整 ID 列表，`new_ids = all_ids[len(prompt_ids):]` 得到新增列表，再用 `tokenizer.decode(all_ids)` 得到完整文本；这些实际值用于后面的 JSONL 记录。
+每次追加一个 ID 后再次前向，重复 max_new_tokens 次。上下文裁剪影响模型每次可见输入，不要把累积输出文本也截掉。循环后用 `all_ids = token_ids[0].cpu().tolist()` 得到完整 ID 列表，`new_ids = all_ids[len(prompt_ids):]` 得到新增列表，再用 `tokenizer.decode(all_ids)` 得到完整文本；这些实际值用于后面的 JSONL 记录。
 
 先用 3 个已知 prompt ID、max_new_tokens=5 检查最终保留 8 个 ID，前 3 个仍与 prompt 相同；再构造长于 context 的前缀，检查每次送入 forward 的长度不超过 context，累积结果仍持续增长。示例 prompt 必须非空；空 prompt 在本轮明确提示需要输入，避免索引最后位置失败。
 

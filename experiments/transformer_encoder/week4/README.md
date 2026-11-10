@@ -3,7 +3,7 @@
 学习指南：[第四周逐日任务](../../../docs/week4.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-Day 1 的单头演示、Day 2 的多头 Attention 与官方参考对照，以及 Day 3 的 Mask 接入、手算例子和扰动测试已通过 CPU 检查，结果见下方记录。后续继续学习 Mask 参考接口的差异并实现 Encoder；独立解释与重写仍需本人自查。
+Day 1 的单头演示、Day 2 的多头 Attention 与官方参考对照、Day 3 的 Mask 接入和扰动测试，以及 Day 4 的 LayerNorm 检查已通过 CPU 检查，结果见下方记录。后续继续完成 Mask 官方参考对照并实现 Encoder；独立解释与重写仍需本人自查。
 
 <a id="environment"></a>
 
@@ -118,6 +118,43 @@ causal 测试将输入位置 2、3 的特征加 10，比较前两个位置的输
 合并 Mask 后，权重形状为 `[2,2,4,4]`，屏蔽位置的最大权重为 0，行和与 1 的最大绝对差为 `2.220446e-16`；输出、输入梯度和所有参数梯度均有限。单独 attn_mask、单独 padding，以及两个合法 Mask 合并后出现全屏蔽 query 的三种输入，均按约定抛出 ValueError。
 
 运行 `python -m pytest tests/test_attention.py -q -s`，结果为 **37 passed**，其中本步骤的四类检查共六项。运行时会打印上述误差、比较形状、容差和全屏蔽错误；单独运行方法见[Day 3 第三步](../../../docs/week4.md#day-3)。
+
+## Day 4 第二步：LayerNorm 检查（2026-11-10）
+
+完成 `tests/test_layernorm.py` 中的三个测试函数，使用 CPU float64：
+
+- test_layernorm_known_values：输入 `[1,3]`，将 eps=1e-5 计入期望值，输出约为 `[-0.999995,0.999995]`，检查容差为 1e-12。另只修改一个 token 的一个特征，确认其他 token 的输出不变。
+- test_layernorm_constant_input：参数化 C=1、2、32，输入 `[2,3,C]` 的常量 7；gamma=1、beta=0 时输出为零，输入与参数梯度均存在且有限。
+- test_layernorm_reference：对 B=1/2、T=1/3、C=32 共四组输入，给自写层设置固定随机的 gamma/beta，复制到 nn.LayerNorm 的 weight/bias。两边使用同一输入数值、独立叶子 Tensor 和相同 probe，比较输出、输入梯度与两个参数的梯度。
+
+首次运行在批量输入处报错，原因是 normalization.py 使用 math.sqrt 处理方差 Tensor。将其改为 torch.sqrt 后，批量计算与方差路径的梯度均能通过对照。
+
+运行 `python -m pytest tests/test_layernorm.py -q -s`，结果为 **8 passed**。四组官方参考对照的最大绝对误差如下，容差为 1e-6：
+
+| 比较项 | 最大绝对误差，约 |
+| --- | --- |
+| 输出 | 8.881784e-16 |
+| 输入梯度 | 1.332268e-15 |
+| gamma / weight 梯度 | 1.776357e-15 |
+| beta / bias 梯度 | 0 |
+
+本次检查只覆盖 LayerNorm；FFN、AddNorm 与 EncoderBlock 按第三、四步继续实现和测试。
+
+## Day 4 第四步：FFN 与 EncoderBlock 检查（2026-11-10）
+
+完成 `tests/test_encoder.py`，使用 CPU float64，固定随机种子 42：
+
+- test_feedforward_token_independence：输入为 `[2,3,32]`，FFN 隐藏维度为 128。只改第一条序列的位置 1，确认出口形状不变、该位置输出发生变化，其他位置输出在 1e-12 容差内相同。
+- test_encoderblock_forward_backward：B=1/2、T=3、C=32、heads=4、FFN=128、dropout=0。分别使用无 Mask、causal、padding、合并 Mask，共八组。检查两个 AddNorm 及其归一化参数独立，输出形状正确，输入和全部参数的梯度均存在且有限。反向使用随机 probe 与输出相乘后求和。
+- test_encoderblock_masks：输入为 `[2,4,32]`，分别使用单独的 causal、padding。扰动位置 2、3，位置 0、1 的输出在 1e-12 容差内不变；去掉 Mask 后，比较位置的最大输出差均大于 1e-6。padding query 不参与不变性断言。
+- test_encoderblock_combined_masks：两种 Mask 同时传入。两条序列分别将位置 1、2 设为 padding，位置 0、3 保持有效。检查 causal 时扰动位置 3、比较 query 0；检查 padding 时扰动被屏蔽的位置、比较 query 3。合并时比较位置输出不变；只移除被检查的 Mask 后，两条序列的输出差均大于 1e-6。
+- test_encoderblock_train_eval：dropout=0.1，检查所有子模块的 training 标记随 train/eval 切换。train 下连续两次输出不同；eval/no_grad 下连续两次输出完全相同；最后切回 train，确认标记恢复。
+
+首次运行发现 AddNorm.forward 缺少 return，导致 FFN 收到 None；补上返回值后通过检查。
+
+复查后为 LayerNorm 增加最后一维校验，并补上四项非法输入检查，覆盖可能被广播的维度错误、普通维度不匹配和零维 Tensor。合并 Mask 的测试改为上述两个独立检查；临时模拟同时传入时漏掉 attn_mask 或 key_padding_mask，新测试均能发现错误。
+
+运行 `python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q`，结果为 **63 passed**：Attention 37 项、LayerNorm 12 项、FFN 与 Block 14 项。未运行 GPU 检查；完整 Encoder 的位置编码与堆叠留到 Day 5。
 
 ## 后续计划配置与待保存结果
 

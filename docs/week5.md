@@ -77,7 +77,7 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 
 | 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
 | --- | --- | --- |
-| [Day 1](#day-1) | 创建 `src/petvision/models/cv/vit.py`、`tests/test_vit.py` | 32×32 图片得到 64/16 个 Patch，含 CLS 长度 65/17 |
+| [Day 1](#day-1) | 在 `src/petvision/models/cv/vit.py` 完成 Patch 与 CLS/位置构造，再写 `tests/test_vit.py` | 32×32 图片得到 64/16 个 Patch，含 CLS 长度 65/17 |
 | [Day 2](#day-2) | 完成 ViTBlock/ViT，创建 P4 配置，扩展训练与评估入口 | CLS、位置参数有梯度；保存加载与 64 样本拟合通过 |
 | [Day 3](#day-3) | 创建 P8 配置，分别训练两种 Patch | 独立保存配置和 best/last；曲线、参数量与资源记录齐全 |
 | [Day 4](#day-4) | 创建 `evaluation/classification.py`，扩展 `scripts/evaluate.py` | Macro-F1 小例子正确；六个配置和 best 按验证结果冻结 |
@@ -115,7 +115,24 @@ P=8：图像 → [B,16,192] → Linear → [B,16,128]
 
 投影后的 C 都为 128；不要把 Patch 像素维度直接当作 Encoder hidden size。
 
-#### 第二步：测试 Patch 顺序，并比较 Conv 与 Linear 投影
+#### 第二步：在 vit.py 完成 ViT 的 CLS 与位置参数
+
+在 `src/petvision/models/cv/vit.py` 定义 `ViT` 类，构造参数约定为 num_classes、image_size、patch_size、embed_dim、depth、heads、ffn_hidden_dim、dropout；先创建 PatchEmbedding、CLS 和位置参数，Day 2 再补 Block 与分类头。PatchEmbedding 本身只负责图片投影，不把 CLS / 位置嵌入也藏进它的输出。
+
+```text
+Patch tokens       [B,N,C]
+CLS expand         [B,1,C]
+concat             [B,N+1,C]
+position embedding [1,N+1,C]
+```
+
+CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训练；它不是预先算出的类别标签。位置 0 对应 CLS，后面才是图像 Patch。
+
+按教材 PyTorch 版初始化：CLS 使用 `nn.Parameter(torch.zeros(1,1,C))`，可学习位置参数使用 `nn.Parameter(torch.randn(1,N+1,C))`。两者均注册为 Parameter；本轮保持这套教材初始化，torchvision 等实现可能使用其他初始化，应按所选参考明确区分。forward 只 expand/concat/相加，不临时创建新 Parameter。检查两者出现在 named_parameters 和 state_dict 中，位置长度与实际 N+1 不符时明确报错，B=1 与 B=4 都保持 batch 维。
+
+构造 ViT 时先检查 image_size 能被正整数 patch_size 整除；完整 forward 还要检查输入 H、W 均等于配置 image_size。仅比较 token 数不能识别例如 16×64 与 32×32 这类同数量、不同位置网格的输入。
+
+#### 第三步：在 test_vit.py 检查 Patch 投影与 token 参数
 
 创建 `tests/test_vit.py`，顶层导入 pytest、torch 和 `from petvision.models.cv.vit import PatchEmbedding`。新增四个函数：`test_patch_order` 使用下方 4×4 编号图核对四个原始 Patch；`test_patch_shapes` 检查 P=4/8 的输出；`test_patch_projection_reference` 执行下方 Conv / unfold＋Linear 的权重复制与值比较；`test_patch_invalid_size` 用不能被 P 整除的 H/W 检查 ValueError。完整 ViT 的检查另加到同一文件。
 
@@ -149,22 +166,7 @@ assert (conv_tokens - linear_tokens).abs().max().item() < 1e-6
 
 先检查单通道编号图的四个原始 Patch，再用三通道随机图片核对投影值，避免只看形状就漏掉通道/像素顺序错误。非法尺寸在 forward 开始时检查 `H % P`、`W % P`，用 `pytest.raises(ValueError)` 覆盖。
 
-#### 第三步：加入 CLS 和位置参数
-
-在 `src/petvision/models/cv/vit.py` 定义 `ViT` 类，构造参数约定为 num_classes、image_size、patch_size、embed_dim、depth、heads、ffn_hidden_dim、dropout；先创建 PatchEmbedding、CLS 和位置参数，Day 2 再补 Block 与分类头。PatchEmbedding 本身只负责图片投影，不把 CLS / 位置嵌入也藏进它的输出。
-
-```text
-Patch tokens       [B,N,C]
-CLS expand         [B,1,C]
-concat             [B,N+1,C]
-position embedding [1,N+1,C]
-```
-
-CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训练；它不是预先算出的类别标签。位置 0 对应 CLS，后面才是图像 Patch。
-
-按教材 PyTorch 版初始化：CLS 使用 `nn.Parameter(torch.zeros(1,1,C))`，可学习位置参数使用 `nn.Parameter(torch.randn(1,N+1,C))`。两者均注册为 Parameter；本轮保持这套教材初始化，torchvision 等实现可能使用其他初始化，应按所选参考明确区分。forward 只 expand/concat/相加，不临时创建新 Parameter。检查两者出现在 named_parameters 和 state_dict 中，位置长度与实际 N+1 不符时明确报错，B=1 与 B=4 都保持 batch 维。
-
-在 `tests/test_vit.py` 新增 `test_vit_token_parameters`：创建 ViT 后只调用 model.patch_embed，手动将 model.cls_token 扩展到 batch、与 Patch 拼接，再加 model.position_embedding；分别核对这三个中间张量的 shape，以及 cls_token / position_embedding 出现在 named_parameters 和 state_dict 中。本函数在本日不调用尚未完成的 ViT.forward。构造 ViT 时先检查 image_size 能被正整数 patch_size 整除；完整 forward 还要检查输入 H、W 均等于配置 image_size。仅比较 token 数不能识别例如 16×64 与 32×32 这类同数量、不同位置网格的输入。
+在 `tests/test_vit.py` 新增 `test_vit_token_parameters`：创建 ViT 后只调用 model.patch_embed，手动将 model.cls_token 扩展到 batch、与 Patch 拼接，再加 model.position_embedding；分别核对这三个中间张量的 shape，以及 cls_token / position_embedding 出现在 named_parameters 和 state_dict 中。本函数在本日不调用尚未完成的 ViT.forward。
 
 ### 运行与自查
 
@@ -248,10 +250,6 @@ ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列�
 
 #### 第四步：接入已有训练入口
 
-修改已有 `scripts/train_cv.py` 和 `scripts/evaluate.py`，顶层从 `petvision.models.cv.vit` 导入 ViT，在已有模型选择处添加 vit 分支，按下方 model 字段创建该类。两处构造参数保持一致，独立评估继续按 checkpoint 保存的 model_config 重建，具体职责见[第三周入口整理步骤](week3.md#cv-entry-refactor)。
-
-模型选择添加 vit，配置明确 image_size、patch_size、embed_dim、depth、heads、dropout；split_path 原样复用第三周文件。通过短运行后再冻结预算。
-
 创建 `configs/cv/vit_cifar10.yaml`。数据、增强与归一化延续第三周的 [v2 预处理](week3.md#cifar-v2-transforms)：训练入口和评估入口复用已有 CIFAR 分支及 `build_cifar10_loaders`，无需为 ViT 另建一套 transform。训练顺序为 v2.ToImage → v2.RandomCrop → v2.RandomHorizontalFlip → v2.ToDtype(torch.float32,scale=True) → v2.Normalize；验证和测试去掉两种随机增强。mean/std、裁剪 padding 和翻转开关继续读取下方 data 配置，输出为 float32 的 `[B,3,32,32]`，再由 ViT 切分 Patch。以下为完整起始配置：
 
 ```yaml
@@ -292,6 +290,10 @@ output_dir: outputs/vit_patch4
 ```
 
 `model.image_size` 用于建立 Patch 和位置参数，必须等于实际送入 ViT 的图像高宽；`data.image_size` 记录数据集原图尺寸。本周 ViT 不额外 Resize，因此构建时核对两者都为 32。heads、FFN 宽度与 dropout 都要传入新建的 Block，不能继续使用第四周演示时写死的 C=32。
+
+修改已有 `scripts/train_cv.py` 和 `scripts/evaluate.py`，顶层从 `petvision.models.cv.vit` 导入 ViT，在已有模型选择处添加 vit 分支，按下方 model 字段创建该类。两处构造参数保持一致，独立评估继续按 checkpoint 保存的 model_config 重建，具体职责见[第三周入口整理步骤](week3.md#cv-entry-refactor)。
+
+模型选择添加 vit，配置明确 image_size、patch_size、embed_dim、depth、heads、dropout；split_path 原样复用第三周文件。通过短运行后再冻结预算。
 
 测一轮训练前在 CUDA 分支调用 `torch.cuda.synchronize()`、`torch.cuda.reset_peak_memory_stats()`，用 `time.perf_counter()` 记开始/结束，结束前再次同步；峰值取 `torch.cuda.max_memory_allocated()/1024**2`，注明 MiB 和测量范围。CPU 分支跳过 CUDA 接口，记录设备即可。
 
@@ -403,7 +405,7 @@ Macro-F1 ≈ 0.733333
 
 上例第 0 类的 TP=2、FP=0、FN=1，所以 F1=`4/(4+0+1)=4/5`；第 1 类的 TP=1、FP=1、FN=0，所以 F1=`2/(2+1+0)=2/3`。accuracy 只看对角线正确数 `(2+1)/4`，Macro-F1 则为 `(4/5+2/3)/2=11/15`，两者回答的问题不同。
 
-先让指标函数通过这个例子。正式 CIFAR 使用 10 类，某类分母为 0 按约定记 0，不因它暂未出现在某批就改变平均类别数。
+本步先手算这个例子，第二步实现指标函数后再核对返回值。正式 CIFAR 使用 10 类，某类分母为 0 按约定记 0，不因它暂未出现在某批就改变平均类别数。
 
 用 `y_true=[0,0,0,1]`、`y_pred=[0,0,1,1]` 实际构建这张矩阵：对每对类别执行 `matrix[true,pred] += 1`。第 c 类的 TP 是对角元素，FN 是第 c 行和减 TP，FP 是第 c 列和减 TP。参数 `num_classes=2` 时得到上表结果；再设为 3，未出现的第 2 类 F1=0，Macro-F1 应为 `22/45≈0.488889`。这两次检查验证矩阵方向和固定类别数口径。
 

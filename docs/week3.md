@@ -219,7 +219,7 @@ assert pooled.shape == (4, 32, 16, 16)
 #### 第二步：统一加载接口，再准备 CIFAR-10 与预处理
 
 <a id="unified-loader-interface"></a>
-先把 MNIST 的预处理从加载函数中移到调用者，再按同一接口实现 CIFAR-10。按下面顺序修改加载函数、迁移调用处并执行检查；若已有实现，逐项核对即可。完成情况和实际检查结果记录在[第三周 README](../experiments/cnn_vs_resnet/week3/README.md#progress)。
+先把 MNIST 的预处理从加载函数中移到调用者，再按同一接口实现 CIFAR-10。先完成本步和第三步的加载函数，再在第四步迁移调用处并执行检查；若已有实现，逐项核对即可。完成情况和实际检查结果记录在[第三周 README](../experiments/cnn_vs_resnet/week3/README.md#progress)。
 
 1. 先确定两个函数共同接收什么、返回什么。
 
@@ -244,7 +244,43 @@ MNIST 沿用原来的 `transforms.ToTensor()` → `transforms.Normalize(...)`。
 
 关键是两个 Subset 的底层 Dataset 必须不同。不能继续让验证引用 train_base，也不能创建 Subset 后修改共享底层对象的 transform，否则训练增强可能进入验证。两个 Dataset 读取同一份本地训练文件，不代表重新划分两套训练数据；仍使用原先保存的索引。
 
-4. 逐个迁移四处实际调用，不只修改函数定义。
+4. 在同一个 datasets.py 中继续实现 CIFAR-10。
+
+CIFAR-10 是三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 datasets.py 中定义或继续完善 `build_cifar10_loaders`，完成本节的数据实例与下一步的固定划分 / DataLoader；接口采用上面的公共参数。两个 transform 由调用者传入，正式训练可以增强，过拟合检查改用确定性评估变换；validation_size 和 num_workers 也从配置传入。
+
+在数据函数内用传入的参数创建原始数据实例；首次下载通过 download=True 明确开启。训练 / 验证实例分别持有各自的 transform：
+
+```python
+from torch.utils.data import Subset
+from torchvision.datasets import CIFAR10
+
+train_base = CIFAR10(root=data_dir, train=True, download=True, transform=train_transform)
+val_base = CIFAR10(root=data_dir, train=True, download=True, transform=eval_transform)
+test_set = CIFAR10(root=data_dir, train=False, download=True, transform=eval_transform)
+```
+
+先检查三个实例长度为 50000、50000、10000。train_base 与 val_base 读取相同训练图片，分别持有各自的 transform；它们还不是最后的 45k/5k 子集。类别名称取 `train_base.classes`，编号顺序与 targets 对应。
+
+#### 第三步：保存 45k/5k 索引，再创建三个 DataLoader
+
+复用[第二周 MNIST 的索引保存和批次步骤](week2.md#mnist-data)：本周只对 0..49999 生成排列，前 45000 个作为 train_indices，其余 5000 个作为 val_indices。JSON 的 dataset 改为 cifar10、n_total 改为 50000，保存到传入 split_path；存在文件时读取并核对，不因开始新模型就覆盖划分。
+
+函数内部先校验 validation_size 为满足 `0 < validation_size < 50000` 的整数，再计算 `n_train = n_total - validation_size`，用 `indices[:n_train]` / `indices[n_train:]` 切分；已有文件的长度校验也使用这两个变量。本周正式配置固定 5000，默认得到 45000/5000。验证参数是否生效时另用临时 split_path 和 validation_size=10000，应得到 40000/10000；不要改写跨周复用的正式划分。
+
+完成长度、范围、组内唯一性、交集和并集断言后，在数据函数内接上：
+
+```python
+train_set = Subset(train_base, train_indices)
+val_set = Subset(val_base, val_indices)
+```
+
+随后按[第二周 DataLoader 示例](week2.md#mnist-loaders)分别构建三个 loader：训练 shuffle=True 并使用独立 Generator，验证 / 测试 shuffle=False，三者 num_workers 从参数读取、drop_last=False。函数最后返回三个 loader；不要把 test_set 放进训练 / 验证的随机划分。
+
+#### 第四步：在检查脚本调用函数，验证增强隔离
+
+datasets.py 的两个加载函数都已完整返回三个 loader 后，再按下面顺序修改调用方和检查文件。
+
+##### 迁移四个 MNIST 调用处
 
 | 调用文件 | 在调用前做什么 | 传入什么 |
 | --- | --- | --- |
@@ -255,7 +291,7 @@ MNIST 沿用原来的 `transforms.ToTensor()` → `transforms.Normalize(...)`。
 
 各脚本顶层导入 `from torchvision import transforms`，main 中先创建变换，再调用加载函数。删除调用中的旧 `mean=...`、`std=...`，其余路径、seed、validation_size、num_workers 沿用原值。旧签名不再保留兼容分支：漏传两个 transform 会报缺少参数，继续传 mean/std 会报不支持的关键字，应回到调用处修正。
 
-5. 检查接口迁移没有改变划分、批次和已有验证结果。
+##### 更新 MNIST 接口检查
 
 修改 `tests/test_datasets.py`：在 `test_mnist_training_transform_does_not_leak_into_evaluation` 中，使用不下载数据的 FakeMNIST 和两个明显不同的 transform，调用 build_mnist_loaders，断言 train / val 的底层 Dataset 不同、修改训练 transform 不影响 val/test；在 `test_mnist_transform_change_reuses_saved_split` 中，保存首次 split 文件内容与索引，再更换 transform 重建 loader，断言文件、索引和相同 seed 下的取样顺序未变。同时核对图片 / 标签形状、dtype，以及已有划分与 validation_size 冲突时仍明确报错。原 `tests/test_cv_training.py` 保留模型、训练统计和 checkpoint 检查；若已按第二周定义 test_mnist_configurable_loaders，也在该函数中把 mean/std 改为先创建 Compose，再以 train_transform / eval_transform 传入，保留原验证集大小与像素范围断言。
 
@@ -269,9 +305,7 @@ python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outpu
 
 smoke 应只训练两批、验证两批，不写正式训练产物。独立验证应覆盖 5000 条，准确率与迁移前同一 checkpoint 的验证记录一致；loss 按实际设备容差比较。实际数值从第二周 README 和对应运行记录读取，不在计划中固定为某次实验结果。不要为了迁移接口重跑正式五轮训练或测试集评估。需要查看图片或检查固定小样本时，继续使用第二周的 inspect_mnist.py / check_mnist_training.py 命令。
 
-6. 按相同接口继续实现 CIFAR-10。
-
-CIFAR-10 是三通道 32×32 图片、10 类，官方训练集 50000 张、测试集 10000 张。在 datasets.py 中定义或继续完善 `build_cifar10_loaders`，完成本节的数据实例与下一步的固定划分 / DataLoader；接口采用上面的公共参数。两个 transform 由调用者传入，正式训练可以增强，过拟合检查改用确定性评估变换；validation_size 和 num_workers 也从配置传入。
+##### 完成 inspect_cifar10.py
 
 先在 `scripts/inspect_cifar10.py` 的 main 中建立本日条件：data_dir 为 `datasets/raw`，split_path 为本周 `cifar10_split.json`，batch_size=64、seed=42。在顶层导入 torch 和 `from torchvision.transforms import v2`，main 中创建以下两个变换；下方导入语句仍放在文件顶层：
 
@@ -307,36 +341,6 @@ eval_transform = v2.Compose([
 张量转换分成 ToImage 和 ToDtype 两步，详见 [ToImage](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.v2.ToImage.html)、[ToDtype](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.v2.ToDtype.html)。不使用已弃用的 [v2.ToTensor](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.v2.ToTensor.html)。第二周已完成的 MNIST 实验保留当时的实现与记录；本周新增 CIFAR 路径使用上述 v2 流程，后续 ViT 也复用它。引用教程若仍展示旧版写法，数据来源与模型讲解仍可参考，预处理按本页实现。
 
 先检查一张图片：ToImage 后 dtype 为 uint8，ToDtype 后为 float32 且值在 [0,1]，Normalize 后在 [-1,1]。训练增强发生在 uint8 阶段，Normalize 前再转浮点数；不要在已经缩放的图片上重复除以 255。使用原有 DataLoader 即可将图片组成 `[B,3,32,32]` 批次，无需为本练习自定义 collate_fn。
-
-在数据函数内用传入的参数创建原始数据实例；首次下载通过 download=True 明确开启。训练 / 验证实例分别持有各自的 transform：
-
-```python
-from torch.utils.data import Subset
-from torchvision.datasets import CIFAR10
-
-train_base = CIFAR10(root=data_dir, train=True, download=True, transform=train_transform)
-val_base = CIFAR10(root=data_dir, train=True, download=True, transform=eval_transform)
-test_set = CIFAR10(root=data_dir, train=False, download=True, transform=eval_transform)
-```
-
-先检查三个实例长度为 50000、50000、10000。train_base 与 val_base 读取相同训练图片，分别持有各自的 transform；它们还不是最后的 45k/5k 子集。类别名称取 `train_base.classes`，编号顺序与 targets 对应。
-
-#### 第三步：保存 45k/5k 索引，再创建三个 DataLoader
-
-复用[第二周 MNIST 的索引保存和批次步骤](week2.md#mnist-data)：本周只对 0..49999 生成排列，前 45000 个作为 train_indices，其余 5000 个作为 val_indices。JSON 的 dataset 改为 cifar10、n_total 改为 50000，保存到传入 split_path；存在文件时读取并核对，不因开始新模型就覆盖划分。
-
-函数内部先校验 validation_size 为满足 `0 < validation_size < 50000` 的整数，再计算 `n_train = n_total - validation_size`，用 `indices[:n_train]` / `indices[n_train:]` 切分；已有文件的长度校验也使用这两个变量。本周正式配置固定 5000，默认得到 45000/5000。验证参数是否生效时另用临时 split_path 和 validation_size=10000，应得到 40000/10000；不要改写跨周复用的正式划分。
-
-完成长度、范围、组内唯一性、交集和并集断言后，在数据函数内接上：
-
-```python
-train_set = Subset(train_base, train_indices)
-val_set = Subset(val_base, val_indices)
-```
-
-随后按[第二周 DataLoader 示例](week2.md#mnist-loaders)分别构建三个 loader：训练 shuffle=True 并使用独立 Generator，验证 / 测试 shuffle=False，三者 num_workers 从参数读取、drop_last=False。函数最后返回三个 loader；不要把 test_set 放进训练 / 验证的随机划分。
-
-#### 第四步：在检查脚本调用函数，验证增强隔离
 
 在 inspect_cifar10.py 顶层导入 `build_cifar10_loaders`，在创建 transform 之后调用，传入上面约定的 data_dir、split_path、64、42 和两个 transform。打印三个 loader.dataset 的长度，取一个训练 batch 检查图片 / 标签；用入口保护调用 main。
 
@@ -587,11 +591,11 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml --overfit-sample
 
 自查 smoke 只取少量批次，overfit 反复使用关闭增强后一次取出的固定张量；检查模式结束后，正式配置、history 和 checkpoint 不应变化。通过本步后继续第四步的 CNN / BN 检查，再补齐第五、六步的正式结果管理，最后启动完整训练。
 
-#### 第四步：先检查再正式训练
+#### 第四步：在 test_resnet.py 完成 CNN 与 BN 检查
 
 创建 `tests/test_resnet.py`，今天先放 CNN 检查，Day 3-4 再向同一文件添加 BasicBlock 与 ResNet18 检查。顶层导入 torch、CNN；分别用 B=1/4 的 `[B,3,32,32]` 图片检查 `[B,10]` 输出，再用 long 标签计算交叉熵并 backward，核对活跃参数梯度存在且有限。
 
-先打印各阶段尺寸，再 smoke、64 样本过拟合、正式训练。验证切 eval；若模型在 eval 前后差异异常，检查 BN running statistics 是否更新、加载是否完整。
+本步先检查各阶段尺寸、梯度和 BN 行为。第五、六步接好 initial、日志与资源记录后，再按本日末尾命令依次运行 smoke、64 样本过拟合和正式训练。验证切 eval；若模型在 eval 前后差异异常，检查 BN running statistics 是否更新、加载是否完整。
 
 BatchNorm2d 对每个通道沿 batch 与空间位置统计；例如 `[B,32,32,32]` 有 32 组统计量。训练时使用当前批次的统计，并更新 running mean/variance；默认评估时使用保存的运行统计。因此 `no_grad()` 不能替代 `eval()`，完整保存和加载 state_dict 时也要包含这些 buffer。
 

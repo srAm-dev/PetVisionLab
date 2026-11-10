@@ -117,7 +117,7 @@ python -m pip check
 
 这是首次补充依赖的起始命令；模型卡若指定版本约束，安装时使用对应约束。已有兼容组合时直接复用，不重复升级。torch / torchvision 沿用已经通过 GPU 检查的配套版本，Pillow 用于读取图片；安装后打印 transformers 与 huggingface_hub 的实际版本并记录。
 
-创建 `scripts/run_clip.py`，用 argparse 接收必填的 `--config` 路径，在 main 中用 yaml.safe_load 读取；文件末尾加入口保护，后面第二至第五步依次接入这个 main。再创建 `configs/cv/clip_zeroshot.yaml`，字段由该脚本读取：
+创建 `configs/cv/clip_zeroshot.yaml`，字段由下面的 run_clip.py 入口读取：
 
 ```yaml
 model:
@@ -150,16 +150,7 @@ print(revision)
 
 把这次 SHA 填回配置，再将同一个 `revision` 同时传给模型与 processor 的 `from_pretrained`。LLM/VLM 也按同样方法固定各自仓库版本；后续复现读取已保存 SHA，不每次重新查询最新版本。配置里的 `id`、`dtype` 等字段需要入口解释，不能把整个 YAML 直接当作模型加载参数。
 
-最小前向验证后保存实际环境。环境检查脚本先创建输出目录，后续导出再写入该目录：
-
-```bash
-python scripts/check_environment.py --output-dir experiments/vlm_qa/week8/environments/local
-conda list > experiments/vlm_qa/week8/environments/local/conda-packages.txt
-conda list --explicit > experiments/vlm_qa/week8/environments/local/conda-explicit.txt
-python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.txt
-```
-
-在 `scripts/run_clip.py::main()` 加载模型并核对 revision 后，创建或更新 `experiments/vlm_qa/week8/model_manifest.json`：路径已存在时用 UTF-8 读取并 json.load，否则从空字典开始；将本次模型类、SHA、processor、精度和环境目录写入 manifest["clip"]，先创建父目录，再以 UTF-8 的 w 模式 json.dump(manifest,file,ensure_ascii=False,indent=2)。后两天在 infer_llm.py / infer_vlm.py 的 main() 中，分别只更新 llm / vlm 键并保留其他条目；不写入尚未运行模型的虚构结果。
+创建 `scripts/run_clip.py`，用 argparse 接收必填的 `--config` 路径，在 main 中用 yaml.safe_load 读取；文件末尾加入口保护，后面第二至第五步依次接入这个 main。
 
 先在 `scripts/run_clip.py` 顶层导入 argparse、yaml 和 pathlib.Path；定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加必填的 --config（type=Path）。main() 调用 parse_args，以 UTF-8 打开 args.config，用 yaml.safe_load 得到 cfg，再依次准备输入、创建模型、推理和保存；文件末尾添加入口保护。Day 2 的 infer_llm.py 和 Day 3 的 infer_vlm.py 分别建立相同配置入口，额外参数在各天列出。下面的配置 id / revision 用于 from_pretrained，device / dtype 需要先变为 Torch 对象，output_file 只传给结果写入逻辑，不能把 YAML 整体展开给模型构造函数。
 
@@ -250,6 +241,17 @@ clip_results.csv 每张一行，含 image_id、真实类、预测类、分数和
 
 在 `scripts/run_clip.py::main()` 完成完整 accuracy 统计后，按固定子集顺序选取最多 8 条预测错误的记录；用每条 image_id 取原始 PIL 图片，调用 plt.subplots 建立子图，逐张 imshow，并在标题标注真实类 / 预测类。先创建父目录，再 savefig 到 `experiments/vlm_qa/week8/figures/clip_mistakes.png`，保存后关闭 figure。直接显示原图，不对 PIL 再逆归一化；没有错误时在 README 记录 0 个样例。样例仅用于解释，accuracy 始终从完整 200 张计算。
 
+最小前向验证后保存实际环境。环境检查脚本先创建输出目录，后续导出再写入该目录：
+
+```bash
+python scripts/check_environment.py --output-dir experiments/vlm_qa/week8/environments/local
+conda list > experiments/vlm_qa/week8/environments/local/conda-packages.txt
+conda list --explicit > experiments/vlm_qa/week8/environments/local/conda-explicit.txt
+python -m pip freeze > experiments/vlm_qa/week8/environments/local/pip-freeze.txt
+```
+
+在 `scripts/run_clip.py::main()` 加载模型并核对 revision 后，创建或更新 `experiments/vlm_qa/week8/model_manifest.json`：路径已存在时用 UTF-8 读取并 json.load，否则从空字典开始；将本次模型类、SHA、processor、精度和环境目录写入 manifest["clip"]，先创建父目录，再以 UTF-8 的 w 模式 json.dump(manifest,file,ensure_ascii=False,indent=2)。后两天在 infer_llm.py / infer_vlm.py 的 main() 中，分别只更新 llm / vlm 键并保留其他条目；不写入尚未运行模型的虚构结果。
+
 ### 运行与自查
 
 ```bash
@@ -326,7 +328,7 @@ python -m pip freeze > experiments/vlm_qa/week8/environments/cloud/pip-freeze.tx
 
 #### 第二步：先创建配置，再加载 LLM 和 tokenizer
 
-创建 `scripts/infer_llm.py`，定义 parse_args(argv=None) 接收必填 Path 类型的 --config；main() 读取 args.config，调用 yaml.safe_load 得到 cfg，随后加载对象并遍历五个 prompt，文件末尾添加入口保护。创建 `configs/llm/llm_inference.yaml`；首次用 `HfApi().model_info("HuggingFaceTB/SmolLM2-360M-Instruct").sha` 查询完整 SHA，填入 model.revision，后续模型和 tokenizer 均传入这个固定 revision。下面是首次配置模板，null 要在加载前替换：
+创建 `configs/llm/llm_inference.yaml`；首次用 `HfApi().model_info("HuggingFaceTB/SmolLM2-360M-Instruct").sha` 查询完整 SHA，填入 model.revision，后续模型和 tokenizer 均传入这个固定 revision。下面是首次配置模板，null 要在加载前替换：
 
 ```yaml
 model:
@@ -347,6 +349,8 @@ inference:
   max_new_tokens: 128
 output_file: experiments/vlm_qa/week8/llm_outputs.jsonl
 ```
+
+创建 `scripts/infer_llm.py`，定义 parse_args(argv=None) 接收必填 Path 类型的 --config；main() 读取 args.config，调用 yaml.safe_load 得到 cfg，随后加载对象并遍历五个 prompt，文件末尾添加入口保护。
 
 在 infer_llm.py 顶层导入 torch、AutoTokenizer、AutoModelForCausalLM，在 main 读出 cfg 后执行。main() 将 cfg["inference"]["device"] 交给 torch.device，并将配置的 float32 / float16 / bfloat16 字符串按下方字典转为 Torch dtype；这里云端配置明确使用 cuda，必须先通过环境检查：
 
@@ -470,8 +474,6 @@ python scripts/infer_llm.py --config configs/llm/llm_inference.yaml
 
 #### 第一步：加载 VLM，使用真实图片和配套 processor
 
-创建 `scripts/infer_vlm.py`，顶层导入依赖，main 先解析 `--config`、`--image`、`--question`、`--smoke`，末尾添加入口保护；单图模式参数关系按第二步校验，Day 4 再添加批量 `--questions` 路径。下面的配置读取、模型加载、输入处理和生成都在这个脚本中接通。
-
 先取一张能人工查看的本地图片，按模型卡构造含 image 与 text 的消息。processor 同时生成文本和图像相关字段，打印 key、dtype、shape。
 
 将用于检查的图片准备为 `datasets/raw/vqa/example.jpg`，用 Pillow 打开并转为 RGB。该图可以作为单图开发样例，正式 Day 4 的评估图片和问题另行提前固定。创建 `configs/vlm/vlm_inference.yaml`：
@@ -493,6 +495,8 @@ output_file: experiments/vlm_qa/week8/vlm_outputs.jsonl
 ```
 
 同样先查询本模型 SHA 并填回 revision。先用兼容当前模型的 Transformers 版本创建模型与 processor；下面采用 [Idefics3 官方说明](https://huggingface.co/docs/transformers/model_doc/idefics3)中的 AutoModelForImageTextToText 接口。SmolVLM 是模型名称；该 256M 仓库的 [config.json](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct/blob/main/config.json) 声明 model_type=idefics3，因此不要仅按名称猜测具体 Python 类。实际运行以已固定 revision 的配置和所安装版本支持的接口为准，把实际模型类和库版本写入 manifest。
+
+创建 `scripts/infer_vlm.py`，顶层导入依赖，main 先解析 `--config`、`--image`、`--question`、`--smoke`，末尾添加入口保护；单图模式参数关系按第二步校验，Day 4 再添加批量 `--questions` 路径。下面的配置读取、模型加载、输入处理和生成都在这个脚本中接通。
 
 在 infer_vlm.py 顶层导入 torch、PIL.Image、AutoProcessor、AutoModelForImageTextToText；main 读出 cfg 后加载，device / dtype 与昨天相同：
 
