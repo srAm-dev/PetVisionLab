@@ -3,7 +3,7 @@
 学习指南：[第四周逐日任务](../../../docs/week4.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-Day 1 的单头演示，以及 Day 2 多头 Attention 的基础接口、形状、梯度和官方参考对照已通过 CPU 检查，结果见下方记录。后续继续接入 Mask 和 Encoder；独立解释与重写仍需本人自查。
+Day 1 的单头演示、Day 2 的多头 Attention 与官方参考对照，以及 Day 3 的 Mask 接入、手算例子和扰动测试已通过 CPU 检查，结果见下方记录。后续继续学习 Mask 参考接口的差异并实现 Encoder；独立解释与重写仍需本人自查。
 
 <a id="environment"></a>
 
@@ -67,7 +67,7 @@ python -m pip check
 
 在 `petvision` 环境从项目根目录执行 `python -m pytest tests/test_attention.py -q`，结果为 **14 passed**：一个形状与梯度测试覆盖 B=1/2、T=1/8 四组输入，九组非法构造参数被拒绝，四组 Mask 输入在执行投影前被拒绝。Day 1 演示脚本重新运行通过。
 
-第二步检查时尚未新增官方数值对照测试，随后完成的对照见下方第三步记录。Day 3 实现 Mask 后，按指南替换当前的拒绝测试。
+第二步检查时尚未新增官方数值对照测试，随后完成的对照见下方第三步记录。Day 2 的 Mask 拒绝测试已在 Day 3 替换，见下方 Mask 接入记录。
 
 ## Day 2 第三步：官方参考对照（2026-11-06）
 
@@ -86,6 +86,38 @@ Q/K/V 的 weight 和存在的 bias 按顺序拼接，复制到参考层的 in_pr
 | 投影 bias 梯度 | 1.776357e-15 |
 
 结果对应本轮固定种子和上述 CPU 设置；测试运行时会逐项打印形状、最大误差和容差。仅重跑参考对照可执行 `python -m pytest tests/test_attention.py::test_attention_reference -q -s`。本次尚未接入 Mask，也未验证 GPU 数值对照。
+
+## Day 3 第一步：Mask 接入与手算核对（2026-11-10）
+
+`MultiHeadSelfAttention.forward` 已在 scores 缩放之后、softmax 之前接入布尔 Mask，True 表示屏蔽：
+
+- 检查 attn_mask 为 `[T,T]`、key_padding_mask 为 `[B,T]`，均为布尔 Tensor，且与 scores 位于同一设备。
+- 将两种 Mask 按 OR 合并，扩展到 `[B,heads,T,T]`，用 masked_fill 将屏蔽位置设为负无穷。
+- 合并后任一 query 的所有 key 都被屏蔽时，抛出 ValueError。
+
+新增 `test_attention_causal_known_values`：B=1、T=4、C=8、heads=2，Q/K 为零，V 投影和输出投影使用单位矩阵，四个位置的输入特征分别全为 1、3、5、7。causal mask 下，两个头的权重都与指南中的逐行均分结果一致，输出特征依次为 1、2、3、4；检查使用 rtol=0、atol=1e-12。手算表和单独运行命令见[Day 3 第一步](../../../docs/week4.md#day-3)。
+
+在 `petvision` 环境运行 `python -m pytest tests/test_attention.py -q -s`，结果为 **37 passed**。检查还覆盖 causal 的未来扰动、padding 扰动、两种 Mask 合并、全屏蔽输入拒绝、非法 Mask 校验，以及已有的无 Mask 输出与梯度参考对照。合并 Mask 的合法输入能够正常反向，输入与参数梯度均为有限值。
+
+本轮为 CPU 检查，Python 3.12.15、PyTorch 2.14.1+cu130，CUDA 不可用。尚未增加带 Mask 的官方数值对照，也未运行 SDPA 语义转换或 GPU 检查。
+
+## Day 3 第三步：扰动检查（2026-11-10）
+
+完善 `test_attention_causal_mask`、`test_attention_padding_mask`、`test_attention_combined_masks` 和 `test_attention_rejects_fully_masked_query`。统一使用 B=2、T=4、C=8、heads=2、CPU float64、dropout=0、eval，随机例子固定种子 42。
+
+causal 测试将输入位置 2、3 的特征加 10，比较前两个位置的输出；padding 测试只在第一条的位置 2、3 和第二条的位置 3 加 10，分别比较前 2、3 个有效 query。两次前向共用模型和 Mask。随后使用同样的输入去掉 Mask 重算，确认扰动能实际影响被比较的输出。
+
+| 检查 | 有 Mask 的输出最大绝对差 | 无 Mask 的输出最大绝对差，约 |
+| --- | --- | --- |
+| causal，两条序列的前两个位置 | 0 | 2.072780 |
+| padding，第一条的前两个位置 | 0 | 2.072780 |
+| padding，第二条的前三个位置 | 0 | 1.824026 |
+
+输出差的检查容差为 `1e-6`。causal 与 padding 的屏蔽位置权重均为 0，每行权重和在 `1e-12` 容差内为 1。padding query 的输出不要求相同或为零。
+
+合并 Mask 后，权重形状为 `[2,2,4,4]`，屏蔽位置的最大权重为 0，行和与 1 的最大绝对差为 `2.220446e-16`；输出、输入梯度和所有参数梯度均有限。单独 attn_mask、单独 padding，以及两个合法 Mask 合并后出现全屏蔽 query 的三种输入，均按约定抛出 ValueError。
+
+运行 `python -m pytest tests/test_attention.py -q -s`，结果为 **37 passed**，其中本步骤的四类检查共六项。运行时会打印上述误差、比较形状、容差和全屏蔽错误；单独运行方法见[Day 3 第三步](../../../docs/week4.md#day-3)。
 
 ## 后续计划配置与待保存结果
 

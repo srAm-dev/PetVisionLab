@@ -37,10 +37,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, attn_mask=None, key_padding_mask=None, return_weights=False):
-        # 先拒绝尚未支持的 Mask，避免执行投影或消耗 dropout 的随机状态。
-        if attn_mask is not None or key_padding_mask is not None:
-            raise NotImplementedError("Mask 在 Day 3 接入")
-
+        """Mask 中 True 表示屏蔽，形状分别为 [T,T] 和 [B,T]。"""
         assert x.ndim == 3, "x应为3维"
         B, T, C = x.shape
         assert C == self.embed_dim
@@ -54,6 +51,39 @@ class MultiHeadSelfAttention(nn.Module):
         V = V.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
 
         scores = Q @ K.transpose(-2, -1) / math.sqrt(self.head_dim)
+
+        if attn_mask is not None or key_padding_mask is not None:
+            # 校验两张布尔表，避免错误形状被广播后悄悄参与计算。
+            for name, mask, expected_shape in (
+                ("attn_mask", attn_mask, (T, T)),
+                ("key_padding_mask", key_padding_mask, (B, T)),
+            ):
+                if mask is None:
+                    continue
+                if not isinstance(mask, torch.Tensor):
+                    raise TypeError(f"{name} 必须是 torch.Tensor")
+                if mask.dtype != torch.bool:
+                    raise TypeError(f"{name} 必须使用 torch.bool 类型")
+                if mask.shape != expected_shape:
+                    raise ValueError(f"{name} 形状必须为 {expected_shape}")
+                if mask.device != scores.device:
+                    raise ValueError(f"{name} 必须与 scores 位于同一设备")
+
+            # [B,1,T,T]：各序列分别合并规则，所有头共用同一张表。
+            blocked_mask = torch.zeros(
+                (B, 1, T, T), dtype=torch.bool, device=scores.device,
+            )
+            if attn_mask is not None:
+                blocked_mask |= attn_mask[None, None, :, :]
+            if key_padding_mask is not None:
+                blocked_mask |= key_padding_mask[:, None, None, :]
+            blocked_mask = blocked_mask.expand_as(scores)
+
+            # 整行都是 -inf 时 softmax 会产生 NaN，因此先明确拒绝。
+            if blocked_mask.all(dim=-1).any().item():
+                raise ValueError("合并 Mask 后存在没有可关注 key 的 query")
+            scores = scores.masked_fill(blocked_mask, float("-inf"))
+
         weights = torch.softmax(scores, dim=-1)
         final_hidden = self.dropout(weights) @ V
         output = self.out_proj(final_hidden.transpose(1, 2).reshape(B, T, C))

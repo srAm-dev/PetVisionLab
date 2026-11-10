@@ -370,6 +370,25 @@ query\key  0 1 2 3
 
 第 i 个位置可以看自己与过去。上三角应从 diagonal=1 开始；若把对角线也屏蔽，第一个位置将没有可关注 key。
 
+先用下面的固定例子核对这张表。令 Q、K 都为零，V 的四个位置分别为 1、3、5、7；每个位置的所有特征使用同一个值，输出投影使用单位矩阵。所有 scores 都为 0，加入 causal mask 后，每行只对允许读取的位置均分权重：
+
+| 当前 query | 允许读取的 key | softmax 权重 | 输出的每个特征 |
+| --- | --- | --- | --- |
+| 0 | 0 | `[1,0,0,0]` | `1` |
+| 1 | 0、1 | `[1/2,1/2,0,0]` | `(1+3)/2=2` |
+| 2 | 0、1、2 | `[1/3,1/3,1/3,0]` | `(1+3+5)/3=3` |
+| 3 | 0、1、2、3 | `[1/4,1/4,1/4,1/4]` | `(1+3+5+7)/4=4` |
+
+当 batch=1 时，教材按 query 提供的有效长度可写成 `valid_lens=[[1,2,3,4]]`，正好对应上表四行；本项目用上三角布尔 Mask 表达同一规则。
+
+这个例子位于 [test_attention_causal_known_values](../tests/test_attention.py)，使用 B=1、T=4、C=8、heads=2，检查两个头的完整权重和输出。在项目根目录运行：
+
+```bash
+python -m pytest tests/test_attention.py::test_attention_causal_known_values -q -s
+```
+
+输出会显示 causal mask、第一个头的权重，以及每个 token 的一个输出特征。先把它们与上表逐行对应，再进入第二步看 padding 如何作用在 key 列。
+
 #### 第二步：区分 key padding 与 query 位置
 
 padding mask `[B,T]` 扩展到 `[B,1,1,T]`，作用在 key 列。先给接口传入真实布尔 Tensor，例如 T=4 的 causal mask 用 `torch.ones((4,4), dtype=torch.bool, device=x.device).triu(diagonal=1)` 创建；两条序列的 padding mask 可用 `[[False,False,True,True],[False,False,False,True]]` 创建，并放在相同设备。
@@ -402,6 +421,17 @@ weights = torch.softmax(scores, dim=-1)
 | 全屏蔽：test_attention_rejects_fully_masked_query | 构造某个 query 没有有效 key 的输入 | 用 `pytest.raises(ValueError)` 检查约定的明确拒绝 |
 
 每个检查使用同一模型、eval、dropout=0 和两份 clone 输入。需要比较权重时通过 return_weights 取 dropout 前权重，先将 Mask `expand_as(weights)`，再检查被屏蔽位置和每行和；合法例子确保每一行至少有一个有效 key。上表检查的是 Attention 本身，后面堆叠模块还要验证 Mask 传递。
+
+causal 与 padding 测试还保留一组无 Mask 对照：使用相同模型和相同的两份输入，去掉 Mask 后重算，确认这次扰动能使被比较位置的输出发生变化。有 Mask 时的最大绝对差应不超过 `1e-6`，本例无 Mask 时应大于 `1e-6`。
+
+只运行本步骤的四类检查并查看误差，可执行：
+
+```bash
+python -m pytest tests/test_attention.py -q -s \
+  -k "test_attention_causal_mask or test_attention_padding_mask or test_attention_combined_masks or test_attention_rejects_fully_masked_query"
+```
+
+causal 打印前两个位置的输出误差；padding 分别打印两条序列有效位置的误差；合并 Mask 打印屏蔽位置的最大权重、行和误差与有限梯度检查结果；全屏蔽测试分别验证单独 attn_mask、单独 padding，以及仅在合并后出现全屏蔽的情况。四类检查共六项，实际结果记入[第四周实验记录](../experiments/transformer_encoder/week4/README.md)。
 
 #### 第四步：和参考对照时转换语义
 
