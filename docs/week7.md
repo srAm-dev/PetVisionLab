@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week7/README.md)。
 
-更新日期：2026-11-06。
+更新日期：2026-11-10。
 
 ## 本周文件
 
@@ -115,7 +115,7 @@ UTF-8 中 a=97、b=98，初始序列为 `[97,98,97,98]`。相邻 pair 中 `(97,9
 
 新 token 保存两个旧 token 的组合及其 bytes，不是将整个文本临时映射为任意编号。
 
-#### 第二步：区分统计与实际替换
+#### 第二步：用 aaaa 和 caba 核对重叠计数、替换与同频规则
 
 `aaaa` 的相邻 aa 统计为 3 次，但一次从左到右非重叠合并会产生两个新 token。替换函数应边匹配边前移两个位置，不能重叠使用同一个字符。
 
@@ -123,7 +123,7 @@ UTF-8 中 a=97、b=98，初始序列为 `[97,98,97,98]`。相邻 pair 中 `(97,9
 
 对 `aaaa`，初始 ID 为 `[97,97,97,97]`；将 `(97,97)` 合并为 256 后，结果应为 `[256,256]`。计数 3 与替换 2 次描述的是不同操作，不能因为计数为 3 就输出三个 256。可分别断言 pair 次数、替换结果和解码结果，避免一种错误被另一种错误掩盖。
 
-#### 第三步：明确三个基础函数
+#### 第三步：实现 count_pairs、merge_pair 和字节 decode
 
 ```python
 def count_pairs(ids): ...
@@ -153,7 +153,7 @@ ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in 
 
 先对短整数列表逐项核对，再将这些函数组合进 tokenizer 类。空串和单 token 没有 pair，应正常返回。
 
-#### 第四步：理解 bytes 与字符的区别
+#### 第四步：测试完整中文字节与不完整 UTF-8 的解码
 
 例如 Python 字符串 `'x\t中🙂'` 中 `\t` 表示一个 Tab，整个字符串有 4 个 Unicode 字符、UTF-8 共 9 字节。某个 token 的 bytes 可能只是一个多字节字符的一部分，解码必须先拼完整 bytes。
 
@@ -207,7 +207,7 @@ python -m pytest tests/test_tokenizer.py -q
 5. 调用 merge_pair 更新当前 ID 列表，然后回到第三步，对更新后的序列重新统计；不要重复使用第一轮的频率。
 6. 用 `abab`、目标 V=258 手算并运行，确认依次形成 256 和 257；用空串确认能提前停止。短例子通过后，才由 train_tokenizer.py 传入正式训练子集并保存文件。
 
-#### 第二步：encode 使用已有规则
+#### 第二步：按 merge rank 实现 encode，并保存加载规则
 
 对新文本不重新统计频率训练词表；根据已保存 merge rank，从优先级高的规则开始应用。相同文本和相同规则必须得到相同 ID。
 
@@ -223,7 +223,7 @@ JSON 中 merge 顺序就是规则优先级，加载时保留原顺序。词表�
 
 补两个边界：vocab_size 小于 256 时明确报错；空串或单字节文本没有 pair，训练后保留 256 个基础 token，实际合并数为 0。正常训练的 V 为 `256+实际合并数`，不能因目标写 512 就创建不存在的 ID。
 
-#### 第三步：逐条做严格往返检查
+#### 第三步：测试空白、Unicode 往返和 strict / replace 解码
 
 ```python
 cases = ['', ' ', '  a  ', '\t\n', '中文', '🙂', 'hello 中文🙂\n']
@@ -231,9 +231,7 @@ for text in cases:
     assert tokenizer.decode(tokenizer.encode(text), errors="strict") == text
 ```
 
-再保存、重新加载并对每条文本比较 ID 和解码。不要用 strip、忽略无效字节或归一化空白把检查变成伪通过。
-
-#### 第四步：区分往返检查和模型生成展示
+将上面的 cases 放进 test_bpe_roundtrip，逐条检查。再在 test_bpe_save_load 中保存、重新加载，对每条文本比较 ID 列表与 strict 解码结果；空格、Tab 和换行逐字符相同。不要用 strip、忽略无效字节或归一化空白绕过检查。
 
 encode 得到的 ID 来自可严格编码为 UTF-8 的原文本，往返用 `decode(ids, errors="strict")` 检查，必须保持原文；默认 decode 的替换策略用于模型生成，与 minbpe 一致。生成时先保留完整 IDs 与拼接后的 raw_bytes，再尝试 strict 解码以记录 decode_ok；失败时用默认 decode 展示替换字符，同时保存 raw_bytes_hex。给同一组无效字节分别检查 strict 报错与默认替换，不能用 errors="ignore" 或 strip 掩盖问题。
 
@@ -265,7 +263,7 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 
 先以同一个字符 GPT 和固定 prompt/seed 比较两组采样参数；BPE 生成在 Day 5 再接入，届时保留原始 token IDs 和解码状态。
 
-#### 第一步：用四个 logits 理解采样顺序
+#### 第一步：手算温度缩放、top-k 过滤和 softmax 概率
 
 原 logits=`[2,1,0,-1]`，temperature=0.5 后为 `[4,2,0,-2]`，top-k=2 后为 `[4,2,-inf,-inf]`，概率约 `[0.8808,0.1192,0,0]`。
 
@@ -273,7 +271,7 @@ temperature=2 时分布更平缓；top-k 按第 k 高分设阈值，保留大于
 
 temperature 是正数缩放参数，先计算 `scaled_logits=logits/temperature`：小于 1 放大分数差距，大于 1 缩小差距，等于 1 保持原分数。本例 top_k=2 的阈值没有并列，因此保留两个候选；k 控制候选过滤，不是生成 token 的数量。其余分数设为 -inf 后 softmax 概率为 0。最后按概率随机抽取一个 ID，例如用 `torch.multinomial(probabilities, num_samples=1)`；它不等同于每次都取最大概率的 argmax。温度不要与第六周表示序列长度的 T 混用。
 
-#### 第二步：将采样与模型前向分开
+#### 第二步：实现 filter_logits、sample_next_token 并测试边界
 
 修改已有 `scripts/generate.py`，在文件顶层定义下方 `sample_next_token(last_logits,temperature=1.0,top_k=None)` 和 `filter_logits(last_logits,temperature=1.0,top_k=None)`，模型加载与生成调用仍在 main 内。创建 `tests/test_sampling.py`，测试函数声明 monkeypatch 参数（例如 `def test_sampling_seed(monkeypatch):`），在函数内用 `monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))` 临时加入脚本目录，再 `from generate import sample_next_token` 并导入 filter_logits；Path 从 pathlib 导入。沿用入口保护，导入函数不加载模型或生成样例，不永久修改训练入口的 sys.path。
 
@@ -302,11 +300,9 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 
 测试覆盖 temperature=0/负数/NaN/无穷大、top_k=0/负数/非整数的 ValueError；top_k=None、V、V+1 都不删项，并列阈值例子保留三项；最高 logit 唯一时，top_k=1 的 ID 与 argmax 一致。相同 seed 的复现检查在每次采样前重新设 seed，比较一串结果完全相同，不要求两次连续消费同一随机流后仍得到同一结果。
 
-#### 第三步：复现时固定全部条件
+#### 第三步：固定参数生成两组样例，再核对相同设置的 IDs
 
-固定 checkpoint、tokenizer、prompt、context、生成长度、temperature、top-k、seed 和运行环境。模型切 eval；采样随机性由 seed 控制，不由 dropout 制造。
-
-#### 第四步：比较两组真实样例
+先运行下方两条生成命令，将 checkpoint、tokenizer、prompt、context、生成长度、temperature、top-k、seed 和环境写入对应记录。然后选定其中一组，在新进程用完全相同参数再运行，读回两条记录并比较新增 token ID 列表，要求逐项相同。模型保持 eval；采样随机性由 seed 控制。
 
 按本周约定生成两组，不挑最好的一段替换完整输出。记录重复、连贯性和格式变化；同 seed 在不同采样分布下可能得到不同文本，这本身是实验现象。
 
@@ -345,7 +341,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 
 今天只在临时目录检查 40 步与 20+20 步恢复，使用固定的 C=32、context=16、batch=4、CPU FP32、dropout=0 小模型和教学 token。它不依赖 `mini_gpt_bpe.yaml` 或 `outputs/mini_gpt_bpe/last.pt`；正式 BPE 训练在 Day 5 开始。
 
-#### 第一步：明确保存发生在哪个时刻
+#### 第一步：在训练入口加入 resume 参数和完整 checkpoint 分支
 
 修改 `scripts/train_gpt.py::parse_args`，新增 `--resume`（type=Path，默认 None）。修改本文件 main()：在验证完成、更新 best 与日志累计值后，按下一步字段表构造完整 checkpoint，再调用 `src/petvision/utils/checkpoint.py` 已有的 save_checkpoint；在 main() 的对象构造阶段增加 resume 分支，先调用 load_checkpoint 核对配置，再创建并恢复模型、optimizer 和随机状态，最后进入统一循环。utils/checkpoint.py 的 save_checkpoint / load_checkpoint 继续只负责字典读写及 CPU、weights_only=True 加载，不把模型选择或训练循环放进去。
 
@@ -357,7 +353,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 恢复：新建对象 → 加载状态 → 更新 21..40
 ```
 
-#### 第二步：分清状态的用途
+#### 第二步：保存并恢复模型、优化器、日志与随机状态
 
 模型参数决定当前预测；optimizer 的动量/矩估计决定下一步如何更新；scheduler 决定学习率；随机状态决定下一批采样和 dropout。tokenizer 与 split 标识决定 ID 和数据含义。
 
@@ -438,9 +434,7 @@ sample_batch 当前只返回 x/y，没有返回起点。测试中若要核对起
 
 因此今天增加完整恢复状态时，要把第六周循环里的 checkpoint 调用移到区间累计清零之后，再构造完整字典。资源统计也区分本进程 segment_seconds 与各段累计 train_seconds，恢复时接上 checkpoint 保存的累计值；若只测了恢复后的这一段，报告为该段耗时，不能标成完整训练时间。峰值显存记录各段峰值，汇总取最大值，不把不同进程的峰值相加。
 
-#### 第四步：解释总步数语义
-
-steps 是累计目标。last 已完成 500 步，目标为 1000 时再更新 500 步；若目标也是 500，应直接结束。验证不能消费训练采样随机流，恢复后先确认 step 与下一批位置。
+恢复到 40 步之前先保留第 20 步 last 的副本。在同一测试的独立临时目录补一个停止边界：用这个副本恢复，累计目标也设为 20，断言不再调用 train_step，history 和 checkpoint 不被改写。steps 是累计目标：last 已完成 500 步、目标 1000 时再更新 500 步，目标仍为 500 时直接结束。验证不能消费训练采样随机流，恢复后核对 step 与下一批位置。
 
 ### 运行与自查
 
@@ -467,7 +461,7 @@ python -m pytest tests/test_resume.py -q
 
 ### 操作步骤
 
-#### 第一步：新 tokenizer 对应新模型词表
+#### 第一步：接入 load_tokenizer，用实际 BPE 词表新建并训练 GPT
 
 读取 bpe_tokenizer.json 的实际 V，重新创建 embedding 和输出 head，再从零训练整个小 GPT。字符 ID 与 BPE ID 含义不同，不能直接把字符模型的同号行解释为同一内容。
 
@@ -520,13 +514,15 @@ output_dir: outputs/mini_gpt_bpe
 
 恢复前核对 tokenizer、split、模型结构与训练设置；以原正式配置的累计目标继续，不能通过改词表或改模型结构套用旧 last。验证及最终测试沿用[第六周窗口规则](week6.md#eval-windows)，各自完整统计 N-1 个目标。
 
-#### 第二步：相同 token 预算不等于相同原文预算
+#### 第二步：在训练日志累计输入 token 数与 UTF-8 字节数
 
 context=128 在字符模型中约为 128 个已编码字符，在 BPE 中可能覆盖更多原文。报告实际 token 数与 UTF-8 字节数，解释比较范围。
 
+在 scripts/train_gpt.py 的 main 中，与区间 NLL 统计一起累计每个实际训练批次的输入 token / bytes，并写入 run_summary。恢复训练时将这两个累计值与其他训练统计一起保存、恢复，不从本进程重新计零。
+
 累计训练输入 token 数按每批 `x.numel()` 统计；BPE 的处理 bytes 数按输入 ID 对应的 vocab bytes 长度求和，重复采样重复计数，不包括只作为目标而未进入 x 的额外 token。静态训练文件大小、累计处理量和生成输出大小分列，避免把整个语料长度当作本次模型实际看过的字节数。
 
-#### 第三步：编码对照只改变 tokenizer
+#### 第三步：实现 compare_tokenizers，编码同一原文并保存两行结果
 
 创建 `scripts/compare_tokenizers.py`，顶层导入 Path、csv、hashlib、time，以及 `from petvision.models.llm.tokenizer import load_tokenizer`。main 读取第六周同一份 val.txt 和两份已保存的 tokenizer；文件末尾加入口保护，以下编码、计时和 CSV 保存都由该入口执行。
 
@@ -541,7 +537,7 @@ context=128 在字符模型中约为 128 个已编码字符，在 BPE 中可能�
 
 将两行实际结果用 csv.DictWriter 保存到 `experiments/mini_gpt/week7/tokenizer_comparison.csv`，创建父目录并写入表头；读取后核对两个 tokenizer 标识、相同原文 hash 和实际行数。这个文件记录编码实验，不能用生成耗时填入 mean_encode_seconds。
 
-#### 第四步：把不同指标分开解释
+#### 第四步：保存 BPE 曲线与生成耗时，分别报告两种词表的 loss
 
 BPE 验证 loss 单独报告，不能因数字低于字符 loss 就断言更好。比较生成耗时时注明同样 prompt、生成 token 数及实际输出字节数；token/s 依赖 tokenizer。
 
@@ -603,7 +599,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 建议给 --split 默认 val；未开启 evaluate-only 时传 --checkpoint 应报错，避免误以为它会恢复训练。只评估分支在 main 中先执行并 return，再进入新训练 / resume 分支。把本次真实结果保存到所选配置的 `experiment_dir/{split}_metrics.json`，字段包含 model、checkpoint、checkpoint_step、tokenizer_hash、split_hash、split、n_target_tokens、loss 和窗口规则。三组分别写自己的目录，再在本周 README 链接它们；结果保存只涉及评估文件，不改训练 config、history 或权重。
 
-#### 第二步：报告四项证据
+#### 第二步：汇总测试、编码、采样和续训结果，列出待补项
 
 在本周 README 的周总结中依次完成以下四项，每项先取实际产物再写结论：
 
@@ -614,11 +610,9 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 逐项加上实际配置或结果链接；缺一项就标记待补，不把代码文件存在等同于已经运行通过。
 
-#### 第三步：有限参考解释关键实现
+#### 第三步：在短输入上重算 BPE、采样，并解释续训状态
 
-用短文本手算一次 merge，说明同频规则；用一组 logits 说明温度/top-k；列出恢复训练状态并解释少一个会怎样。
-
-#### 第四步：整理仍未通过的点
+在草稿中重新统计 abab / aaaa 的 pair 并执行一次非重叠合并，实际核对前面的结果；再对 `[2,1,0,-1]` 依次做温度缩放、top-k 和 softmax，核对保留项与概率。最后按续训状态表逐项说明作用，重点结合第 21 步批次和参数差解释模型、optimizer、Generator 的影响。将运行结果和仍答不出的点写入本周 README。
 
 如果 Unicode 往返、续训一致性或指标口径仍不清楚，记录具体失败输入和下一步。更多语料、上下文长度和 tokenizer 产品化放入后续路线。
 

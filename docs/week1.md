@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/basics/week1/README.md)。
 
-更新日期：2026-11-06。
+更新日期：2026-11-10。
 
 ## 本周文件
 
@@ -221,7 +221,7 @@ python scripts/numpy_basics.py
 
 <a id="day-2"></a>
 
-## Day 2：掌握数组形状，并写一个小类
+## Day 2：检查数组形状并实现 LinearModel
 
 ### 阅读范围
 
@@ -613,7 +613,7 @@ python scripts/linear_regression_numpy.py
 | [D2L 11.3：梯度下降](https://zh.d2l.ai/chapter_optimization/gd.html) | 一维梯度下降与学习率影响，选读相关图示 |
 | [csv（官方中文）](https://docs.python.org/zh-cn/3.12/library/csv.html) | DictWriter、writeheader、writerows、newline |
 
-### 第一步：创建 scripts/gradient_check.py
+### 第一步：在 scripts/gradient_check.py 逐参数比较解析梯度与数值梯度
 
 从同目录的 `linear_regression_numpy.py` 导入 generate_data、predict、mse、gradients。使用固定的 5 条样本、非零 w 与 b，数据采用 float64，逐个检查两个权重和一个偏置。
 
@@ -632,7 +632,7 @@ epsilon = 1e-6
 
 在这个小型、float64 的练习中，可把最大绝对误差小于 `1e-5` 作为检查目标。未通过时先检查 MSE 的 1/N、系数 2、参数恢复与标签 shape。
 
-### 第二步：完成学习率对照
+### 第二步：运行三组学习率并保存曲线与结果表
 
 创建 `scripts/learning_rate_comparison.py`，顶层写 `from linear_regression_numpy import generate_data, train`。在本文件的 main() 中执行一次 `X, y, _, _ = generate_data(seed=42,n_samples=200)`；该函数返回四项，这里只使用前两项数据。随后把同一份 X、y 传给三次 train 调用；不修改 `scripts/linear_regression_numpy.py` 的训练函数。
 
@@ -679,7 +679,7 @@ experiments/basics/week1/figures/learning_rates.png
 
 这三组学习率不预先对应“慢、合适、发散”。比较各组曲线达到相同 loss 水平所需的步数，以及 500 步后的实际结果，再将观察写入本周 README。学习率是否过大取决于损失曲面、特征尺度与当前更新规则，不能只看数值是否大于 0.1。
 
-### 第三步：创建 scripts/linear_regression_rewrite.py
+### 第三步：在 scripts/linear_regression_rewrite.py 重写并核对训练结果
 
 关掉已有训练脚本，保留纸上的公式与函数清单，重新写出：
 

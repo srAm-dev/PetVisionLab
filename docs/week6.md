@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week6/README.md)。
 
-更新日期：2026-11-06。
+更新日期：2026-11-10。
 
 ## 本周文件
 
@@ -108,8 +108,6 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 
 划分记录保存到 `experiments/mini_gpt/week6/split_manifest.json`，第七周继续使用同一份文件；保留原文空白和换行。
 
-#### 第一步：区分原文、字符和 token
-
 原文是字符串；字符 tokenizer 把每个已知字符映射为整数 ID；模型接收 ID，并不会直接读取 Python 字符串。空格和换行也是训练内容。
 
 ```text
@@ -121,7 +119,7 @@ Bigram 与 GPT 使用相同 tokenizer 文件、数据划分、context=128、batc
 
 实际映射只来自训练文本，排序后保存，不能每次运行重新按集合遍历顺序编号。另保留 UNK 处理未见字符。
 
-#### 第二步：先划分原文再构造窗口
+#### 第一步：实现 split_text，保存三份原文和划分 manifest
 
 创建 `src/petvision/data/text.py`，将按字符边界切分的逻辑封装为 `split_text(text)`，返回 train_text、val_text、test_text 三个字符串；明天继续在同一模块加入窗口函数。创建 `scripts/prepare_text.py`，从 `petvision.data.text` 导入 split_text，在 main 中读取原文、调用切分、保存文本和 manifest，末尾添加入口保护。下载与文件写入由脚本执行，导入数据模块不自动下载。
 
@@ -149,7 +147,7 @@ used_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 在 `scripts/prepare_text.py::main()` 写出 train.txt / val.txt / test.txt 后，将来源、边界和 hash 组织成 manifest 字典；先创建 `experiments/mini_gpt/week6/`，再用 `Path(.../split_manifest.json).open("w",encoding="utf-8")` 打开文件，调用 `json.dump(manifest,file,ensure_ascii=False,indent=2)` 保存。记录前面计算出的实际字符数和各 split 长度，保存后读回核对三个区间连续、总长为 L。
 
-#### 第三步：写出 tokenizer 的最小接口
+#### 第二步：实现并保存 CharTokenizer
 
 创建 `src/petvision/models/llm/` 和空的 `__init__.py`，再创建 `src/petvision/models/llm/tokenizer.py`，将下面的类与 JSON 读写实现写进该文件。在 prepare_text.py 顶层用 `from petvision.models.llm.tokenizer import CharTokenizer` 导入，数据准备脚本只调用它，不再定义另一套字符映射。
 
@@ -178,7 +176,7 @@ load 是类方法：它从 JSON 读回 chars，用 `cls(chars)` 创建同一种 
 5. load 先核对 type/version，再用保存的 chars 重建对象，核对 unk_id；不重新扫描 train.txt，也不改变列表顺序。
 6. 先检查已知短串的编码与往返，再单独加入 `?` 检查 UNK。最后对保存前后的两个对象编码同一输入，要求 ID 列表逐项相同。
 
-#### 第四步：检查保存后的同一性
+#### 第三步：重载词表，比较编码并统计 OOV
 
 重新加载 JSON，编码同一短文本，ID 序列应一致；保存词表大小与文件 hash，后续 checkpoint 按这个标识加载。
 
@@ -232,7 +230,7 @@ y：                 [1,2,3]
 
 调用者在训练开始前创建一次独立 CPU `torch.Generator().manual_seed(42)` 并持续传入，不能每批重新创建或重设种子。输入与 target 都为 long，模型参数是浮点数。本周训练直接从 token 序列取窗口，不需要套用图像 DataLoader。
 
-#### 第二步：理解 Bigram 的能力边界
+#### 第二步：实现 BigramLanguageModel 并检查前反向
 
 创建 `src/petvision/models/llm/bigram.py`，顶层写 `from torch import nn`，在其中实现下述 BigramLanguageModel；在 `tests/test_language_model.py` 顶层从 `petvision.models.llm.bigram` 导入 BigramLanguageModel，新增 `test_bigram_forward_backward`：用 V=8、B=1/2、T=4 的合法 long ID 检查 `[B,T,V]` 输出，展平后计算交叉熵并 backward，断言 Embedding 参数梯度非 None 且有限。
 
@@ -240,7 +238,7 @@ Embedding(V,V) 可视为一张转移 logits 表，当前 token ID 取出一行�
 
 Embedding 是可学习的查找表：第一个 V 是“有多少行可供 ID 索引”，第二个 V 是“每行有多少个数”。假设 V=4，输入 ID=2 就取表的第 2 行，得到对下一 token 为 0、1、2、3 的四个 logits；不是把数字 2 乘上权重。输入 `[B,T]` 的每个 ID 都取一行，结果为 `[B,T,V]`。这里特意让每行宽度等于 V，以便直接作为分类分数；GPT 的 token embedding 则为 Embedding(V,C)，先取 C 维特征，再经网络输出 V 维分数。
 
-#### 第三步：把交叉熵维度整理清楚
+#### 第三步：展平 logits 与目标，计算下一 token 交叉熵
 
 ```text
 输入 x / 目标 y      [B,T]，整数 ID
@@ -249,7 +247,7 @@ loss 输入 logits     [B*T,V]
 loss 输入 target     [B*T]
 ```
 
-每个位置是一个 V 分类问题。目标 ID 范围必须在 0..V-1，不能先对 logits 做 softmax 再传给 CrossEntropyLoss。
+在本日 test_bigram_forward_backward 中实际执行这两次 reshape，把原始 logits 和展平后的目标传给 CrossEntropyLoss，检查 loss 为有限标量后反向。每个位置是一个 V 分类问题，目标 ID 范围必须在 0..V-1；交叉熵直接接收 logits。
 
 例如 B=2、T=3、V=4：logits 为 `[2,3,4]`，targets 为 `[2,3]`；展平后分别为 `[6,4]` 和 `[6]`，相当于一次评估六个“四选一”问题。`reshape(-1,V)` 只合并 batch 和位置两轴，不合并词表轴；`targets.reshape(-1)` 使用相同顺序，保证每个位置与自己的下一 token 标签对应。
 
@@ -418,15 +416,7 @@ depth 个 causal GPTBlock     [B,T,C]
 
 位置 ID 为 0..T-1，输入 T 不超过 context_length；head 的 V 来自 tokenizer，不与上下文长度混用。训练 loss 继续由训练器根据 logits 和 targets 计算。
 
-#### 第二步：先检查一个位置能看到什么
-
-位置 i 只能使用 x 的 0..i；它的 target 是下一 token。训练一次前向能并行计算所有位置，是因为 mask 保证不会提前读取未来输入。
-
-修改后缀时比较前缀 logits；检查应在 eval 且关闭 dropout 下进行。不要因随机 dropout 让同一输入输出不同而误判为因果泄漏。
-
-取 B=2、T=8、k=3，把一份整数输入 clone 后，仅将 `[:,4:]` 改为 `(原ID+1) % V`。两次使用同一 eval 模型，比较 logits 的 `[:,:4]`，最大绝对差以 `1e-6` 为起始容差；取模保证扰动仍是合法 ID。另检查 T=1 能前向、T 超过 context 时明确报错，避免固定长度演示掩盖位置越界。
-
-#### 第三步：给 forward 和 loss 分工
+#### 第二步：完成 MiniGPT.forward，并检查形状、梯度与 Block 参考结果
 
 ```python
 def forward(self, token_ids):
@@ -454,6 +444,14 @@ for block in self.blocks:
 2. 在 torch.no_grad 下，把自写 q_proj / k_proj / v_proj 的 weight 按 dim=0 拼接后复制到 reference.self_attn.in_proj_weight，bias 也按 Q/K/V 顺序拼接；out_proj 单独复制。再把 norm1/norm2 的 gamma/beta 复制到参考 norm1/norm2.weight/bias，两个 FFN Linear 对应 linear1/linear2。
 3. 两边输入数值相同的独立 `[B,T,C]` 叶子 Tensor，传相同布尔 causal mask；参考的 Mask 参数名为 src_mask。使用同一固定 probe 反向，比较输出、输入梯度和对应参数梯度，最大绝对差以 1e-6 为目标。
 4. 将自写 Block 的 dropout 改为 0.1，检查 Attention 权重、Attention 投影输出、FFN 输出三处 dropout 均已注册并随 train/eval 切换；另外检查 MiniGPT 的 embedding dropout。非零 dropout 不做两套实现的逐值随机输出比较。
+
+#### 第三步：扰动后缀，检查 GPT 前缀 logits 不变
+
+位置 i 只能使用 x 的 0..i；它的 target 是下一 token。训练一次前向能并行计算所有位置，是因为 mask 保证不会提前读取未来输入。
+
+修改后缀时比较前缀 logits；检查应在 eval 且关闭 dropout 下进行。不要因随机 dropout 让同一输入输出不同而误判为因果泄漏。
+
+取 B=2、T=8、k=3，把一份整数输入 clone 后，仅将 `[:,4:]` 改为 `(原ID+1) % V`。两次使用同一 eval 模型，比较 logits 的 `[:,:4]`，最大绝对差以 `1e-6` 为起始容差；取模保证扰动仍是合法 ID。另检查 T=1 能前向、T 超过 context 时明确报错，避免固定长度演示掩盖位置越界。
 
 #### 第四步：先拟合短文本
 
@@ -503,7 +501,7 @@ python -m pytest tests/test_language_model.py -q
 
 ### 操作步骤
 
-#### 第一步：训练与验证各用独立采样状态
+#### 第一步：接通训练循环，分开管理训练采样与完整验证
 
 修改已有 `scripts/train_gpt.py`，接通累计 step 循环、定期验证、日志和保存；按需要复用或扩展 `src/petvision/utils/checkpoint.py` 的磁盘读写函数。`src/petvision/training/lm_trainer.py` 继续负责单步更新和完整验证，不能把这些函数另写进模型文件。
 
@@ -511,7 +509,7 @@ python -m pytest tests/test_language_model.py -q
 
 train_step 每次更新前切 train；evaluate_lm 临时切 eval 并关闭梯度，退出时恢复调用前的模式，避免首次验证后 dropout 一直关闭。两组各自从新模型、优化器和 Generator 起步。
 
-#### 第二步：同口径比较两个模型
+#### 第二步：按相同验证窗口训练 Bigram 和 GPT，保存逐步日志
 
 Bigram/GPT 共享 tokenizer JSON、split manifest、验证窗口规则和 token loss 定义。每组独立创建模型、优化器和采样状态，记录参数量和实际训练预算。
 
@@ -605,13 +603,23 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 
 ### 操作步骤
 
-#### 第一步：只取最后位置的分布
+#### 第一步：创建 generate.py，从 checkpoint 重建模型与 tokenizer
 
-创建 `scripts/generate.py`，顶层导入 argparse、json、Path、torch、CharTokenizer、BigramLanguageModel 和 MiniGPT。在 main 中解析任务概览列出的五个参数，按第二步从 checkpoint 重建对象，再调用本步生成循环和第三步的 JSONL 保存逻辑；文件末尾添加入口保护。只导入脚本不会加载权重或自动生成文本。
+创建 `scripts/generate.py`，顶层导入 argparse、json、Path、torch、CharTokenizer、BigramLanguageModel 和 MiniGPT。在 main 中解析任务概览列出的五个参数，按本步从 checkpoint 重建对象，再调用第二步生成循环和第三步的 JSONL 保存逻辑；文件末尾添加入口保护。只导入脚本不会加载权重或自动生成文本。
+
+新进程读取结构、context 与 tokenizer，创建模型并加载；固定 seed，在 eval/no_grad 下生成。脚本不应依赖训练程序内存中的对象。
+
+generate.py 的 main 按以下顺序接入：load_checkpoint(args.checkpoint) → 核对 tokenizer 文件 hash → CharTokenizer.load → 核对 tokenizer.vocab_size 与 checkpoint.vocab_size → 根据 model_config.name 新建 Bigram 或 MiniGPT → 严格 load_state_dict → 迁移设备并 eval。MiniGPT 的 heads 仍映射为构造参数 num_heads；context_length 从 checkpoint 读取，不在生成脚本另写 128。main() 用 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 选择设备并打印，再执行 model.to(device)；本次设备不要求与 checkpoint 记录的训练设备相同。
+
+若后续把 main 中的循环抽成函数，可约定 `generate_ids(model, prompt_ids, context_length, max_new_tokens, device)`，返回完整 token ID 列表；抽取时将循环里的 args 字段改为函数参数，编码与参数解析仍由 main 完成。下方 JSONL 记录还要写实际 device / dtype、prompt 的 OOV 数；第七周再将加载替换为按 tokenizer 类型分派的入口。
+
+重建和加载模型会涉及初始化，因此生成复现用的 seed 在模型加载完成后、采样开始前重新设置。保存前与加载后的两次生成都从相同 prompt 和 seed 开始，比较完整新增 token ID 列表完全一致；以原始 ID 列表核对生成是否一致。
+
+#### 第二步：实现最后位置采样与逐 token 生成循环
 
 生成给定前缀后的下一个 token 时，模型返回 `[B,T,V]`，使用 `logits[:, -1, :]` 得到 `[B,V]`；其他位置对应前缀内部的预测。
 
-先从 checkpoint 还原模型、tokenizer 和 context_length，按第二步说明在加载后重新设置生成 seed。然后把非空 prompt 编码成 `[1,T]` 的 long Tensor；下面片段先放在 generate.py 的 main 中，args 已由 parse_args 得到：
+先从 checkpoint 还原模型、tokenizer 和 context_length，按第一步说明在加载后重新设置生成 seed。然后把非空 prompt 编码成 `[1,T]` 的 long Tensor；下面片段先放在 generate.py 的 main 中，args 已由 parse_args 得到：
 
 ```python
 prompt_ids = tokenizer.encode(args.prompt)
@@ -632,19 +640,9 @@ with torch.no_grad():
 
 先用 3 个已知 prompt ID、max_new_tokens=5 检查最终保留 8 个 ID，前 3 个仍与 prompt 相同；再构造长于 context 的前缀，检查每次送入 forward 的长度不超过 context，累积结果仍持续增长。示例 prompt 必须非空；空 prompt 在本轮明确提示需要输入，避免索引最后位置失败。
 
-#### 第二步：用 checkpoint 还原完整配套信息
-
-新进程读取结构、context 与 tokenizer，创建模型并加载；固定 seed，在 eval/no_grad 下生成。脚本不应依赖训练程序内存中的对象。
-
-generate.py 的 main 按以下顺序接入：load_checkpoint(args.checkpoint) → 核对 tokenizer 文件 hash → CharTokenizer.load → 核对 tokenizer.vocab_size 与 checkpoint.vocab_size → 根据 model_config.name 新建 Bigram 或 MiniGPT → 严格 load_state_dict → 迁移设备并 eval。MiniGPT 的 heads 仍映射为构造参数 num_heads；context_length 从 checkpoint 读取，不在生成脚本另写 128。main() 用 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 选择设备并打印，再执行 model.to(device)；本次设备不要求与 checkpoint 记录的训练设备相同。
-
-若后续把 main 中的循环抽成函数，可约定 `generate_ids(model, prompt_ids, context_length, max_new_tokens, device)`，返回完整 token ID 列表；抽取时将循环里的 args 字段改为函数参数，编码与参数解析仍由 main 完成。下方 JSONL 记录还要写实际 device / dtype、prompt 的 OOV 数；第七周再将加载替换为按 tokenizer 类型分派的入口。
-
-重建和加载模型会涉及初始化，因此生成复现用的 seed 在模型加载完成后、采样开始前重新设置。保存前与加载后的两次生成都从相同 prompt 和 seed 开始，比较完整新增 token ID 列表完全一致；以原始 ID 列表核对生成是否一致。
-
 <a id="jsonl-output"></a>
 
-#### 第三步：保存可解释的样例
+#### 第三步：向 samples.jsonl 追加设置、原始 IDs 和生成文本
 
 samples.jsonl 每行记录 model、checkpoint、tokenizer_hash、prompt、seed、生成设置和原始文本。角色名等短 prompt 要先确认属于字符词表。
 
@@ -695,7 +693,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 
 ### 操作步骤
 
-#### 第一步：核对最终验证表
+#### 第一步：读取两组 best 的验证结果，保存对照表并分析样例
 
 在 Python 草稿或交互环境读取 Bigram / MiniGPT 各自的 best checkpoint、history.csv、run_summary.json 和配置，为两组分别建立一个结果字典。字段包含 model、tokenizer_hash、split=val、best_step、val_loss、val_target_tokens、实际完成 steps、params、train_seconds、config、checkpoint；最佳验证值与目标数取自同一个 best 时点。创建 `experiments/mini_gpt/week6/` 后，以 w 模式、UTF-8、newline="" 打开 results.csv，用 csv.DictWriter 写表头和两行真实记录，再读回核对模型名称和来源。不从测试集取值，也不分别挑选不同验证时点的数据。
 
@@ -705,21 +703,19 @@ model、tokenizer_hash、val_loss、steps、params 和时间都对应实际运�
 
 例如某个正确目标的预测概率为 0.5，它贡献的 NLL 为 `-ln(0.5)≈0.6931`。先把全部有效目标的 NLL 相加并除以目标数，得到平均 loss，再算 `PPL=exp(loss)`；不是分别计算各窗口 PPL 后取平均。若平均 loss 恰为 ln(2)，PPL 就为 2。不同 tokenizer 的预测单位不同，不能直接把字符 PPL 与 BPE PPL 的大小解释为谁更好。
 
-#### 第二步：解释模型实际学到了什么
-
 把 loss 差异、生成例子与架构联系起来：Bigram 只依赖当前 token，GPT 使用因果前缀。也说明小数据、单种子与有限预算的限制。
 
 相同 tokenizer 和验证窗口保证两组指标可直接比较；相同 steps、batch 和 context 约束训练输入量，但两组参数量、计算量和收敛速度仍不同。这是一次基线比较，不能从一次输赢证明某种架构普遍更好。若 GPT 表现较差，先展示因果性、小批过拟合、完整验证和保存加载的检查结果，再结合曲线讨论欠拟合或过拟合；额外实验另存配置与结果，不覆盖首轮记录。
 
-#### 第三步：有限参考写出三个核心片段
+#### 第二步：重写错位窗口、交叉熵展平和生成循环
 
 写 T+1 片段如何得到 x/y、CrossEntropy 的 reshape、逐 token 生成循环。先标 shape，再写操作，不需要再复制整个训练工程。
 
 用草稿实际生成 `[0,1,2]→[1,2,3]` 的错位对，检查展平后的 loss 为有限标量；再让草稿生成循环追加 5 个 token，确认输入只截断上下文、完整输出长度仍增加 5。已有模型测试之外，这三段重写也要被调用核对。
 
-#### 第四步：为 BPE 和续训保留边界
+#### 第三步：核对下一周复用的原文、词表、配置与权重
 
-保存原文划分、字符映射、模型配置和 best/last。测试原文继续保留；下周变更 tokenizer 时创建新模型并单独报告指标，不直接把两个 token loss 作大小排序。
+在本周 README 列出三份原文、split manifest、字符词表、两组模型配置和 best/last 的实际路径。读回 manifest 与 checkpoint，核对 split hash、tokenizer hash 和模型结构对应；缺失项写成具体待办。测试原文继续保留；下周变更 tokenizer 时创建新模型并单独报告指标，不直接把两个 token loss 作大小排序。
 
 ### 运行与自查
 

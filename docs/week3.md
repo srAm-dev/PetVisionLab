@@ -12,7 +12,7 @@ MNIST 的训练、验证和保存加载已跑通；能说明 `train()`、`eval()
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/cnn_vs_resnet/week3/README.md)。
 
-更新日期：2026-11-06。
+更新日期：2026-11-10。
 
 ## 本周文件
 
@@ -790,7 +790,7 @@ x ── Conv/BN/ReLU ── Conv/BN ── + ── ReLU
 └──────── identity/projection ──┘
 ```
 
-#### 第二步：处理两个具体输入
+#### 第二步：计算普通块与下采样块两条路径的形状
 
 例 A：输入 `[2,64,32,32]`，创建 `BasicBlock(64, 64, use_1x1conv=False, stride=1)`；主分支与原输入都为 `[2,64,32,32]`，直接相加。
 
@@ -810,7 +810,7 @@ return self.relu(out)
 
 `if` 只决定是否投影，`out + identity` 始终执行。故意把例 B 的 `use_1x1conv` 改成 False，观察直接相加的尺寸错误，再改回 True；关闭投影不会关闭残差。
 
-#### 第三步：写出能暴露错误的检查
+#### 第三步：测试四种块形状、反向传播和恒等旁路
 
 修改 `tests/test_resnet.py`：顶层从 `petvision.models.cv.resnet` 导入 BasicBlock，新增 `test_basicblock` 和 `test_basicblock_identity_shortcut` 两个函数；已有同名函数时修改原函数，保留已有 CNN 检查。`test_basicblock` 完成下表四种形状及反向检查，`test_basicblock_identity_shortcut` 完成下方全 1 输入的确定性检查。
 
@@ -827,9 +827,7 @@ return self.relu(out)
 
 在 `tests/test_resnet.py` 的 `test_basicblock_identity_shortcut` 中，新建 `BasicBlock(64,64,stride=1,use_1x1conv=False).cpu().eval()`，输入为 `torch.ones(2,64,32,32)`。在 torch.no_grad 下，把 conv1、conv2 的 weight 和存在的 bias 清零，再把 bn1、bn2 的 bias 清零；新建 BN 的 running_mean / running_var 保持初始 0 / 1。调用模型后，用 `torch.testing.assert_close(outputs, images)` 断言输出全为 1，验证主分支为 0 时恒等旁路仍参与相加。随机输入的有限梯度检查写在前述 test_basicblock 中，每次重新创建模型。
 
-#### 第四步：自己解释一次
-
-说明不用投影时为什么仍然要相加，为什么通道或空间尺寸变化时需要投影，以及主分支和旁路分别怎样得到最终形状。此时先掌握标准块；关闭残差的比较放到 Day 5。
+测试通过后，用前面的例 A、例 B 逐层标出主分支和旁路的形状，指出相加发生的位置。说明不用投影时为什么仍然相加、通道或空间尺寸变化时投影怎样匹配形状。关闭残差的比较放到 Day 5。
 
 ### 运行与自查
 
@@ -1069,7 +1067,7 @@ BN 对照：    cnn_bn_on  ↔ cnn_bn_off
 
 数据顺序应由独立 DataLoader Generator 控制；相同 seed 本身不保证不同网络消费完全相同的随机数。若要逐样本对齐随机增强，还需独立控制增强随机流或保存增强决策；未做时只声称增强策略和种子一致，并在单次实验局限中说明。
 
-#### 第三步：确认输出不会互相覆盖
+#### 第三步：核对四组配置的结果目录与权重目录
 
 四个 variant 各自有 experiment_dir、history、best、last；曲线标题标明 variant，单组 history 使用统一五列，Day 6 的 results.csv 汇总行再写入 variant。`scripts/train_cv.py::run_training` 在正式循环前创建 experiment_dir，用 yaml.safe_dump 将本次 cfg 保存为其中的 config.yaml；逐轮日志见[资源记录步骤](#training-resources)。再将四份实际使用的 YAML 各复制一份到 `experiments/cnn_vs_resnet/week3/configs/`，保留原配置文件名，供本周 README 集中索引；复制内容应与各 runs/<variant>/config.yaml 一致。若中途改变 batch 或 epoch，要把该对两组都按新条件重跑。
 
@@ -1128,7 +1126,7 @@ best 的指标来自同一个验证选择规则。最终一轮指标和 best epo
 
 按各组保存的 best epoch 从自身 history 找同一行，使用这一行的 val_loss 和 val_accuracy；二者不能分别取各列的最优值。用下方独立评估命令覆盖全部 5000 条验证样本，再核对这两个指标。CSV 写法复用第一周 Day 6，曲线读取各组自己的 history。
 
-#### 第二步：两张对照图分别回答一个问题
+#### 第二步：绘制 BN、残差曲线并检查验证误分类
 
 BN 图只画同 CNN 两组的 train/val；残差图只画同深宽两组。横轴 epoch，纵轴 loss 或 accuracy，标图例、单位与训练预算。
 

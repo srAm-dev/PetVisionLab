@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vlm_qa/week8/README.md)。
 
-更新日期：2026-11-06。
+更新日期：2026-11-10。
 
 ## 本周文件
 
@@ -367,7 +367,7 @@ model = model.to(device=device, dtype=dtype).eval()
 
 from_pretrained 在本地缓存缺少该版本时获取权重 / tokenizer；两个对象必须使用同一个已保存 SHA。先用 FP32 跑通本节单 prompt，再按硬件能力调整精度并记录。
 
-#### 第三步：看清 messages 如何变为 token
+#### 第三步：应用 Chat Template，检查 input_ids 与 attention_mask
 
 ```python
 messages = [{'role': 'user', 'content': 'Explain gradient descent briefly.'}]
@@ -470,7 +470,7 @@ python scripts/infer_llm.py --config configs/llm/llm_inference.yaml
 
 #### 第一步：加载 VLM，使用真实图片和配套 processor
 
-创建 `scripts/infer_vlm.py`，顶层导入依赖，main 先解析 `--config`、`--image`、`--question`、`--smoke`，末尾添加入口保护；单图模式参数关系按第四步校验，Day 4 再添加批量 `--questions` 路径。下面的配置读取、模型加载、输入处理和生成都在这个脚本中接通。
+创建 `scripts/infer_vlm.py`，顶层导入依赖，main 先解析 `--config`、`--image`、`--question`、`--smoke`，末尾添加入口保护；单图模式参数关系按第二步校验，Day 4 再添加批量 `--questions` 路径。下面的配置读取、模型加载、输入处理和生成都在这个脚本中接通。
 
 先取一张能人工查看的本地图片，按模型卡构造含 image 与 text 的消息。processor 同时生成文本和图像相关字段，打印 key、dtype、shape。
 
@@ -568,15 +568,23 @@ print(answer)
 
 迁移输入时保留 `input_ids` 为 long、布尔 mask 为布尔类型，只将需要的浮点图像张量转换成所选模型精度，保留 processor 返回的其他字段及其原有类型。若把整个输入字典都强制转为浮点数，embedding 查表会报错。先逐字段打印，再在单图上检查生成和新增 token 解码。
 
-#### 第二步：定位视觉特征进入文本模型的位置
+#### 第二步：实现 infer_one 并跑通单图 smoke
 
-先使用刚才单图检查中的同一张图片、同一个问题和 inputs，在临时调试分支中操作：
+使用一条简单问题核对图像读入、输入设备、生成和解码。下一步观察张量流后移除临时 hook，再次确认单图生成通过；正式原始回答由 Day 4 的固定问题集产生。
+
+入口区分两种模式：`--image` 与 `--question` 配套用于单图，`--questions` 用于 Day 4 清单；两种输入方式互斥。`--smoke` 只打印该图的输入形状、回答和资源信息，不写或覆盖正式 `vlm_outputs.jsonl`。今天还没有 images manifest 时，单图分支直接使用命令中的图片路径。
+
+将图片加载、messages 构造、processor、设备迁移、generate 和新增 ID 解码封装为文件顶层的 `infer_one(model, processor, image_path, question, device, dtype, generation_config)`，返回 raw_answer、新增 ID 列表和本题测量结果；main 负责加载模型一次，并把 args.image / args.question 传给它。Day 4 循环也调用这个函数，不能让内部仍读取单图模式的 args.image。与 LLM 一样校验 batch_size==1，单图模式要求同时提供 image、question 和 smoke；批量模式禁止 smoke，避免参数被静默忽略。单图通过后更新 model_manifest 的 vlm 条目，记录完整 cfg、模型类、processor 和实际依赖。
+
+#### 第三步：观察视觉特征的实际路径，保存张量流表
+
+在 scripts/infer_vlm.py 的 infer_one 内，processor 和设备迁移完成后、generate 之前插入临时调试分支。使用单图检查中的同一张图片、同一个问题，以及该函数内已经得到的 inputs，按下列顺序观察：
 
 1. 打印 config 中的架构信息和 model.named_modules() 的模块路径，先找出视觉编码器、连接 / 压缩模块、语言模型三个候选模块；不要仅凭文件名里含 vision 就认定它是特征出口。同时从实际 text_config / 模块查归一化类型、位置编码、query / key-value 头数和 FFN 激活，把观察写入 tensor_flow.md；现代 LLM 的 RMSNorm、RoPE 或 GQA 等设计可能与第六周 GPT-2 风格不同，不自行替换成 MiniGPT 的结构。
 2. 阅读这些模块的 forward 调用关系，确认谁接收 pixel_values、谁接收视觉输出、图像特征在哪里与文本特征合并。记录实际模块路径，供下一步挂 hook。
 3. 先只观察视觉编码器：挂一个 hook，运行一次 `model(**inputs)`，查看返回类型，再从 Tensor、tuple 或 ModelOutput 中找到实际特征及 shape。
 4. 按同样方式观察连接模块输出，最后观察语言模型实际接收的 embedding；每增加一个观察点都运行一次，避免多个不确定字段同时报错而难以定位。
-5. 将“模块路径、字段名、shape、含义”记到下一步的表中，只保存小型元数据；完成后移除所有 hook，再确认单图生成仍能正常执行。
+5. 将“模块路径、字段名、shape、含义”记到本节的张量流表中，只保存小型元数据；完成后移除所有 hook，再确认单图生成仍能正常执行。
 
 不同版本可能有多视图、裁剪或 token 压缩，不预先假定 pixel_values 必为四维或固定图像 token 数。以当前 processor 和模型实际结果为准。
 
@@ -596,19 +604,9 @@ finally:
 
 分别在视觉编码器和连接模块记录一次前向，不把完整特征 Tensor 长期存进列表。若进入语言模型的 embedding 通过 `inputs_embeds=` 关键字传入，使用带 `with_kwargs=True` 的 forward_pre_hook，在 `(module,args,kwargs)` 中查看 `kwargs["inputs_embeds"].shape`；普通位置参数 hook 看不到这些关键字。hook 只观察并返回 None，检查完成后移除所有 handle。
 
-#### 第三步：建立自己的张量流表
-
 创建 `experiments/vlm_qa/week8/tensor_flow.md`，至少列阶段、实际模块名、输入 shape、输出 shape、含义。图像特征和文本 embedding 汇合后，指出语言 decoder 如何据此生成回答；在本周 README 添加该文件的相对链接。
 
 表中逐项填写 processor 图像字段、视觉编码器输出、连接/压缩后特征、文本 embedding、合并后语言输入和 logits；写出观察来自哪个模块/字段。某个合并发生在普通函数内时，查对应 forward 源码补一次临时 shape 打印，记录位置后移除。最终表使用本次真实图片和固定 revision 的结果，不能仅把通用结构图当作已观察的形状。
-
-#### 第四步：smoke 只检查一张图
-
-使用一条简单问题核对图像读入、输入设备、生成和解码。检查完移除临时 hook，再运行正式评估；正式原始回答由 Day 4 的固定问题集产生。
-
-入口区分两种模式：`--image` 与 `--question` 配套用于单图，`--questions` 用于 Day 4 清单；两种输入方式互斥。`--smoke` 只打印该图的输入形状、回答和资源信息，不写或覆盖正式 `vlm_outputs.jsonl`。今天还没有 images manifest 时，单图分支直接使用命令中的图片路径。
-
-将图片加载、messages 构造、processor、设备迁移、generate 和新增 ID 解码封装为文件顶层的 `infer_one(model, processor, image_path, question, device, dtype, generation_config)`，返回 raw_answer、新增 ID 列表和本题测量结果；main 负责加载模型一次，并把 args.image / args.question 传给它。Day 4 循环也调用这个函数，不能让内部仍读取单图模式的 args.image。与 LLM 一样校验 batch_size==1，单图模式要求同时提供 image、question 和 smoke；批量模式禁止 smoke，避免参数被静默忽略。单图通过后更新 model_manifest 的 vlm 条目，记录完整 cfg、模型类、processor 和实际依赖。
 
 ### 运行与自查
 
@@ -740,7 +738,7 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 6. 失败分析、局限、待补事项与下一轮优先级
 ```
 
-#### 第二步：给每个结论附可检查证据
+#### 第二步：为报告结论链接实际指标、模型来源和失败样例
 
 准确率链接对应测试表和 checkpoint 标识；语言 loss 写 tokenizer、split 和有效 token 口径；VLM 指标链接原始输出与人工判定。
 
@@ -748,11 +746,9 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 
 逐项核对「结论 → 本次设置 → 真实证据 → 局限」：例如视觉结论链接六变体测试表与三类对照曲线；语言结论附 tokenizer_hash、split 和目标数；VLM 结论附当前 run_id 的全部输出、判定及上述统计分母。结论尚无证据时列为待补，报告中的示例数字不替代实际运行值。
 
-#### 第三步：明确三种训练来源
-
 主线 CNN/ResNet/ViT/Mini-GPT 是自己从零训练；CLIP/LLM/VLM 使用预训练权重推理；微调属于后续路线。报告中记录各自初始化和权重来源。
 
-#### 第四步：如实保留缺口
+#### 第三步：核对模型清单与张量流，列出未完成项
 
 在最终报告中对照总计划列出已完成、待补和拓展项。分别写清脚本运行、检查、解释和重写的证据。
 
@@ -787,13 +783,13 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 4. 在最终报告记录实际命令、环境和简要结果。发现旧路径或参数时先修正文档；缺权重或环境无法恢复时标明缺口，不把本次未执行写成通过。
 5. 保留已有大实验产物；抽查使用测试函数、验证集或 smoke 模式，不因整理报告而重新训练全套模型或重复评估冻结测试集。
 
-#### 第二步：解释六个核心问题
+#### 第二步：用自己的代码与结果回答总计划中的六个问题
 
-说明手写梯度与 autograd、训练/验证/测试、CNN 与残差、QKV/Mask/CLS、GPT 与 BPE，以及图像进入 VLM 的方式。尽量结合自己的具体 shape 和一次错误。
+打开总计划末尾的六个问题，在 final_report 的对应章节逐项作答。每项选自己的一段代码、一个具体 shape 或一项实际结果解释：手写梯度与 autograd、训练/验证/测试、CNN 与残差、QKV/Mask/CLS、GPT 与 BPE、图像进入 VLM 的路径。回答后回看代码或日志核对，仍无法解释的具体步骤加入第四步的待办。
 
 #### 第三步：整理导航和结果位置
 
-最终报告链接各周 README；每周 README 链接对应配置与结果。根 README 继续用于项目介绍与导航，逐日指南保留完整学习步骤和当天命令，各周 README 保存实际复现索引。
+打开最终报告，逐个检查各周 README 的链接，再从每周 README 打开对应配置、结果表和图。修复相对路径或缺失的索引；文件尚未产生时列为待补。根 README 继续用于项目介绍与导航，逐日指南保留完整学习步骤和当天命令，各周 README 保存实际复现索引。
 
 #### 第四步：形成下一轮可执行清单
 

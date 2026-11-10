@@ -14,7 +14,7 @@
 
 复习现有仓库时注意：下面 Day 2、Day 4 展示数据接口的演进过程。完成[第三周接口迁移](week3.md#unified-loader-interface)后，`build_mnist_loaders` 已改为显式接收 train_transform / eval_transform；按现有签名传参，保留本周的划分与归一化设置。早期的固定 MLP 和入口片段也只用于理解过程，修改时保留已有完整实现。
 
-更新日期：2026-11-06。
+更新日期：2026-11-10。
 
 ## 本周文件
 
@@ -438,7 +438,7 @@ python -c "import sys; sys.path.insert(0, 'scripts'); import torch_basics"
 
 <a id="package-setup"></a>
 
-#### 第一步：理解 Python 包，建立目录并验证本地安装
+#### 第一步：建立 petvision 包并验证本地安装
 
 这一步是在整理后续要复用的 Python 代码。第一周的多个脚本放在 scripts 中，可以导入同目录的 gradient_basics；接下来数据、模型、训练函数会被多个脚本和检查共同使用，统一放进 petvision 包，用明确的完整名称导入。
 
@@ -782,7 +782,7 @@ if __name__ == "__main__":
 
 脚本先将图片保存到 `experiments/mnist_mlp/week2/figures/mnist_batch.png`，再显示窗口。没有图形界面的终端可用 `MPLBACKEND=Agg python scripts/inspect_mnist.py` 运行；此时 show 可能提示不能显示窗口，保存的图片仍可在编辑器中打开。
 
-#### 第六步：保存可复用条件
+#### 第六步：在本周 README 保存划分与预处理设置
 
 将今天使用的条件记录在 `experiments/mnist_mlp/week2/README.md`：data_dir、split_path、seed、batch_size、num_workers、drop_last，以及 ToTensor → Normalize(mean=(0.5,), std=(0.5,)) 和各 loader 的 shuffle 设置。保留划分 JSON 和图片。Day 4 再将这些字段接入训练 YAML，Day 5 保存正式运行的配置快照。
 
@@ -1728,7 +1728,7 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 
 读取这类由 Tensor、字典和普通数值组成的 checkpoint 时，显式使用 `torch.load(checkpoint_path, map_location="cpu", weights_only=True)`，先在 CPU 上重建并加载，再迁移到评估设备。`map_location="auto"` 不是有效的 Torch 设备映射；YAML 中的 device=auto 是本项目入口自己解释的约定。这里先加载到 CPU，再由 model.to(device) 选择实际设备。`map_location` 解决保存设备与加载设备不同的问题；`model.eval()` 切换层的运行模式，`torch.no_grad()` 关闭本次推理的梯度记录，两者都要处理。
 
-#### 第三步：固定验证批次比较
+#### 第三步：保存并重建模型，比较同一验证批次的输出
 
 保存前切 eval 并记录一批 logits；新建模型加载后比较同一批的最大绝对差。差别大时检查结构、归一化、dropout 模式与 checkpoint 路径。
 
@@ -1740,7 +1740,7 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 
 测试从新 checkpoint 模块导入实际 save_checkpoint / load_checkpoint，保存原模型的真实 state_dict 后新建 MLP 并加载。best / last 检查也读取实际生成的两个文件、核对 epoch；上述第 4 轮 accuracy=0.85 与第 2 轮持平，best 仍应保留第 2 轮。以重新加载后的输出和真实保存的 epoch 检查恢复与选择规则。
 
-#### 第四步：输出应能回答什么
+#### 第四步：核对 best 轮次、独立验证指标和加载误差
 
 按下面顺序整理这次保存加载的结果，不需要为写总结再训练一次：
 
