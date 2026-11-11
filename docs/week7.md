@@ -4,7 +4,7 @@
 
 对应[总计划第 7 周](StudyPlan.md#week-7)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-环境：本地 Conda `petvision`；复用第六周模型和原文划分。BPE 编解码在 CPU，训练在本地 GPU；续训一致性先用 CPU FP32、dropout=0 的小预算检查。
+环境：本地 Conda `petvision`；复用第六周模型和原文划分。BPE 编解码在 CPU，训练在本地 GPU；续训用 CPU FP32、dropout=0 的小模型观察。
 
 ## 开始前
 
@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week7/README.md)。
 
-更新日期：2026-11-10。
+更新日期：2026-11-11。
 
 ## 本周文件
 
@@ -30,8 +30,7 @@ PetVisionLab/
 │   └── compare_tokenizers.py              # Day 5：同原文编码长度和耗时
 ├── tests/
 │   ├── test_tokenizer.py                  # Day 1–2：合并与边界往返
-│   ├── test_sampling.py                   # Day 3：过滤、概率与复现
-│   └── test_resume.py                     # Day 4：连续/中断结果对照
+│   └── test_sampling.py                   # Day 3：温度与 top-k 小例子
 └── experiments/mini_gpt/week7/
     ├── README.md                         # 已提供
     ├── bpe_tokenizer.json                 # Day 2：字节词表与有序 merge
@@ -80,7 +79,7 @@ BPE 模型从零初始化，按 BPE 的实际 V 新建 embedding 与输出词表
 | [Day 1](#day-1) | 在 `models/llm/tokenizer.py` 增加字节 BPE，创建 tokenizer 测试 | pair 统计与非重叠替换正确；先遇到的同频 pair 优先 |
 | [Day 2](#day-2) | 补齐 tokenizer 方法并通过测试，再创建 `scripts/train_tokenizer.py`，保存 `bpe_tokenizer.json` | 只用 train 学 merges；空白、中文、emoji 严格往返；保存加载一致 |
 | [Day 3](#day-3) | 扩展 `scripts/generate.py`，创建 `tests/test_sampling.py` | 温度、top-k 阈值和并列项正确；固定 seed 的 IDs 可复现 |
-| [Day 4](#day-4) | 扩展 checkpoint/训练入口，创建 `tests/test_resume.py` | CPU 小模型连续 40 步与 20+20 步的状态、下一批和 loss 一致 |
+| [Day 4](#day-4) | 扩展 checkpoint/训练入口，做一次小模型续训观察 | 能解释权重、optimizer、step 与随机状态为何需要一起恢复 |
 | [Day 5](#day-5) | 创建 BPE GPT 配置和 `scripts/compare_tokenizers.py` | 新模型完成预算；同一 val 原文的编码长度、字节数与时间有记录 |
 | [Day 6](#day-6) | 给训练入口增加仅评估模式，更新本周报告 | 三个模型各自完整测试；字符 loss 可比较，BPE 单列 |
 
@@ -153,7 +152,7 @@ ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in 
 
 #### 第三步：创建 test_tokenizer.py，检查 pair 规则与字节解码
 
-创建 `tests/test_tokenizer.py`，从 `petvision.models.llm.tokenizer` 导入 ByteBPETokenizer、count_pairs、merge_pair。新增 `test_bpe_pair_counts` 核对 abab / aaaa 的相邻计数，`test_bpe_non_overlapping_merge` 核对 aaaa / aaa 的替换结果，`test_bpe_first_seen_tie` 核对 caba 同频时先选 ca，`test_bpe_decode_bytes` 核对完整中文字节拼接及 strict / replace 解码；空串、单 ID 分别作为这些函数的边界输入。
+创建 `tests/test_tokenizer.py`，导入 ByteBPETokenizer、count_pairs、merge_pair。本日只写 test_bpe_merge_example：在同一个短例子中核对 abab 的 pair 计数和一次合并，再看 aaaa 为什么必须非重叠替换。caba 的同频选择与中文字节拼接在交互环境运行一次，观察结果，不拆成更多测试函数。
 
 例如 Python 字符串 `'x\t中🙂'` 中 `\t` 表示一个 Tab，整个字符串有 4 个 Unicode 字符、UTF-8 共 9 字节。某个 token 的 bytes 可能只是一个多字节字符的一部分，解码必须先拼完整 bytes。
 
@@ -215,7 +214,7 @@ JSON 中 merge 顺序就是规则优先级，加载时保留原顺序。词表�
 
 #### 第三步：在 test_tokenizer.py 检查训练、往返与保存加载
 
-在已有 `tests/test_tokenizer.py` 中新增 `test_bpe_roundtrip`，用本节 cases 逐条 strict 解码；新增 `test_bpe_save_load(tmp_path)`，比较保存前后 merges、vocab 和相同文本的 IDs；新增 `test_bpe_vocab_budget`，检查预算小于 256 报错、空文本提前停止；新增 `test_bpe_encode_merge_rank`，检查新输入按保存的 rank 合并。
+在已有 `tests/test_tokenizer.py` 中只新增 test_bpe_roundtrip：训练一个小词表，对下面的空白、中文和 emoji 例子编码后 strict 解码，理解字节合并不会丢失原文。训练预算与非法参数检查留在实现里，不另写边界测试。
 
 ```python
 cases = ['', ' ', '  a  ', '\t\n', '中文', '🙂', 'hello 中文🙂\n']
@@ -223,7 +222,7 @@ for text in cases:
     assert tokenizer.decode(tokenizer.encode(text), errors="strict") == text
 ```
 
-将上面的 cases 放进 test_bpe_roundtrip，逐条检查。再在 test_bpe_save_load 中保存、重新加载，对每条文本比较 ID 列表与 strict 解码结果；空格、Tab 和换行逐字符相同。不要用 strip、忽略无效字节或归一化空白绕过检查。
+将上面的 cases 放进 test_bpe_roundtrip，逐条检查；空格、Tab 和换行应逐字符相同。随后用本日训练入口实际保存并加载词表，对一段文本打印 IDs，观察加载后沿用原 merge 顺序；不另写保存加载测试。不要用 strip、忽略无效字节或归一化空白绕过检查。
 
 encode 得到的 ID 来自可严格编码为 UTF-8 的原文本，往返用 `decode(ids, errors="strict")` 检查，必须保持原文；默认 decode 的替换策略用于模型生成，与 minbpe 一致。生成时先保留完整 IDs 与拼接后的 raw_bytes，再尝试 strict 解码以记录 decode_ok；失败时用默认 decode 展示替换字符，同时保存 raw_bytes_hex。给同一组无效字节分别检查 strict 报错与默认替换，不能用 errors="ignore" 或 strip 掩盖问题。
 
@@ -304,13 +303,13 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 5. sample_next_token 对过滤结果沿词表轴做 softmax，检查每行概率和约为 1，再每行抽取一个 ID，输出形状保持 `[B,1]`。
 6. 用 B=1 和 B=2 各调用一次，确认两行各自过滤和采样；最后接回 generate.py，每次生成只追加这一列 ID。
 
-#### 第三步：编写 test_sampling.py 的参数、过滤和复现检查
+#### 第三步：用一个 logits 例子理解温度与 top-k
 
-创建 `tests/test_sampling.py`，测试函数声明 monkeypatch 参数（例如 `def test_sampling_seed(monkeypatch):`），在函数内用 `monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))` 临时加入脚本目录，再 `from generate import sample_next_token` 并导入 filter_logits；Path 从 pathlib 导入。沿用入口保护，导入函数不加载模型或生成样例，不永久修改训练入口的 sys.path。
+创建 `tests/test_sampling.py`，只新增 test_sampling_distribution_example，导入前面已实现的 filter_logits。若函数保留在 scripts/generate.py，可沿用 pytest 的 monkeypatch.syspath_prepend 临时加入 scripts 目录后导入；不替换模型或训练入口。
 
-`tests/test_sampling.py` 中分别用 `test_sampling_invalid_parameters` 检查参数报错，`test_sampling_topk_threshold` 检查四项 logits 及并列阈值，`test_sampling_seed` 检查固定种子生成的 ID 序列相同。
+输入 `[2,1,0,-1]`：先比较 temperature=0.5 与 1 的 softmax 概率，观察低温度如何提高最大项的概率；再设 top_k=2，核对过滤后只有前两项概率非零、概率和为 1。最后手动运行一次并列阈值例子，解释为什么可能保留多于 k 项。
 
-测试覆盖 temperature=0/负数/NaN/无穷大、top_k=0/负数/非整数的 ValueError；top_k=None、V、V+1 都不删项，并列阈值例子保留三项；最高 logit 唯一时，top_k=1 的 ID 与 argmax 一致。相同 seed 的复现检查在每次采样前重新设 seed，比较一串结果完全相同，不要求两次连续消费同一随机流后仍得到同一结果。
+temperature 与 top_k 的合法性校验保留在函数里，不新增参数报错矩阵。固定 seed 的行为直接在下一步生成样例中观察，不另写采样复现测试。
 
 #### 第四步：固定参数生成两组样例，再核对相同设置的 IDs
 
@@ -346,12 +345,11 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 | --- | --- | --- |
 | [PyTorch 保存与恢复训练（中文译文）](https://docs.pytorch.ac.cn/tutorials/beginner/saving_loading_models.html) | general checkpoint、optimizer 和训练进度 | 区分加载推理与恢复训练 |
 | [nanoGPT 作者实现](https://github.com/karpathy/nanoGPT) | 训练状态与恢复相关组织 | 补齐自己的保存字段 |
-| [pytest 临时目录（官方英文）](https://docs.pytest.org/en/stable/how-to/tmp_path.html) | tmp_path；普通断言与异常检查沿用第二周 | 将 40 步对照的 checkpoint 写入临时路径 |
 | [Python random（官方中文）](https://docs.python.org/zh-cn/3.12/library/random.html#random.getstate)、[NumPy 状态（中文译文）](https://numpy.net.cn/doc/stable/reference/random/generated/numpy.random.get_state.html)、[Torch Generator（中文译文）](https://pytorch.ac.cn/docs/stable/generated/torch.Generator.html) | getstate/setstate、get_state/set_state；只查下表用到的状态操作 | 保存已经推进的随机流，而非仅保存 seed |
 
 ### 操作步骤
 
-今天只在临时目录检查 40 步与 20+20 步恢复，使用固定的 C=32、context=16、batch=4、CPU FP32、dropout=0 小模型和教学 token。它不依赖 `mini_gpt_bpe.yaml` 或 `outputs/mini_gpt_bpe/last.pt`；正式 BPE 训练在 Day 5 开始。
+今天只用一个 CPU 小模型观察 20 步保存、恢复到累计 40 步的过程，配置与输出放在独立演示目录。它不依赖 `mini_gpt_bpe.yaml` 或 `outputs/mini_gpt_bpe/last.pt`；正式 BPE 训练在 Day 5 开始。
 
 #### 第一步：在训练入口加入 resume 参数和完整 checkpoint 分支
 
@@ -415,51 +413,45 @@ completed_steps = checkpoint["step"]
 
 NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载时用 `np.asarray(values, dtype=np.uint32)` 还原，再拼回原五项 tuple。独立 default_rng 不受 `np.random.set_state` 控制，实际使用哪条流就单独保存哪条流；Torch 与采样 Generator 的状态保持 CPU ByteTensor。读取使用 `map_location="cpu", weights_only=True`，模型/优化器加载并迁移后，再恢复各随机流。
 
-#### 第三步：写最小连续/中断对照
+#### 第三步：接通恢复流程，观察一次小模型续训
 
-在编写对照测试之前，先把恢复分支按下列顺序接通：
+先把恢复分支按下列顺序接通，再做下面的小模型续训观察：
 
 1. 读取 resume 文件，核对 tokenizer、split hash、模型结构和训练设置，再读 completed_steps；配置的 steps 是累计目标，不是额外训练次数。
 2. 按保存结构新建模型，加载 model_state 并迁移到目标设备。确认 `model.head.weight is model.token_embedding.weight` 仍为 True；权重共享由 MiniGPT 构造函数建立，load_state_dict 使用默认 assign=False。随后创建绑定这个新模型参数的 AdamW，再加载 optimizer_state；不能复用绑定旧模型的优化器。
 3. 恢复 best_val_loss、best_step、训练统计累计值和日志进度，核对现有 history 没有超出该 checkpoint 的记录；冲突按前文规则归档处理。
 4. 创建训练采样 Generator，完成其他对象初始化后，最后恢复它和实际使用的各随机流。恢复之后直接进入下一次实际采样，不额外抽样打印“看看随机数”。
 5. 从 completed_steps+1 开始更新；如果已达到累计目标就退出训练。首次恢复更新后确认 step 恰好加一，日志仍按原验证间隔追加。
-6. 恢复流程接入后，再编写下方 test_resume_matches_continuous；测试通过替换 parse_args 的返回值调用 train_gpt.main()，实际执行它的从零 / resume 分支与 save_checkpoint / load_checkpoint，不在测试中另写一套恢复模型和 RNG 的业务逻辑。
+6. 接入后通过实际 CLI 跑一次保存与续训，打印已完成步数、optimizer 的更新计数和恢复后的 loss。今天不新增测试文件，也不替换 parse_args 或语料读取。
 
 保存时统一使用已完成更新后的状态：若本步刚完成验证，先把该行日志写入、更新 best 值并清零区间累计，再写 checkpoint；若在验证间隔中间保存，区间 NLL / 目标数保持实际累计值。恢复后使用相同顺序，这样不会把上个区间重复统计。
 
 因此今天增加完整恢复状态时，要把第六周循环里的 checkpoint 调用移到区间累计清零之后，再构造完整字典。资源统计也区分本进程 segment_seconds 与各段累计 train_seconds，恢复时接上 checkpoint 保存的累计值；若只测了恢复后的这一段，报告为该段耗时，不能标成完整训练时间。峰值显存记录各段峰值，汇总取最大值，不把不同进程的峰值相加。
 
-##### tests/test_resume.py
+##### 用一次小模型续训理解保存的状态
 
-创建 `tests/test_resume.py` 并定义 `test_resume_matches_continuous(tmp_path,monkeypatch)`。用 monkeypatch.syspath_prepend 将项目 scripts 目录临时加入搜索路径，然后导入 train_gpt；MiniGPT、sample_batch、load_checkpoint 从 petvision 对应模块导入。测试内使用 C=32、context=16、batch=4、CPU FP32、dropout=0 的临时配置；将语料读取替换为固定教学 token 数据，将配置、history、checkpoint 输出都指向 tmp_path。连续路径让 main() 跑到 40 步，中断路径先跑 20 步，再传入 --resume 对应的临时 last 跑到累计 40 步。此测试不读取正式 BPE 配置或输出文件。
+在 outputs/resume_demo 下创建独立的 config.yaml，从第六周 MiniGPT 配置复制。将 model.embed_dim=32、model.context_length=16、model.depth=2、model.heads=4、model.ffn_hidden_dim=128、model.dropout=0、data.batch_size=4、training.device=cpu、training.dtype=float32；其余语料和 tokenizer 设置沿用原配置。experiment_dir 和 output_dir 都指向 outputs/resume_demo，不覆盖正式结果；training.steps、training.eval_interval 先设为 20。
 
-使用 CPU FP32、dropout=0 的小模型，保留相同初始状态和数据。两条运行到 40 步后比较全部模型参数、optimizer step/状态、最后 loss，以及恢复后第一批的采样起点。
+先运行训练入口到 20 步，读取 last 的 step 和 optimizer 更新计数；再只把累计目标 steps 改为 40，用同一个 last 恢复，确认从第 21 步继续、最终到 40，观察 loss 是否继续变化。保留两段日志，在代码中指出 optimizer 状态和 Generator 状态在哪里恢复，解释只加载模型权重会漏掉什么。
 
-只比较最后 loss 很接近还不够，错误的批次或 optimizer 状态也可能偶然给出相近 loss。
-
-对照程序按以下顺序组织：
-
-1. 保存一份共同初始权重；连续路径和中断路径各自新建模型、AdamW 与 Generator，加载这份初值，使用同一教学 token 数据。
-2. 连续路径运行 1..40，记录第 21 步实际采样起点；中断路径运行 1..20 后保存完整 last。两条路径使用同一验证时点，验证前后 Generator 状态不变。
-3. 再新建模型、优化器与 Generator，加载第 20 步状态；恢复后第一次实际采样应与连续路径第 21 步一致。不要为了查看下一批而额外调用一次采样。
-4. 两条路径完成 40 步后，在同一固定 batch、eval 下比较 loss；逐参数求最大绝对差。optimizer 按对应参数检查 step、exp_avg、exp_avg_sq，整数进度完全相同，浮点差小于 `1e-6`。
-5. 随机状态另做短往返：保存后分别抽取 Python/NumPy/Torch 数值，恢复后重新抽取，应得到同一串；这项独立检查完成后重置测试状态，再运行训练对照。CPU 小检查不要求 CUDA 才能执行。
-
-sample_batch 当前只返回 x/y，没有返回起点。测试中若要核对起点，可在实际采样之前 clone Generator 状态到一个独立探针 Generator，用相同的 randint 参数从探针取得预期起点，再正常调用 sample_batch；探针不推进真实训练 Generator。同时比较两条路径实际取得的 x/y。也可仅在测试辅助函数中返回起点，不必为打印多消耗一批真实训练数据。
-
-恢复到 40 步之前先保留第 20 步 last 的副本。在同一测试的独立临时目录补一个停止边界：用这个副本恢复，累计目标也设为 20，断言不再调用 train_step，history 和 checkpoint 不被改写。steps 是累计目标：last 已完成 500 步、目标 1000 时再更新 500 步，目标仍为 500 时直接结束。验证不能消费训练采样随机流，恢复后核对 step 与下一批位置。
+不要求搭建连续训练对照、逐参数与 optimizer 内部张量比较、随机流探针或停止边界回归测试。若以后需要研究精确复现，再把这些作为独立拓展。
 
 ### 运行与自查
 
 ```bash
-python -m pytest tests/test_resume.py -q
+python scripts/train_gpt.py --config outputs/resume_demo/config.yaml
 ```
 
-检查应自行创建小模型和教学 token 数据，并在 pytest 临时目录保存状态。输出或在断言失败时显示下一批采样起点、最大参数差、optimizer 状态差和最终 loss 差；目标为恢复路径与连续路径一致，起始容差 `1e-6`。今天不运行尚未创建的正式 BPE 配置。
+第一段完成后，将同一配置的 steps 从 20 改为 40，再运行：
+
+```bash
+python scripts/train_gpt.py --config outputs/resume_demo/config.yaml --resume outputs/resume_demo/last.pt
+```
+
+将两段命令、step 和 loss 变化写入本周 README；这项练习用于理解训练状态，不创建 test_resume.py。今天不运行尚未创建的正式 BPE 配置。
 
 - [ ] 模型、优化器、进度、随机状态和 tokenizer 均得到恢复。
-- [ ] 连续与中断小规模结果对照通过，未发生重复/跳过更新。
+- [ ] 小模型从 20 步恢复到累计 40 步，日志从第 21 步继续。
 - [ ] 能解释为什么只加载模型参数不足以等价续训。
 
 <a id="day-5"></a>
@@ -615,9 +607,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 建议给 --split 默认 val；未开启 evaluate-only 时传 --checkpoint 应报错，避免误以为它会恢复训练。只评估分支在 main 中先执行并 return，再进入新训练 / resume 分支。把本次真实结果保存到所选配置的 `experiment_dir/{split}_metrics.json`，字段包含 model、checkpoint、checkpoint_step、tokenizer_hash、split_hash、split、n_target_tokens、loss 和窗口规则。三组分别写自己的目录，再在本周 README 链接它们；结果保存只涉及评估文件，不改训练 config、history 或权重。
 
-完成 train_gpt.py 的分支、参数校验和保存逻辑后，再编写检查：
-
-在 `tests/test_language_model.py` 新增 `test_lm_evaluate_only_does_not_train(tmp_path,monkeypatch)`：创建临时模型 / tokenizer / checkpoint 和长度 N=8 的教学 split，用替换 parse_args 的方式调用 train_gpt.main() 的 evaluate-only 分支；断言目标数为 7，训练 history 和 checkpoint 文件字节未变，并将 train_step 替换为 pytest.fail，验证该分支不会调用参数更新。通过后再执行下面三条正式测试命令。
+完成 train_gpt.py 的仅评估分支后，用下面三条命令实际评估。确认输出目标数与 split 对应、没有新的训练日志行；不新增 mock 训练入口、比较文件字节或拦截 train_step 的回归测试。
 
 #### 第二步：汇总测试、编码、采样和续训结果，列出待补项
 
@@ -626,15 +616,15 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 1. 字符基线：读回字符 Bigram / GPT 的 test_metrics，核对 tokenizer hash 和有效目标数相同，再并列报告 loss；BPE 结果单列，写自己的目标数与词表标识。
 2. BPE：引用严格往返检查的命令与结果，再读取 tokenizer_comparison.csv，核对两行使用同一原文后，报告 token 数和编码耗时差异。
 3. 采样：从 samples.jsonl 选取本次指定的两组记录，保留完整设置和原始输出，描述重复、连贯性等观察；两项采样参数同时变化时，不将差异只归因于其中一项。
-4. 续训：填写 CPU 小对照的配置、实际检查命令、最大参数差、优化器状态及第 21 步批次是否一致。正式 BPE 从未中断也可以如实记录，不能虚构一次正式恢复经历。
+4. 续训：填写 CPU 小模型的配置、两段命令、step 与 loss 变化，说明 optimizer 与随机状态的恢复位置。正式 BPE 从未中断也可以如实记录，不能虚构一次正式恢复经历。
 
 逐项加上实际配置或结果链接；缺一项就标记待补，不把代码文件存在等同于已经运行通过。
 
 #### 第三步：在短输入上重算 BPE、采样，并解释续训状态
 
-在草稿中重新统计 abab / aaaa 的 pair 并执行一次非重叠合并，实际核对前面的结果；再对 `[2,1,0,-1]` 依次做温度缩放、top-k 和 softmax，核对保留项与概率。最后按续训状态表逐项说明作用，重点结合第 21 步批次和参数差解释模型、optimizer、Generator 的影响。将运行结果和仍答不出的点写入本周 README。
+在草稿中重新统计 abab / aaaa 的 pair 并执行一次非重叠合并，实际核对前面的结果；再对 `[2,1,0,-1]` 依次做温度缩放、top-k 和 softmax，核对保留项与概率。最后按续训状态表逐项说明作用，结合第 21 步继续更新的日志，解释模型、optimizer、Generator 的影响。将运行结果和仍答不出的点写入本周 README。
 
-如果 Unicode 往返、续训一致性或指标口径仍不清楚，记录具体失败输入和下一步。更多语料、上下文长度和 tokenizer 产品化放入后续路线。
+如果 Unicode 往返、训练状态恢复或指标口径仍不清楚，记录具体失败输入和下一步。更多语料、上下文长度和 tokenizer 产品化放入后续路线。
 
 ### 运行与自查
 

@@ -12,7 +12,7 @@ Attention、Mask、LayerNorm 检查通过；第三周四组配置、best 和同�
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vit_patch_size/week5/README.md)。
 
-更新日期：2026-11-10。
+更新日期：2026-11-11。
 
 ## 本周文件
 
@@ -134,7 +134,7 @@ CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训
 
 #### 第三步：在 test_vit.py 检查 Patch 投影与 token 参数
 
-创建 `tests/test_vit.py`，顶层导入 pytest、torch 和 `from petvision.models.cv.vit import PatchEmbedding`。新增四个函数：`test_patch_order` 使用下方 4×4 编号图核对四个原始 Patch；`test_patch_shapes` 检查 P=4/8 的输出；`test_patch_projection_reference` 执行下方 Conv / unfold＋Linear 的权重复制与值比较；`test_patch_invalid_size` 用不能被 P 整除的 H/W 检查 ValueError。完整 ViT 的检查另加到同一文件。
+创建 `tests/test_vit.py`，导入 torch 和 PatchEmbedding。本日只写 test_patch_order 和 test_patch_projection_reference：前者用下面的编号图理解 Patch 顺序，后者用一张三通道图片核对 Conv 与展开后 Linear 的等价关系。完整网络的形状留到 Day 2 一次观察。
 
 对 4×4 单通道编号图，P=2 的第一个 Patch 应为左上角 2×2，第二个为右上角，之后按行进入下一排。
 
@@ -164,9 +164,9 @@ linear_tokens = linear(patches)
 assert (conv_tokens - linear_tokens).abs().max().item() < 1e-6
 ```
 
-先检查单通道编号图的四个原始 Patch，再用三通道随机图片核对投影值，避免只看形状就漏掉通道/像素顺序错误。非法尺寸在 forward 开始时检查 `H % P`、`W % P`，用 `pytest.raises(ValueError)` 覆盖。
+先检查单通道编号图的四个原始 Patch，再用一张三通道随机图片核对投影值，理解通道和像素如何进入 token。非法尺寸仍在 forward 开始时检查 `H % P`、`W % P`，本日不另写异常用例。
 
-在 `tests/test_vit.py` 新增 `test_vit_token_parameters`：创建 ViT 后只调用 model.patch_embed，手动将 model.cls_token 扩展到 batch、与 Patch 拼接，再加 model.position_embedding；分别核对这三个中间张量的 shape，以及 cls_token / position_embedding 出现在 named_parameters 和 state_dict 中。本函数在本日不调用尚未完成的 ViT.forward。
+在交互环境创建 ViT，调用 model.patch_embed，再手动扩展 CLS、与 Patch 拼接并加上位置参数。打印三处形状，在 named_parameters 中找到 CLS 和位置参数，理解它们是可学习的。此时不调用尚未完成的 ViT.forward，也不为这次观察单独写测试函数。
 
 ### 运行与自查
 
@@ -225,28 +225,24 @@ return self.head(tokens[:, 0])
 
 P=4 时序列长 65，P=8 时长 17，ViTBlock 堆叠的入口和出口均保持 `[B,T,128]`。先取 `x[:,0]` 得到 `[B,128]`，再由 head 中的 LayerNorm 与 Linear 输出 `[B,10]`。
 
-在 `tests/test_vit.py` 新增 `test_vit_stage_shapes`，将以下六项写进该函数，分别创建 P4/P8 模型并分段调用其子模块；保留 test_patch_order、test_patch_shapes、test_patch_projection_reference、test_patch_invalid_size、test_vit_token_parameters：
+先在交互环境用 P4、B=2 模型分段调用子模块，按下面顺序打印一次张量流。理解后将关键形状断言合并到第三步的 test_vit_forward_backward，不再单建阶段形状测试：
 
 1. 创建 P=4、B=2 的随机输入，先只调用 patch_embed，确认得到 `[2,64,128]`；若这里不对，先检查卷积输出和 flatten / transpose。
 2. 将 CLS 扩展到 `[2,1,128]`，拼接在第 0 个位置，确认长度从 64 变为 65；再核对位置参数为 `[1,65,128]`，通过 batch 广播相加。
 3. 依次调用两个 Block，分别确认入口与出口的 T 都是 65，并确认没有传 causal mask；不要只检查最后一个 Block。
 4. 先取第 0 个位置的 `[2,128]`，再依次调用 head 中的 LayerNorm 和 Linear；确认分类结果为 `[2,10]`。
 5. 再新建 P=8 的模型，从头重复检查，此时 Patch 数为 16、含 CLS 长度为 17。不能只替换输入而沿用 P4 的位置参数。
-6. 将两种模型都改用 B=1 输入再运行，确认 logits 仍为 `[1,10]`。通过后移除临时打印，保留形状断言，进入反向检查。
+6. 对照代码说明为什么取 CLS 后仍保留 batch 维，进入反向检查；本日不再遍历不同 batch 大小。
 
 ViT 使用双向 Attention；若沿用 GPT 的 causal 开关，CLS 位于序列最前时将看不到后面的图像 Patch，这是需要检查的结构错误。
 
-#### 第三步：检查 ViT 梯度、Block 参考结果与保存加载
+#### 第三步：用一次分类 loss 观察梯度路径
 
-修改 `tests/test_vit.py`，顶层从 vit 模块导入 ViT，新增 `test_vit_forward_backward` 和 `test_vit_checkpoint_roundtrip(tmp_path)`，保留已有测试。前者对 P=4/8、B=1/2 的随机图片计算分类 loss 并 backward；后者将 eval 模型的 state_dict 写到 tmp_path，新建同配置模型加载，再对同一固定输入比较输出。64 样本拟合使用第四步连接后的 train_cv.py --overfit-samples 64 入口。
+在 `tests/test_vit.py` 导入 ViT，只新增 test_vit_forward_backward。使用 P=4、B=2 的随机 `[2,3,32,32]` 图片和两个合法标签，确认 logits 为 `[2,10]`；计算交叉熵后 backward，查看 Patch 投影、CLS、位置参数、一个 Block 和分类头的代表参数是否有有限梯度。结合网络结构解释：分类 loss 如何经过 CLS 传回图像 token。
 
-对随机图像和标签做一次 backward，查看 Patch 投影、CLS、位置嵌入、全部 ViTBlock 和 head 的梯度是否存在且有限。B=1 也要通过。
+P=8 的 token 长度在第二步观察即可，不再展开 batch 与 Patch 的组合测试。ViTBlock 的 pre-LN、GELU 和两条残差直接对照实现顺序阅读，本日不再搭建官方参考 Block、逐项复制参数或新增 checkpoint 回归测试。
 
-在 `tests/test_vit.py` 顶层补充 `from torch import nn` 和 ViTBlock 的导入，并新增 `test_vitblock_reference`。先以教材 ViTBlock / ViTMLP 的计算顺序建立独立参考，Attention 使用 nn.MultiheadAttention(bias=False,batch_first=True)；两边都设 dropout=0 并转 CPU float64。在 torch.no_grad 中，把自写 q_proj / k_proj / v_proj 的 weight 按 dim=0、Q/K/V 顺序拼接后复制到参考 in_proj_weight，将 out_proj.weight 单独复制；无 bias 的投影不复制 bias。再将两个 LayerNorm 的 gamma/beta 分别复制到参考 weight/bias，MLP 的两个 Linear 逐项复制 weight/bias。最后给两边相同输入，断言输出最大绝对差小于 1e-6。在 test_vit_forward_backward 中另用 dropout=0.1，检查 embedding dropout、两个 MLP dropout 都随 train/eval 切换。
-
-本步先完成测试函数。第四步接通训练入口后，再对固定 64 条训练图做过拟合，训练时关闭随机增强。loss 不降时检查取出的是否为 CLS、模型是否包含参数、优化器是否覆盖参数。
-
-在 `test_vit_checkpoint_roundtrip(tmp_path)` 中，使用 `tmp_path / "vit.pt"` 保存原模型 state_dict；新建同配置模型并加载后，两边都切 eval，在 no_grad 下对同一个固定随机图片批次计算 logits，断言最大差小于 `1e-6`，并逐项比较 cls_token / position_embedding 相等。
+第四步接通训练入口后，再对固定 64 条训练图做过拟合，训练时关闭随机增强。loss 不降时检查取出的是否为 CLS、优化器是否包含模型参数。小样本拟合通过训练入口观察，不放进 pytest。
 
 #### 第四步：接入已有训练入口
 

@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week6/README.md)。
 
-更新日期：2026-11-10。
+更新日期：2026-11-11。
 
 ## 本周文件
 
@@ -302,15 +302,15 @@ loss 输入 target     [B*T]
 
 两个函数统一返回 `{"loss": float值, "n_target_tokens": int值}`，键名固定；train_step 的数量为 y.numel()，evaluate_lm 为完整分窗的累计目标数。lm_trainer.py 顶层导入 torch、`torch.nn.functional as F` 和 iter_eval_windows；训练 loss 使用 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))`，验证使用相同展平方式但 reduction="sum"。evaluate_lm 开始先保存 `was_training = model.training`，在 try 中执行 eval/no_grad，在 finally 中 `model.train(was_training)`，确保退出时恢复原模式。
 
-#### 第四步：编写 test_language_model.py 的窗口、模型和评估检查
+#### 第四步：用错位例子和一次更新理解语言模型目标
 
-创建 `tests/test_language_model.py`，顶层导入 torch、pytest、sample_batch 和 iter_eval_windows。新增 `test_sample_batch_shift` 检查 x/y 错开一位；`test_sample_batch_split_bounds` 检查样本不越过当前 split、数据不足时抛出 ValueError；`test_eval_window_coverage` 将下方 N=8、T=3 的各窗口目标拼接，断言恰好覆盖 ID 1-7 且无重复。
+创建 `tests/test_language_model.py`，导入 torch、sample_batch、iter_eval_windows 和 BigramLanguageModel，只新增三个教学检查：
 
-在 `tests/test_language_model.py` 顶层从 `petvision.models.llm.bigram` 导入 BigramLanguageModel，新增 `test_bigram_forward_backward`：用 V=8、B=1/2、T=4 的合法 long ID 检查 `[B,T,V]` 输出，展平后计算交叉熵并 backward，断言 Embedding 参数梯度非 None 且有限。
+1. test_sample_batch_shift：对 `[0,1,2,3]` 取 T=3 的唯一窗口，核对 x 为 `[0,1,2]`、y 为 `[1,2,3]`，说明每个位置预测的是下一个 ID。
+2. test_eval_window_coverage：沿用 N=8、T=3 的例子，拼接窗口目标，核对恰好覆盖 ID 1-7。用这一个例子理解尾窗和按目标数量求平均，不扩展边界组合。
+3. test_bigram_forward_backward：设 V=8、B=2、T=4，输入合法 long ID，查看 logits 的 `[B,T,V]` 形状。按前文将 logits 展平为 `[B*T,V]`、目标展平为 `[B*T]`，计算交叉熵、backward 并执行一次 AdamW 更新，查看 Embedding 梯度有限且参数发生变化。
 
-在本日 test_bigram_forward_backward 中实际执行这两次 reshape，把原始 logits 和展平后的目标传给 CrossEntropyLoss，检查 loss 为有限标量后反向。每个位置是一个 V 分类问题，目标 ID 范围必须在 0..V-1；交叉熵直接接收 logits。
-
-修改 `tests/test_language_model.py::test_bigram_forward_backward`：创建 AdamW 后先 clone Embedding 参数，再计算 loss、清梯度、backward、optimizer.step，断言至少一个参数值发生变化。另新增 `test_lm_evaluation_preserves_generator`：创建独立训练 Generator，保存其 get_state().clone()，对固定 val_ids 调用 evaluate_lm，再用 torch.equal 比较 Generator 状态完全相同，同时核对返回的目标数等于 len(val_ids)-1。
+每个位置都是一个 V 分类问题，交叉熵直接接收 logits。数据不足与 split 范围的校验留在实现里；验证不消耗训练 Generator 通过独立采样器的组织保证，不另写随机状态或入口分支测试。
 
 <a id="text-inputs"></a>
 
@@ -409,7 +409,7 @@ python -m pytest tests/test_language_model.py -q
 先定义 `GPTBlock(embed_dim, num_heads, ffn_hidden_dim, dropout=0.0)`：
 
 1. 创建独立的 norm1、norm2，eps=1e-5；两个归一化均保留 gamma、beta。
-2. 创建 MultiHeadSelfAttention，显式设 bias=True。它使用三套 Q/K/V Linear，作者的 c_attn 将它们合为一个 Linear；计算等价，本项目继续分别定义 q_proj / k_proj / v_proj。后面的 test_gptblock_reference 将三套 weight 和 bias 按 Q/K/V 顺序沿 dim=0 拼接，复制到参考 Attention 的 in_proj_weight / in_proj_bias，核对这种对应关系。
+2. 创建 MultiHeadSelfAttention，显式设 bias=True。它使用三套 Q/K/V Linear，作者的 c_attn 将它们合为一个 Linear；计算等价，本项目继续分别定义 q_proj / k_proj / v_proj。沿代码核对三个投影的输入输出均为 C，理解合并投影只是将三个计算放在同一个 Linear 中；本周不另写参考层参数映射测试。
 3. Attention 的 softmax 权重 dropout 保留在注意力模块内部；GPTBlock 再注册一次投影输出 dropout，对应作者 resid_dropout。第一条残差为 `x = x + attn_output_dropout(attention(norm1(x), mask))`。
 4. FFN 按 Linear(C,hidden_dim) → GELU → Linear(hidden_dim,C) → Dropout 组织，两个 Linear 使用 bias=True；这里按 nanoGPT 在第二个 Linear 后做一次 dropout，GELU 后不另加隐藏层 dropout。第二条残差为 `x = x + ffn(norm2(x))`。
 5. GPTBlock.forward 接收 x、attn_mask、key_padding_mask=None，将 Mask 传给 Attention，只返回新的 x。
@@ -454,16 +454,13 @@ for block in self.blocks:
 
 上述 self.token_embedding、self.position_embedding 和 self.blocks 均在构造函数中建立；堆叠后接最终 LayerNorm 和词表输出层。每层收到同一个 causal_mask，当前样本不含 padding。ViT 不传 causal mask，GPT 不能沿用它的双向设置。
 
-#### 第二步：在 test_language_model.py 编写 GPT 形状、梯度与参考检查
+#### 第二步：沿 GPT 张量流做一次前向与反向
 
-继续向已有 `tests/test_language_model.py` 添加本日检查。
+在已有 `tests/test_language_model.py` 中导入 MiniGPT，新增 test_gpt_forward_backward。固定 V=8、B=2、T=8、C=32、heads=4、depth=2、FFN=128、dropout=0，用合法 ID 前向，查看 token embedding 与位置相加后的 `[2,8,32]`、两层 Block 保持的形状，以及 logits 的 `[2,8,8]`。
 
-修改 `tests/test_language_model.py`，顶层补充 `from torch import nn` 和 GPTBlock 的导入，新增 `test_gptblock_reference`，将以下四项写入该函数；模型形状 / 梯度另写入 `test_gpt_forward_backward`，未来隔离另写入 `test_gpt_causal_mask`：
+计算下一 token 的交叉熵并 backward，查看 token embedding、一个 Attention 投影和 FFN 的代表参数有有限梯度；确认 head.weight 与 token_embedding.weight 是同一个 Parameter，解释输入和输出权重共享。沿实现画出先 LayerNorm 再进入子层的两条残差，与第四周 post-LN 比较。
 
-1. 取 C=32、heads=4、FFN=128、dropout=0、CPU float64，创建自写 GPTBlock。参考使用 `nn.TransformerEncoderLayer`，设置 batch_first=True、norm_first=True、activation="gelu"、layer_norm_eps=1e-5、bias=True、dropout=0；在关闭所有 dropout 时，这条 pre-LN 计算顺序与作者 Block 对应。
-2. 在 torch.no_grad 下，把自写 q_proj / k_proj / v_proj 的 weight 按 dim=0 拼接后复制到 reference.self_attn.in_proj_weight，bias 也按 Q/K/V 顺序拼接；out_proj 单独复制。再把 norm1/norm2 的 gamma/beta 复制到参考 norm1/norm2.weight/bias，两个 FFN Linear 对应 linear1/linear2。
-3. 两边输入数值相同的独立 `[B,T,C]` 叶子 Tensor，传相同布尔 causal mask；参考的 Mask 参数名为 src_mask。使用同一固定 probe 反向，比较输出、输入梯度和对应参数梯度，最大绝对差以 1e-6 为目标。
-4. 将自写 Block 的 dropout 改为 0.1，检查 Attention 权重、Attention 投影输出、FFN 输出三处 dropout 均已注册并随 train/eval 切换；另外检查 MiniGPT 的 embedding dropout。非零 dropout 不做两套实现的逐值随机输出比较。
+本日不新增官方 GPTBlock 参数映射、逐参数梯度参考或 dropout 模式回归测试。
 
 #### 第三步：扰动后缀，检查 GPT 前缀 logits 不变
 
@@ -471,13 +468,13 @@ for block in self.blocks:
 
 修改后缀时比较前缀 logits；检查应在 eval 且关闭 dropout 下进行。不要因随机 dropout 让同一输入输出不同而误判为因果泄漏。
 
-取 B=2、T=8、k=3，把一份整数输入 clone 后，仅将 `[:,4:]` 改为 `(原ID+1) % V`。两次使用同一 eval 模型，比较 logits 的 `[:,:4]`，最大绝对差以 `1e-6` 为起始容差；取模保证扰动仍是合法 ID。另检查 T=1 能前向、T 超过 context 时明确报错，避免固定长度演示掩盖位置越界。
+在同一文件新增 test_gpt_causal_mask。取 B=2、T=8、k=3，把一份整数输入 clone 后，仅将 `[:,4:]` 改为 `(原ID+1) % V`。两次使用同一 eval 模型，比较 logits 的 `[:,:4]`，最大绝对差以 `1e-6` 为起始容差；取模保证扰动仍是合法 ID。context 上限校验留在实现中，不另写长度边界测试。
 
 #### 第四步：先拟合短文本
 
 固定一小段训练文本反复更新，观察 train loss 能否明显下降。若不下降，先查目标错位、mask 方向、optimizer 参数和 step，再扩大文本与训练步数。
 
-在 `tests/test_language_model.py` 新增 `test_gpt_short_text_fit`。函数内直接创建 33 个教学 ID：`torch.tensor([i % 8 for i in range(33)], dtype=torch.long)`，以前 32 个为 x、后 32 个为 y，各加 batch 维得到 `[1,32]`；不读取正式语料文件。新建 vocab_size=8、context_length=32、C=32、heads=4、depth=2、FFN=128、dropout=0 的临时 GPT 和 AdamW，固定这组输入约更新 100 次。记录初始与最终 loss，断言最终更低且有限，再检查 token/position embedding、各 Block、输出 head 的梯度存在且有限；共享的输入 / 输出权重按同一 Parameter 检查。不写正式 history 或 checkpoint。
+在交互环境做一次短序列拟合，不新增 pytest 函数。直接创建 33 个教学 ID：`torch.tensor([i % 8 for i in range(33)], dtype=torch.long)`，以前 32 个为 x、后 32 个为 y，各加 batch 维得到 `[1,32]`；不读取正式语料文件。新建 vocab_size=8、context_length=32、C=32、heads=4、depth=2、FFN=128、dropout=0 的临时 GPT 和 AdamW，固定这组输入约更新 100 次。每隔约 20 次打印 loss，观察最终是否更低且有限；若不下降，回看目标和更新步骤。不写正式 history 或 checkpoint。
 
 从昨天的 Bigram YAML 复制出 `configs/llm/mini_gpt.yaml`，保留完整 data 和 training，将 model 替换为：
 
@@ -586,7 +583,7 @@ checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路�
 
 两组都完成后，在草稿或交互环境读取各自 history，再保存合并对照图 `experiments/mini_gpt/week6/figures/loss_curves.png`。单模型训练入口不硬编码另一模型的结果路径，这样先训练 Bigram 时不会因 GPT 日志尚不存在而失败，第七周 BPE 也可直接复用同一入口。
 
-在 `tests/test_language_model.py` 新增 `test_lm_checkpoint_roundtrip(tmp_path)`，函数内分别创建小 Bigram / MiniGPT、固定输入及验证 IDs，调用 save_checkpoint 保存到 tmp_path，再调用 load_checkpoint 并新建同配置模型加载；同模型同批次 eval logits 保存前后最大差小于 `1e-6`；固定验证窗口的目标计数完全一致、平均 loss 差小于 `1e-6`。正式结果则从 best 对应的验证时点取 val_loss 和计数，不拿 last 的输出与 best 混比。
+本步直接用已训练的 best 重建模型，运行一次固定验证窗口，核对返回的 loss、目标数和记录对应；不另建 checkpoint 往返测试。正式结果取 best 对应的验证时点，不拿 last 的输出与 best 混比。
 
 #### 第四步：读曲线并定位异常
 

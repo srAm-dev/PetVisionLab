@@ -3,7 +3,7 @@
 学习指南：[第七周逐日任务](../../../docs/week7.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本周尚未记录实测结果。完成第七周的 BPE、采样和续训检查后，记录编码比较、恢复误差与三个模型各自的测试结果。
+本周尚未记录实测结果。完成第七周的 BPE、采样和续训检查后，记录编码比较、续训的步数与 loss 观察，以及三个模型各自的测试集结果。
 
 <a id="environment"></a>
 
@@ -26,12 +26,12 @@ python -m pip check
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
-| Day 1-2 | `python -m pytest tests/test_tokenizer.py -q` | 合并、保存加载、Unicode 往返 |
+| Day 1-2 | `python -m pytest tests/test_tokenizer.py -q` | 一个合并例子、Unicode 往返 |
 | Day 2 | `python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000` | 训练教学 BPE |
-| Day 3 | `python -m pytest tests/test_sampling.py -q` | 采样分布与复现 |
+| Day 3 | `python -m pytest tests/test_sampling.py -q` | 一个温度与 top-k 概率例子 |
 | Day 3 | `python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --top-k 20 --output experiments/mini_gpt/week7/samples.jsonl` | 较集中采样 |
 | Day 3 | `python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 1.0 --output experiments/mini_gpt/week7/samples.jsonl` | 不启用 top-k 的对照 |
-| Day 4 | `python -m pytest tests/test_resume.py -q` | 连续 40 与 20+20 恢复检查 |
+| Day 4 | `python scripts/train_gpt.py --config outputs/resume_demo/config.yaml`；将 steps 从 20 改为 40 后加 `--resume outputs/resume_demo/last.pt` | 观察从第 21 步继续更新，配置创建方法见指南 |
 | Day 5 | `python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml` | 创建配置后，从零训练 BPE GPT |
 | Day 5，确实中断且已有未完成的 last 时 | `python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --resume outputs/mini_gpt_bpe/last.pt` | 以相同配置继续到 training.steps，不额外训练一轮 |
 | Day 5 | `python scripts/compare_tokenizers.py` | 相同 val 原文的编码长度和耗时 |
@@ -44,9 +44,9 @@ python -m pip check
 
 BPE 学习相邻 token 的合并规则；pair 是有序 ID 对，merge rank 是规则的学习顺序。在 `scripts/generate.py::filter_logits` 中，温度先缩放 logits，top-k 再按第 k 高分设过滤阈值，阈值处并列项全部保留；sample_next_token 对过滤结果执行 softmax 和采样；它们不改变训练好的词表。术语和例子见[本周约定](../../../docs/week7.md#bpe-terms)与[采样步骤](../../../docs/week7.md#day-3)。
 
-BPE 起始 256 个字节，目标词表 512，训练子集只取 train 原文前 100,000 个字符，记录 hash、实际合并数与训练时间。BPE GPT 复用第六周结构/2000 步预算，从新词表对应的新模型训练；experiment_dir 为本周 `runs/bpe`，checkpoint 为 `outputs/mini_gpt_bpe`。续训检查单独使用 CPU 小模型 40 与 20+20 步，记录最大差异。采样组合比较始终使用同一 checkpoint 与 prompt；两组同时改变温度与 top-k，只描述组合效果。
+BPE 起始 256 个字节，目标词表 512，训练子集只取 train 原文前 100,000 个字符，记录 hash、实际合并数与训练时间。BPE GPT 复用第六周结构/2000 步预算，从新词表对应的新模型训练；experiment_dir 为本周 `runs/bpe`，checkpoint 为 `outputs/mini_gpt_bpe`。续训演示单独使用 CPU 小模型，先跑到 20 步再恢复到累计 40 步，记录 step 与 loss。采样组合比较始终使用同一 checkpoint 与 prompt；两组同时改变温度与 top-k，只描述组合效果。
 
-Day 4 在 `tests/test_resume.py::test_resume_matches_continuous` 中用临时配置和教学 token 调用真实 train_gpt.main() 的从零 / resume 分支，在 pytest 临时目录保存/读取 checkpoint，独立于正式 BPE 配置和输出。Day 5 才创建 mini_gpt_bpe.yaml 并启动正式训练；按[执行顺序](../../../docs/week7.md#bpe-resume-order)，先从零跑，确实中断且 `0 < last.step < training.steps` 时才使用恢复命令。已达到累计目标则直接评估，不需要再次训练或人为中断。恢复时保留 best_val_loss/best_step、原 best 文件和训练统计累计值，history 只追加恢复点之后的验证行，避免覆盖更优结果或重复记录。
+Day 4 用 outputs/resume_demo 下的独立小配置运行实际训练与恢复入口，不新建 test_resume.py，不做逐参数状态比较。Day 5 才创建 mini_gpt_bpe.yaml 并启动正式训练；按[执行顺序](../../../docs/week7.md#bpe-resume-order)，先从零跑，确实中断且 `0 < last.step < training.steps` 时才使用恢复命令。已达到累计目标则直接评估，不需要再次训练或人为中断。恢复时保留 best_val_loss/best_step、原 best 文件和训练统计累计值，history 只追加恢复点之后的验证行，避免覆盖更优结果或重复记录。
 
 tokenizer 训练脚本的参数和调用顺序见[Day 2](../../../docs/week7.md#bpe-training-entry)；训练、生成与编码比较统一通过[load_tokenizer](../../../docs/week7.md#tokenizer-dispatch)按 JSON type 选择字符 / BPE 实例。
 
@@ -68,7 +68,7 @@ ByteBPETokenizer.decode 默认 errors="replace"；`tests/test_tokenizer.py::test
 ## 周总结
 
 - BPE 检查：待填写 Unicode 往返、保存加载及同原文编码比较。
-- 续训证据：待填写 40 与 20+20 步的参数误差、状态比较及命令。
+- 续训观察：待填写 20 步保存与恢复到 40 步的命令、step、loss，以及 optimizer 和随机状态的作用。
 - 最终评估：待链接三个模型各自的测试结果、采样失败例子和后续问题。
 
 周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

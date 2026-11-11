@@ -27,7 +27,7 @@ python -m pip check
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/prepare_text.py` | 下载记录、80/10/10 原文划分与字符词表 |
-| Day 2-4 | `python -m pytest tests/test_language_model.py -q` | 错位、形状、因果性与保存加载检查 |
+| Day 2-4 | `python -m pytest tests/test_language_model.py -q` | 错位、窗口覆盖、一次更新与因果隔离小例子 |
 | Day 4 | `python scripts/train_gpt.py --config configs/llm/bigram_char.yaml` | 接通保存后正式训练字符 Bigram |
 | Day 4 | `python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml` | 接通保存后正式训练字符 Mini-GPT |
 | Day 5 | `python scripts/generate.py --checkpoint outputs/bigram_char/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --output experiments/mini_gpt/week6/samples.jsonl` | Bigram 生成 |
