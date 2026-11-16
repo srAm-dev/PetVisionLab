@@ -1,7 +1,9 @@
+import math
 import torch
 from torch import nn
 from petvision.models.transformer.normalization import LayerNorm
 from petvision.models.transformer.attention import MultiHeadSelfAttention
+from petvision.models.transformer.positional_encoding import SinusoidalPositionalEncoding
 
 class FeedForward(nn.Module):
     def __init__(self, embed_dim, hidden_dim):
@@ -37,3 +39,30 @@ class EncoderBlock(nn.Module):
         x = self.addnorm1(x, attention_output)
         ffn_output = self.ffn(x)
         return self.addnorm2(x, ffn_output)
+
+
+class Encoder(nn.Module):
+    def __init__(self, embed_dim, num_heads, ffn_hidden_dim, depth=2, dropout=0.0, max_length=128):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.position = SinusoidalPositionalEncoding(
+            embed_dim=embed_dim,
+            max_length=max_length,
+            dropout=dropout,
+        )
+        self.blocks = nn.ModuleList([
+            EncoderBlock(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                ffn_hidden_dim=ffn_hidden_dim,
+                dropout=dropout,
+            )
+            for _ in range(depth)
+        ])
+
+    def forward(self, x, attn_mask=None, key_padding_mask=None):
+        x = self.position(x * math.sqrt(self.embed_dim))
+        for block in self.blocks:
+            x = block(x, attn_mask, key_padding_mask)
+        return x
+

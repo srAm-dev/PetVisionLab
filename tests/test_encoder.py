@@ -1,7 +1,10 @@
+import math
+
 import pytest
 import torch
 
-from petvision.models.transformer.blocks import EncoderBlock, FeedForward
+from petvision.models.transformer.blocks import Encoder, EncoderBlock, FeedForward
+from petvision.models.transformer.positional_encoding import SinusoidalPositionalEncoding
 
 
 def test_feedforward_token_independence():
@@ -197,3 +200,91 @@ def test_encoderblock_train_eval():
 
     block.train()
     assert all(module.training for module in block.modules())
+
+
+def test_positional_encoding_values():
+    position = SinusoidalPositionalEncoding(embed_dim=4, dropout=0.0).cpu()
+    x = torch.zeros((1, 3, 4))
+    output = position(x)
+
+    # C=4 时，两对通道的分母分别为 1、100。
+    expected = torch.tensor([
+        [0.0, 1.0, 0.0, 1.0],
+        [math.sin(1), math.cos(1), math.sin(0.01), math.cos(0.01)],
+    ])
+    assert output.shape == x.shape
+    torch.testing.assert_close(output[0, :2], expected, rtol=0, atol=1e-7)
+    torch.testing.assert_close(position(x + 1), output + 1, rtol=0, atol=1e-7)
+    assert not torch.equal(output[:, 0], output[:, 1])
+
+    # 固定位置表跟随模块保存、迁移，但不作为参数交给优化器。
+    assert dict(position.named_buffers())["pe"] is position.pe
+    assert "pe" not in dict(position.named_parameters())
+    assert not position.pe.requires_grad
+    print("位置 0、1 的编码:", output[0, :2].tolist())
+    print("buffer:", list(dict(position.named_buffers())))
+
+
+def test_encoder_stack():
+    torch.manual_seed(42)
+    encoder = Encoder(
+        embed_dim=32, num_heads=4, ffn_hidden_dim=128, depth=2, dropout=0.0,
+    ).cpu().double()
+    x = torch.randn((2, 8, 32), dtype=torch.float64, requires_grad=True)
+    assert len(encoder.blocks) == 2
+    assert encoder.blocks[0] is not encoder.blocks[1]
+
+    output = encoder(x)
+    assert output.shape == x.shape
+    assert torch.isfinite(output).all().item()
+
+    # 手动走一遍同一条路径，观察入口与两层的形状；不建立第二套模型。
+    with torch.no_grad():
+        stage = encoder.position(x * math.sqrt(encoder.embed_dim))
+        print("入口缩放、位置相加后:", tuple(stage.shape))
+        for index, block in enumerate(encoder.blocks, start=1):
+            stage = block(stage)
+            assert stage.shape == x.shape
+            print(f"Block {index} 输出:", tuple(stage.shape))
+        torch.testing.assert_close(output, stage, rtol=0, atol=1e-12)
+
+    # 随机 probe 避免 LayerNorm 输出直接求和导致的退化梯度。
+    probe = torch.randn_like(output)
+    (output * probe).sum().backward()
+    representatives = [
+        ("输入", x),
+        ("第一层 Q 投影", encoder.blocks[0].attention.q_proj.weight),
+        ("最后一层 FFN 输出投影", encoder.blocks[-1].ffn.dense2.weight),
+    ]
+    for name, tensor in representatives:
+        assert tensor.grad is not None, f"{name} 没有梯度"
+        assert torch.isfinite(tensor.grad).all().item(), f"{name} 梯度包含非有限值"
+        print(f"{name} 梯度:", tuple(tensor.grad.shape), "有限")
+
+
+def test_encoder_causal_mask():
+    torch.manual_seed(42)
+    encoder = Encoder(
+        embed_dim=32, num_heads=4, ffn_hidden_dim=128, depth=2, dropout=0.0,
+    ).cpu().double().eval()
+    x = torch.randn((2, 8, 32), dtype=torch.float64)
+    perturbed = x.clone()
+    perturbed[:, 4:] += 10.0
+    attn_mask = torch.ones((8, 8), dtype=torch.bool).triu(1)
+
+    with torch.no_grad():
+        output = encoder(x, attn_mask=attn_mask)
+        perturbed_output = encoder(perturbed, attn_mask=attn_mask)
+        # 同一模型去掉 Mask，观察双向 Attention 能读取后缀的区别。
+        unmasked_output = encoder(x)
+        unmasked_perturbed_output = encoder(perturbed)
+
+    torch.testing.assert_close(
+        output[:, :4], perturbed_output[:, :4], rtol=0, atol=1e-6,
+    )
+    masked_difference = (output[:, :4] - perturbed_output[:, :4]).abs().max().item()
+    unmasked_difference = (
+        unmasked_output[:, :4] - unmasked_perturbed_output[:, :4]
+    ).abs().max().item()
+    assert unmasked_difference > 1e-6
+    print(f"后缀扰动后的前缀差: causal={masked_difference:.6e}, 双向={unmasked_difference:.6e}")

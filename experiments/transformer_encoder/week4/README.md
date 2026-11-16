@@ -156,6 +156,24 @@ causal 测试将输入位置 2、3 的特征加 10，比较前两个位置的输
 
 运行 `python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q`，结果为 **63 passed**：Attention 37 项、LayerNorm 12 项、FFN 与 Block 14 项。未运行 GPU 检查；完整 Encoder 的位置编码与堆叠留到 Day 5。
 
+## Day 5 第一步：正弦位置编码（2026-11-15）
+
+完成 positional_encoding.py 的 SinusoidalPositionalEncoding。构造时生成 `[1,max_length,C]` 的固定位置表，偶数通道取 sin、奇数通道取 cos，用 register_buffer 保存为 pe。forward 按输入长度取表，与 token 特征相加后做 dropout，输入输出均为 `[B,T,C]`。
+
+用 CPU float32、C=4、max_length=128、dropout=0 和全零输入 `[1,3,4]` 运行一个小例子：位置 0 得到 `[0,1,0,1]`，位置 1 约为 `[0.841471,0.540302,0.010000,0.999950]`，与手算公式在 1e-7 容差内一致。输入各元素加 1 后，输出也各加 1，形状保持不变。
+
+pe 的形状为 `[1,128,4]`，出现在 named_buffers 和 state_dict 中，不出现在 named_parameters 中；将模块转为 float64 时，pe 随之转换。此次用直接运行的小例子核对，正式教学测试留到第三步。
+
+## Day 5 第三步：位置编码、两层 Encoder 与因果隔离（2026-11-16）
+
+在 tests/test_encoder.py 新增三个教学检查，已有测试保留：
+
+- test_positional_encoding_values：CPU float32，输入为全零 `[1,3,4]`。位置 0、1 与手算公式在 1e-7 容差内一致；输入加 1 后输出也加 1，pe 注册为 buffer，不作为可学习参数。
+- test_encoder_stack：CPU float64、随机种子 42、B=2、T=8、C=32、heads=4、FFN=128、depth=2、dropout=0。入口缩放与位置相加后、第一层出口、第二层出口均为 `[2,8,32]`。用同一模型逐层计算得到的输出与 Encoder.forward 在 1e-12 容差内一致；输入、第一层 Q 投影、最后一层 FFN 输出投影的梯度存在且有限。
+- test_encoder_causal_mask：使用同一组尺寸的 eval 模型，仅将输入位置 4-7 加 10。传 causal Mask 时，前 4 个位置输出的最大绝对差为 0；不传 Mask 时约为 2.883892。两次扰动前后使用同一个模型，说明双向与因果注意力读取范围的差别。
+
+运行 `python -m pytest tests/test_encoder.py -q -s`，结果为 **17 passed**，其中本步新增 3 项。加 -s 可查看位置编码、各层形状、代表梯度形状和扰动差值。
+
 ## 后续计划配置与待保存结果
 
 形状中 B 是批次序列数、T 是每条序列的位置数、C 是每个位置的特征数；heads 是头数，每头维度为 C/heads。Q/K 决定关注权重，V 提供被加权的信息；具体矩阵计算见[形状与术语说明](../../../docs/week4.md#attention-shapes)和[Day1 手算](../../../docs/week4.md#day-1)。
