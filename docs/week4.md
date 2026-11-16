@@ -614,11 +614,50 @@ PE(pos,2i+1) = cos(pos / 10000^(2i/C))
 
 构造时先校验 embed_dim 为正偶数、max_length 为正整数，再建立 `[1,max_length,C]` 的 buffer。forward 检查输入最后一维等于 embed_dim、T 不超过上限，再取 `[:, :T]`。学习检查只用下面的固定输入；输入校验保留在实现中，不另写异常输入测试。位置表属于 buffer，Block 的可学习参数通过 parameters 管理；在 named_buffers 和 named_parameters 中分别查看它们。
 
-#### 第二步：创建独立 EncoderBlock，逐层传递 Mask
+#### 第二步：在 blocks.py 定义 Encoder，连接位置编码与多层 Block
 
-在已有 `src/petvision/models/transformer/blocks.py` 中导入位置编码类并增加 `Encoder(embed_dim, num_heads, ffn_hidden_dim, depth=2, dropout=0.0, max_length=128)`，由它创建位置编码和独立的 post-LN Block 实例。本教学 Encoder 接收 `[B,T,C]` 的已嵌入浮点向量；对应教材 TransformerEncoder 的 Embedding 之后部分，本周不增加词表层。顶层导入 math，保存 embed_dim，下面片段放在 Encoder.forward 内：
+本步只修改 `src/petvision/models/transformer/blocks.py`，在已有 EncoderBlock 后面定义 Encoder。Encoder 接收已经嵌入的浮点特征 `[B,T,C]`，负责入口缩放、位置编码和多个 Block 的顺序调用。EncoderBlock 继续负责自己的 Attention、FFN、两次残差与 post-LN。
 
-Encoder 构造时创建 `self.position = SinusoidalPositionalEncoding(...)`，输入转到 GPU 后，buffer 随整个模型迁移。
+本周不增加词表或 Embedding 层。以 B=2、T=8、C=32、depth=2 为例，完整计算顺序是：
+
+```text
+输入 [2,8,32]
+→ 乘 sqrt(32)
+→ 加位置编码，再做位置 dropout
+→ 第一个 EncoderBlock
+→ 第二个 EncoderBlock
+→ 返回 [2,8,32]
+```
+
+按下面顺序写完构造函数，再写 forward；本步不切换到测试文件。
+
+1. 在 blocks.py 顶层导入 math，以及 `from petvision.models.transformer.positional_encoding import SinusoidalPositionalEncoding`。nn 和 EncoderBlock 已在本文件中定义或导入，直接使用。
+2. 定义继承 nn.Module 的 `Encoder(embed_dim, num_heads, ffn_hidden_dim, depth=2, dropout=0.0, max_length=128)`。在 __init__ 中先调用 super().__init__()，保存 self.embed_dim，供 forward 中的 sqrt(C) 缩放使用。depth 是 Block 的层数。
+3. 创建 self.position，将 embed_dim、max_length、dropout 传给第一步完成的位置编码类。这个成员负责位置相加和位置 dropout。
+4. 创建 self.blocks，用 nn.ModuleList 保存 depth 个独立的 EncoderBlock。每个 Block 的 embed_dim、num_heads、ffn_hidden_dim、dropout 都来自 Encoder 构造参数。
+
+第 3、4 项在 Encoder.__init__ 内具体写为：
+
+```python
+self.position = SinusoidalPositionalEncoding(
+    embed_dim=embed_dim,
+    max_length=max_length,
+    dropout=dropout,
+)
+self.blocks = nn.ModuleList([
+    EncoderBlock(
+        embed_dim=embed_dim,
+        num_heads=num_heads,
+        ffn_hidden_dim=ffn_hidden_dim,
+        dropout=dropout,
+    )
+    for _ in range(depth)
+])
+```
+
+这里每次循环都新建一个 EncoderBlock，因此 depth=2 时有两套独立参数。ModuleList 让 PyTorch 管理这些子模块的参数、设备迁移和 train/eval 状态；它不会自动完成逐层前向，计算顺序由下面的 for 循环决定。不要先创建一个 Block 再用列表乘法重复引用它。
+
+构造函数完成后，定义 `forward(self, x, attn_mask=None, key_padding_mask=None)`。x 是本次输入，两个 Mask 是本次调用传入的可选参数；需要在签名中声明，函数体里才能使用。方法体按以下顺序写：
 
 ```python
 x = self.position(x * math.sqrt(self.embed_dim))
@@ -628,16 +667,13 @@ for block in self.blocks:
 return x
 ```
 
-位置模块创建时传入 Encoder 的 dropout。sqrt(C) 缩放与正弦位置相加都只在入口执行一次；最后一个 Block 已完成自己的 post-LN，外层 Encoder 直接返回。ViT/GPT 按各自结构管理可学习位置嵌入，不调用这段文本 Encoder 入口。
+第一行先缩放 token 特征，再调用位置模块完成相加和 dropout。它放在循环外，整条序列只执行一次。循环中，每个 Block 都接收上一个 Block 的输出，以及本次调用的同一组 Mask；每次计算后用新的结果更新 x。没有传 Mask 时，两个参数保持 None，使用双向注意力；传入 causal Mask 时，每一层都必须收到它。
 
-实现时按以下顺序组织，源码完成后在第三步用固定输入运行：
+最后直接返回循环后的 x。每个 Block 已有自己的 post-LN，Encoder 外层不再加一次 LayerNorm。sqrt(C) 是这里的入口缩放；Attention 内的 scores 仍按原实现除以 sqrt(head_dim)，两处计算都保留。
 
-1. 先只创建 dropout=0 的位置编码模块，输入全零 `[2,8,32]`，确认输出与位置表前 8 行相同；再输入非零张量，确认做的是相加，输出仍为 `[2,8,32]`。
-2. 创建 depth=1 的 Encoder：注册位置编码和一个新 Block；forward 先按 sqrt(C) 缩放输入，再调用位置模块与 Block，把两个 Mask 参数原样传入，最后直接返回 Block 输出。
-3. 将构造改为按 depth 循环创建独立 Block 并放入 ModuleList，forward 按容器顺序逐层更新 x。不要重复引用同一个 Block。
-源码完成后，再在第三步执行位置编码与堆叠检查；若多层失败，先比较第一层出口，第一层正确后再排查第二层，避免在外层额外加一次归一化。
+对照构造函数核对：forward 中的 self.embed_dim、self.position、self.blocks 都应已创建。若构造函数只写了 self.encoder = EncoderBlock(...)，还没有建立上面要遍历的 self.blocks；按第 4 项改为 ModuleList 即可。
 
-EncoderBlock 负责自己的 Attention、ReLU FFN 和两次 post-LN；教学 Encoder 负责入口缩放、正弦位置编码与 Block 堆叠。第五周 ViT 和第六周 GPT 继续复用已验证的 Attention 与 LayerNorm，在各自模型文件定义符合目标参考的 Block。
+完成源码后，再到第三步用固定输入检查位置编码、两层张量流和 Mask 传递。第五周 ViT 和第六周 GPT 继续复用 Attention 与 LayerNorm，按各自章节定义 Block 和入口位置编码。
 
 #### 第三步：用三个小检查理解位置编码与堆叠
 
