@@ -1,9 +1,13 @@
-import torch
-import numpy as np
+"""用线性模型比较手写梯度与 PyTorch 自动求导。"""
 
-def main():  
-    X = torch.tensor([[1., 2.], [3., 4.], [5., 6.]], dtype=torch.float64)
-    y = torch.tensor([[1.], [2.], [3.]], dtype=torch.float64)
+import numpy as np
+import torch
+
+
+def main():
+    """对比 NumPy 和 autograd 梯度，观察累加、清零与 detach。"""
+    X = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float64)
+    y = torch.tensor([[1.0], [2.0], [3.0]], dtype=torch.float64)
     w = torch.zeros((2, 1), dtype=torch.float64, requires_grad=True)
     b = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
     loss = ((X @ w + b - y) ** 2).mean()
@@ -17,7 +21,7 @@ def main():
     w_np = w.detach().numpy()
     b_np = b.detach().numpy()
     residual_np = X_np @ w_np + b_np - y_np
-    loss_np = np.mean(residual_np ** 2)
+    loss_np = np.mean(residual_np**2)
     dw_np = (2 / X_np.shape[0]) * X_np.T @ residual_np
     db_np = (2 / X_np.shape[0]) * np.sum(residual_np)
     print("loss_np:", loss_np)
@@ -33,7 +37,7 @@ def main():
     assert dw_error < 1e-8
     assert db_error < 1e-8
 
-    w = torch.tensor([[0.3],[-0.7]], dtype=torch.float64, requires_grad=True)
+    w = torch.tensor([[0.3], [-0.7]], dtype=torch.float64, requires_grad=True)
     b = torch.tensor(0.2, dtype=torch.float64, requires_grad=True)
     loss = ((X @ w + b - y) ** 2).mean()
     loss.backward()
@@ -46,7 +50,7 @@ def main():
     w_np = w.detach().numpy()
     b_np = b.detach().numpy()
     residual_np = X_np @ w_np + b_np - y_np
-    loss_np = np.mean(residual_np ** 2)
+    loss_np = np.mean(residual_np**2)
     dw_np = (2 / X_np.shape[0]) * X_np.T @ residual_np
     db_np = (2 / X_np.shape[0]) * np.sum(residual_np)
     print("loss_np:", loss_np)
@@ -63,6 +67,7 @@ def main():
     assert dw_error < 1e-8
     assert db_error < 1e-8
 
+    # clone 保存独立的梯度快照，后续 backward 会累加到原来的 .grad。
     first_dw = w.grad.clone()
     first_db = b.grad.clone()
 
@@ -71,7 +76,7 @@ def main():
     print("second dw:", w.grad)
     print("second db:", b.grad)
     dw_error = (w.grad - 2 * first_dw).abs().max().item()
-    db_error = abs(b.grad - 2*first_db)
+    db_error = abs(b.grad - 2 * first_db)
     print("loss2:", loss2.item())
     print("dw max abs error:", dw_error)
     print("db abs error:", db_error)
@@ -92,7 +97,6 @@ def main():
     print("db abs error:", db_error)
     assert dw_error < 1e-8
     assert db_error < 1e-8
-
 
     print("X.shape:", X.shape)
     print("X.dtype:", X.dtype)
@@ -129,6 +133,7 @@ def main():
     assert w.grad is not None and b.grad is not None
     assert torch.isfinite(w.grad).all().item()
     assert torch.isfinite(b.grad).all().item()
+
 
 if __name__ == "__main__":
     main()

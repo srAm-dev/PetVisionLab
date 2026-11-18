@@ -1,24 +1,40 @@
+"""从 YAML 组装图像分类实验并调度训练和结果保存。"""
+
 import argparse
-from pathlib import Path
-import yaml
-import torch
 import hashlib
+from itertools import islice
 import json
+from pathlib import Path
 import time
-from itertools import islice 
-from torch.utils.data import Subset, DataLoader
+
+import torch
+from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from torchvision.transforms import v2
-from petvision.utils.history import save_history, append_history, plot_history
-from petvision.data.datasets import build_mnist_loaders, build_cifar10_loaders
-from petvision.models.cv.mlp import MLP
+import yaml
+
+from petvision.data.datasets import build_cifar10_loaders, build_mnist_loaders
 from petvision.models.cv.cnn import CNN
+from petvision.models.cv.mlp import MLP
 from petvision.models.cv.resnet import ResNet18
-from petvision.training.cv_trainer import train_one_epoch, evaluate
+from petvision.training.cv_trainer import evaluate, train_one_epoch
+from petvision.utils.checkpoint import load_checkpoint, save_checkpoint
+from petvision.utils.history import append_history, plot_history, save_history
 from petvision.utils.seed import set_seed
-from petvision.utils.checkpoint import save_checkpoint, load_checkpoint
+
 
 def run_smoke(model, train_loader, val_loader, optimizer, criterion, device):
+    """各取最多两个批次检查训练与验证是否接通，并打印指标。
+
+    Args:
+        model: 待检查的分类模型，训练批次会更新其参数。
+        train_loader: 提供训练批次的加载器。
+        val_loader: 提供验证批次的加载器。
+        optimizer: 绑定 model 参数的优化器。
+        criterion: 分类损失函数。
+        device: 计算设备。
+    """
+    # islice 延迟取得前两个批次，无需先把整个加载器转成列表。
     train_metrics = train_one_epoch(
         model, islice(train_loader, 2), optimizer, criterion, device
     )
@@ -26,10 +42,22 @@ def run_smoke(model, train_loader, val_loader, optimizer, criterion, device):
     print("smoke train:", train_metrics)
     print("smoke val:", val_metrics)
 
+
 def run_overfit(model, train_loader, optimizer, criterion, device, n_samples):
+    """反复更新同一个训练批次，观察模型能否拟合少量样本。
+
+    Args:
+        model: 待训练的分类模型。
+        train_loader: 提供训练子集的加载器。
+        optimizer: 绑定 model 参数的优化器。
+        criterion: 分类损失函数。
+        device: 计算设备。
+        n_samples: 从训练子集开头固定选取的样本数。
+    """
     fixed_set = Subset(train_loader.dataset, list(range(n_samples)))
     fixed_loader = DataLoader(fixed_set, batch_size=n_samples, shuffle=False)
     images, labels = next(iter(fixed_loader))
+    # 单元素列表可以每轮重新遍历，训练与评估会反复使用这一批数据。
     fixed_batch = [(images, labels)]
     initial = evaluate(model, fixed_batch, criterion, device)
     print("overfit initial:", initial)
@@ -45,25 +73,52 @@ def run_overfit(model, train_loader, optimizer, criterion, device, n_samples):
     final = evaluate(model, fixed_batch, criterion, device)
     print("overfit final:", final)
 
-def run_training(cfg, model, train_loader, val_loader, optimizer, criterion, device):
+
+def run_training(
+    cfg, model, train_loader, val_loader, optimizer, criterion, device
+):
+    """执行正式训练并保存配置、逐轮指标、曲线和 checkpoint。
+
+    Args:
+        cfg: 从 YAML 解析的训练配置，包含预算、划分路径和输出目录。
+        model: 已迁移到 device 的分类模型。
+        train_loader: 提供完整训练批次的加载器。
+        val_loader: 提供验证批次的加载器。
+        optimizer: 绑定 model 参数的优化器。
+        criterion: 分类损失函数。
+        device: 计算设备。
+
+    Raises:
+        ValueError: 配置中的训练轮数不是正整数。
+        FileExistsError: CIFAR 运行目录已有日志或目标 checkpoint。
+    """
     best_accuracy = float("-inf")
-    split_sha256 = hashlib.sha256(Path(cfg["data"]["split_path"]).read_bytes()).hexdigest()
+    split_sha256 = hashlib.sha256(
+        Path(cfg["data"]["split_path"]).read_bytes()
+    ).hexdigest()
     epochs = cfg["training"]["epochs"]
     if type(epochs) is not int or epochs <= 0:
         raise ValueError("training.epochs 必须是正整数")
 
     experiment_dir = Path(cfg["experiment_dir"])
-    record_resources = cfg["data"]["name"]=="cifar10"
+    record_resources = cfg["data"]["name"] == "cifar10"
     variant = experiment_dir.name
     history_path = experiment_dir / "history.csv"
     output_dir = Path(cfg["output_dir"])
-    if record_resources and history_path.exists() and history_path.stat().st_size > 0:
-        raise FileExistsError("实验目录已有 history.csv，请先归档原结果或使用新的 experiment_dir")
+    if (
+        record_resources
+        and history_path.exists()
+        and history_path.stat().st_size > 0
+    ):
+        raise FileExistsError(
+            "实验目录已有 history.csv，请先归档原结果或使用新的 experiment_dir"
+        )
     if record_resources:
         for filename in ("initial.pt", "best.pt", "last.pt"):
             if (output_dir / filename).exists():
                 raise FileExistsError(
-                    f"输出目录已有 {filename}，请先归档原结果或使用新的 output_dir"
+                    f"输出目录已有 {filename}，"
+                    "请先归档原结果或使用新的 output_dir"
                 )
     experiment_dir.mkdir(parents=True, exist_ok=True)
     with (experiment_dir / "config.yaml").open("w", encoding="utf-8") as file:
@@ -71,12 +126,15 @@ def run_training(cfg, model, train_loader, val_loader, optimizer, criterion, dev
 
     if record_resources:
         # 在第一次训练前向之前保存参数和 BN buffers，供 Day 5 对齐初始状态。
-        save_checkpoint({
-            "model_state": model.state_dict(),
-            "model_config": cfg["model"],
-            "seed": cfg["training"]["seed"],
-            "step": 0,
-        }, output_dir / "initial.pt")
+        save_checkpoint(
+            {
+                "model_state": model.state_dict(),
+                "model_config": cfg["model"],
+                "seed": cfg["training"]["seed"],
+                "step": 0,
+            },
+            output_dir / "initial.pt",
+        )
     history = []
     if record_resources:
         # 计时包含训练、验证、逐轮日志与 best/last 保存。
@@ -109,14 +167,14 @@ def run_training(cfg, model, train_loader, val_loader, optimizer, criterion, dev
         )
         # 每轮保存 last；仅验证准确率提升时更新 best。
         checkpoint = {
-            'model_state': model.state_dict(),
-            'model_config': cfg['model'],
-            'config': cfg,
-            'epoch': epoch,
-            'val_accuracy': val_metrics['accuracy'],
-            'val_loss': val_metrics['loss'],
-            'seed': cfg['training']['seed'],
-            'split_sha256': split_sha256,
+            "model_state": model.state_dict(),
+            "model_config": cfg["model"],
+            "config": cfg,
+            "epoch": epoch,
+            "val_accuracy": val_metrics["accuracy"],
+            "val_loss": val_metrics["loss"],
+            "seed": cfg["training"]["seed"],
+            "split_sha256": split_sha256,
         }
         save_checkpoint(checkpoint, output_dir / "last.pt")
         if val_metrics["accuracy"] > best_accuracy:
@@ -130,7 +188,8 @@ def run_training(cfg, model, train_loader, val_loader, optimizer, criterion, dev
         train_seconds = time.perf_counter() - started
         peak_allocated_mib = (
             torch.cuda.max_memory_allocated(device) / 1024**2
-            if device.type == "cuda" else None
+            if device.type == "cuda"
+            else None
         )
         summary = {
             "params": sum(p.numel() for p in model.parameters()),
@@ -141,14 +200,25 @@ def run_training(cfg, model, train_loader, val_loader, optimizer, criterion, dev
             "dtype": str(next(model.parameters()).dtype),
             "timing_scope": "train+validation+epoch_logging+checkpoint_io",
         }
-        with (experiment_dir / "run_summary.json").open("w", encoding="utf-8") as file:
+        with (experiment_dir / "run_summary.json").open(
+            "w", encoding="utf-8"
+        ) as file:
             json.dump(summary, file, ensure_ascii=False, indent=2)
         plot_history(history, experiment_dir, variant=variant)
     else:
         save_history(history, experiment_dir)
         plot_history(history, experiment_dir)
 
+
 def parse_args(argv=None):
+    """解析当前脚本的命令行参数。
+
+    Args:
+        argv: 可选的参数列表。为 None 时读取实际命令行。
+
+    Returns:
+        argparse.Namespace，包含解析后的路径和选项。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     modes = parser.add_mutually_exclusive_group()
@@ -159,7 +229,9 @@ def parse_args(argv=None):
         parser.error("--overfit-samples 必须大于 0")
     return args
 
+
 def main():
+    """读取 YAML，构造训练对象并执行命令指定的运行模式。"""
     args = parse_args()
     with args.config.open(encoding="utf-8") as file:
         cfg = yaml.safe_load(file)
@@ -178,35 +250,51 @@ def main():
     print("device:", device)
 
     data_cfg = cfg["data"]
-    if data_cfg["name"]=="mnist":
+    if data_cfg["name"] == "mnist":
         loader_builder = build_mnist_loaders
         normalize = cfg["data"]["normalize"]
-        eval_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=normalize["mean"], std=normalize["std"]),
-        ])
+        eval_transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=normalize["mean"], std=normalize["std"]
+                ),
+            ]
+        )
         # 当前 MNIST 不做随机增强，训练与评估使用相同的确定性预处理。
         train_transform = eval_transform
-    elif data_cfg["name"]=="cifar10":
-        assert data_cfg["image_size"]==32
+    elif data_cfg["name"] == "cifar10":
+        assert data_cfg["image_size"] == 32
         loader_builder = build_cifar10_loaders
         normalize = cfg["data"]["normalize"]
-        train_transform=v2.Compose([
-            v2.ToImage(),
-            v2.RandomCrop(32, padding=data_cfg["augmentation"]["random_crop_padding"]),
-            v2.RandomHorizontalFlip() if data_cfg["augmentation"]["random_horizontal_flip"] else torch.nn.Identity(),
-            v2.Resize((96, 96), antialias=True) if cfg["model"]["name"] == "resnet18" else torch.nn.Identity(),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize(mean=normalize["mean"], std=normalize["std"])
-        ])
-        eval_transform=v2.Compose([
-            v2.ToImage(),
-            v2.Resize((96, 96), antialias=True) if cfg["model"]["name"] == "resnet18" else torch.nn.Identity(),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize(mean=normalize["mean"], std=normalize["std"])
-        ])
+        train_transform = v2.Compose(
+            [
+                v2.ToImage(),
+                v2.RandomCrop(
+                    32, padding=data_cfg["augmentation"]["random_crop_padding"]
+                ),
+                v2.RandomHorizontalFlip()
+                if data_cfg["augmentation"]["random_horizontal_flip"]
+                else torch.nn.Identity(),
+                v2.Resize((96, 96), antialias=True)
+                if cfg["model"]["name"] == "resnet18"
+                else torch.nn.Identity(),
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Normalize(mean=normalize["mean"], std=normalize["std"]),
+            ]
+        )
+        eval_transform = v2.Compose(
+            [
+                v2.ToImage(),
+                v2.Resize((96, 96), antialias=True)
+                if cfg["model"]["name"] == "resnet18"
+                else torch.nn.Identity(),
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Normalize(mean=normalize["mean"], std=normalize["std"]),
+            ]
+        )
     else:
-        raise ValueError(f"不支持的数据集:{data_cfg["name"]}")
+        raise ValueError(f"不支持的数据集:{data_cfg['name']}")
     if args.overfit_samples is not None:
         train_transform = eval_transform
     train_loader, val_loader, _ = loader_builder(
@@ -219,22 +307,22 @@ def main():
         num_workers=data_cfg["num_workers"],
         validation_size=data_cfg["validation_size"],
     )
-    
+
     model_cfg = cfg["model"]
-    if model_cfg["name"]=='mlp':
+    if model_cfg["name"] == "mlp":
         model = MLP(
             input_dim=model_cfg["input_dim"],
             hidden_dims=model_cfg["hidden_dims"],
             num_classes=model_cfg["num_classes"],
         ).to(device)
-    elif model_cfg["name"]=='cnn':
+    elif model_cfg["name"] == "cnn":
         if type(model_cfg["use_bn"]) is not bool:
             raise ValueError("model.use_bn 必须是布尔值")
         model = CNN(
             num_classes=model_cfg["num_classes"],
             use_bn=model_cfg["use_bn"],
         ).to(device)
-    elif model_cfg["name"]=='resnet18':
+    elif model_cfg["name"] == "resnet18":
         use_residual = model_cfg.get("use_residual", True)
         if type(use_residual) is not bool:
             raise ValueError("model.use_residual 必须是布尔值")
@@ -243,14 +331,16 @@ def main():
             use_residual=use_residual,
         ).to(device)
     else:
-        raise ValueError(f"不支持的模型类型:{model_cfg["name"]}")
+        raise ValueError(f"不支持的模型类型:{model_cfg['name']}")
 
     training_cfg = cfg["training"]
     init_path = training_cfg.get("init_checkpoint")
     if init_path is not None:
         checkpoint = load_checkpoint(init_path)
         if type(checkpoint.get("step")) is not int or checkpoint["step"] != 0:
-            raise ValueError("training.init_checkpoint 必须指向 step=0 的初始状态")
+            raise ValueError(
+                "training.init_checkpoint 必须指向 step=0 的初始状态"
+            )
         if checkpoint["seed"] != training_cfg["seed"]:
             raise ValueError("初始状态的 seed 与 training.seed 不一致")
 
@@ -268,6 +358,7 @@ def main():
 
         source_state = checkpoint["model_state"]
         target_state = model.state_dict()
+        # 字典的 keys() 视图可做交集和差集，用于区分可复制项和两侧独有项。
         common_keys = source_state.keys() & target_state.keys()
         source_only = source_state.keys() - target_state.keys()
         target_only = target_state.keys() - source_state.keys()
@@ -278,8 +369,13 @@ def main():
             if checkpoint["model_config"].get("use_bn", True):
                 for name, module in model.named_modules():
                     if isinstance(module, torch.nn.Identity):
-                        for field in ("weight", "bias", "running_mean",
-                                      "running_var", "num_batches_tracked"):
+                        for field in (
+                            "weight",
+                            "bias",
+                            "running_mean",
+                            "running_var",
+                            "num_batches_tracked",
+                        ):
                             expected_source_only.add(f"{name}.{field}")
         if source_only != expected_source_only or target_only:
             raise ValueError(
@@ -293,47 +389,64 @@ def main():
                 raise ValueError(f"初始状态的 {name} dtype 与当前模型不一致")
 
         # 用完整目标 key 严格加载，再逐项确认复制后的值完全相同。
-        model.load_state_dict({name: source_state[name] for name in target_state}, strict=True)
+        model.load_state_dict(
+            {name: source_state[name] for name in target_state}, strict=True
+        )
         max_difference = 0.0
         for name, value in model.state_dict().items():
             value = value.cpu()
             if not torch.equal(value, source_state[name]):
                 raise RuntimeError(f"初始状态复制后 {name} 的值不一致")
             max_difference = max(
-                max_difference, (value - source_state[name]).abs().max().item(),
+                max_difference,
+                (value - source_state[name]).abs().max().item(),
             )
         print(f"初始状态来源: {init_path}")
-        print(f"共有 key={len(common_keys)}，来源独有={len(source_only)}，"
-              f"目标独有={len(target_only)}，最大共有状态差={max_difference}")
+        print(
+            f"共有 key={len(common_keys)}，来源独有={len(source_only)}，"
+            f"目标独有={len(target_only)}，最大共有状态差={max_difference}"
+        )
         print("来源独有 key:", sorted(source_only))
         print("目标独有 key:", sorted(target_only))
 
     # 初始权重加载结束后创建新优化器；训练始终从零进度开始。
     criterion = torch.nn.CrossEntropyLoss()
-    if training_cfg["optimizer"]=="adam":
+    if training_cfg["optimizer"] == "adam":
         optim = torch.optim.Adam
-    elif training_cfg["optimizer"]=="adamw":
+    elif training_cfg["optimizer"] == "adamw":
         optim = torch.optim.AdamW
     else:
-        raise ValueError(f"不支持的优化器类型:{training_cfg["optimizer"]}")
+        raise ValueError(f"不支持的优化器类型:{training_cfg['optimizer']}")
     optimizer = optim(
-        model.parameters(), lr=cfg["training"]["learning_rate"],
+        model.parameters(),
+        lr=cfg["training"]["learning_rate"],
         weight_decay=cfg["training"]["weight_decay"],
     )
     set_seed(training_cfg["seed"])
-    
+
     if args.smoke:
         run_smoke(model, train_loader, val_loader, optimizer, criterion, device)
 
     elif args.overfit_samples:
         if args.overfit_samples > len(train_loader.dataset):
             raise ValueError(
-                f"--overfit-samples 不能超过训练集数量 {len(train_loader.dataset)}"
+                "--overfit-samples 不能超过训练集数量 "
+                f"{len(train_loader.dataset)}"
             )
-        run_overfit(model, train_loader, optimizer, criterion, device, args.overfit_samples)   
+        run_overfit(
+            model,
+            train_loader,
+            optimizer,
+            criterion,
+            device,
+            args.overfit_samples,
+        )
 
     else:
-        run_training(cfg, model, train_loader, val_loader, optimizer, criterion, device)
+        run_training(
+            cfg, model, train_loader, val_loader, optimizer, criterion, device
+        )
+
 
 if __name__ == "__main__":
     main()

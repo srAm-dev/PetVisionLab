@@ -1,6 +1,6 @@
+from PIL import Image
 import pytest
 import torch
-from PIL import Image
 from torchvision import transforms
 
 from petvision.data import datasets
@@ -23,23 +23,43 @@ class FakeMNIST:
 
 @pytest.fixture
 def mnist_args(tmp_path, monkeypatch):
+    """用假数据集和临时路径准备 MNIST 加载函数的公共参数。
+
+    Args:
+        tmp_path: pytest 提供的临时目录。
+        monkeypatch: pytest 提供的临时替换工具。
+
+    Returns:
+        可通过 ** 解包给 build_mnist_loaders 的公共参数字典。
+    """
     monkeypatch.setattr(datasets, "MNIST", FakeMNIST)
     return dict(
-        data_dir=tmp_path / "data", split_path=tmp_path / "split.json",
-        batch_size=4, seed=42,
+        data_dir=tmp_path / "data",
+        split_path=tmp_path / "split.json",
+        batch_size=4,
+        seed=42,
     )
 
 
 def test_mnist_training_transform_does_not_leak_into_evaluation(mnist_args):
-    train_transform = transforms.Compose([
-        transforms.ToTensor(), transforms.Lambda(lambda image: image + 10),
-    ])
+    train_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Lambda(lambda image: image + 10),
+        ]
+    )
     eval_transform = transforms.ToTensor()
     train, val, test = datasets.build_mnist_loaders(
-        **mnist_args, train_transform=train_transform, eval_transform=eval_transform,
+        **mnist_args,
+        train_transform=train_transform,
+        eval_transform=eval_transform,
     )
 
-    assert [len(loader.dataset) for loader in (train, val, test)] == [55000, 5000, 10000]
+    assert [len(loader.dataset) for loader in (train, val, test)] == [
+        55000,
+        5000,
+        10000,
+    ]
     assert train.dataset.dataset is not val.dataset.dataset
     train_images, train_labels = next(iter(train))
     assert train_images.shape == (4, 1, 28, 28)
@@ -53,7 +73,9 @@ def test_mnist_training_transform_does_not_leak_into_evaluation(mnist_args):
         assert images.min() >= 0 and images.max() <= 1
 
     # 改变训练 Dataset 的 transform 不应影响验证或测试 Dataset。
-    train.dataset.dataset.transform = lambda image: torch.full((1, 28, 28), 20.0)
+    train.dataset.dataset.transform = lambda image: torch.full(
+        (1, 28, 28), 20.0
+    )
     assert torch.equal(train.dataset[0][0], torch.full((1, 28, 28), 20.0))
     assert torch.equal(val.dataset[0][0], val_before)
     assert torch.equal(test.dataset[0][0], test_before)
@@ -62,14 +84,21 @@ def test_mnist_training_transform_does_not_leak_into_evaluation(mnist_args):
 def test_mnist_transform_change_reuses_saved_split(mnist_args):
     to_tensor = transforms.ToTensor()
     train, val, _ = datasets.build_mnist_loaders(
-        **mnist_args, train_transform=to_tensor, eval_transform=to_tensor,
+        **mnist_args,
+        train_transform=to_tensor,
+        eval_transform=to_tensor,
     )
     split_before = mnist_args["split_path"].read_bytes()
-    normalized = transforms.Compose([
-        transforms.ToTensor(), transforms.Normalize(mean=(0.5,), std=(0.5,)),
-    ])
+    normalized = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.5,), std=(0.5,)),
+        ]
+    )
     train_again, val_again, _ = datasets.build_mnist_loaders(
-        **mnist_args, train_transform=normalized, eval_transform=normalized,
+        **mnist_args,
+        train_transform=normalized,
+        eval_transform=normalized,
     )
 
     assert train.dataset.indices == train_again.dataset.indices
@@ -77,12 +106,16 @@ def test_mnist_transform_change_reuses_saved_split(mnist_args):
     images, labels = next(iter(train))
     normalized_images, normalized_labels = next(iter(train_again))
     assert torch.equal(labels, normalized_labels)
-    torch.testing.assert_close(normalized_images, (images - 0.5) / 0.5, rtol=0, atol=0)
+    torch.testing.assert_close(
+        normalized_images, (images - 0.5) / 0.5, rtol=0, atol=0
+    )
     assert torch.equal(val_again.dataset[0][0], (val.dataset[0][0] - 0.5) / 0.5)
 
     with pytest.raises(ValueError, match="train_indices 应有"):
         datasets.build_mnist_loaders(
-            **mnist_args, train_transform=normalized, eval_transform=normalized,
+            **mnist_args,
+            train_transform=normalized,
+            eval_transform=normalized,
             validation_size=10000,
         )
     assert mnist_args["split_path"].read_bytes() == split_before

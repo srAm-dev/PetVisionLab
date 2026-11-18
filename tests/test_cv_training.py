@@ -25,17 +25,26 @@ def test_mlp_forward_backward():
         loss.backward()
         for name, parameter in model.named_parameters():
             assert parameter.grad is not None, f"{name} 没有梯度"
-            assert torch.isfinite(parameter.grad).all().item(), f"{name} 梯度不有限"
+            assert torch.isfinite(parameter.grad).all().item(), (
+                f"{name} 梯度不有限"
+            )
 
-        print(f"batch={batch_size}, logits={tuple(logits.shape)}, loss={loss.item():.6f}")
+        print(
+            f"batch={batch_size}, logits={tuple(logits.shape)}, "
+            f"loss={loss.item():.6f}"
+        )
+
 
 def test_mlp_parameter_count():
     model = MLP()
-    parameter_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    parameter_count = sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    )
     print("trainable parameters:", parameter_count)
     assert parameter_count == 235146
     for name, parameter in model.named_parameters():
         print(name, tuple(parameter.shape))
+
 
 def test_mlp_device():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,7 +55,9 @@ def test_mlp_device():
     logits = model(images)
     assert logits.shape == (4, 10)
     assert logits.device == images.device == labels.device
-    assert all(parameter.device == images.device for parameter in model.parameters())
+    assert all(
+        parameter.device == images.device for parameter in model.parameters()
+    )
     loss = torch.nn.functional.cross_entropy(logits, labels)
     assert torch.isfinite(loss).item()
     loss.backward()
@@ -60,16 +71,21 @@ def test_evaluate_metrics():
     from itertools import islice
 
     from torch.utils.data import DataLoader, TensorDataset
+
     from petvision.training.cv_trainer import evaluate
 
     # 为了单独检查统计，直接准备 3 条已知的分类分数。
-    logits = torch.tensor([
-        [0.0, 0.0],
-        [0.0, 0.0],
-        [2.0, 0.0],
-    ])
+    logits = torch.tensor(
+        [
+            [0.0, 0.0],
+            [0.0, 0.0],
+            [2.0, 0.0],
+        ]
+    )
     labels = torch.tensor([0, 1, 1], dtype=torch.long)
-    loader = DataLoader(TensorDataset(logits, labels), batch_size=2, shuffle=False)
+    loader = DataLoader(
+        TensorDataset(logits, labels), batch_size=2, shuffle=False
+    )
     model = torch.nn.Identity()
     criterion = torch.nn.CrossEntropyLoss()
 
@@ -82,7 +98,9 @@ def test_evaluate_metrics():
     # 只读取第一批时，应统计 2 条，而不是整个 dataset 的 3 条。
     partial = evaluate(model, islice(loader, 1), criterion, torch.device("cpu"))
     assert partial["n_samples"] == 2
-    assert abs(partial["loss"] - criterion(logits[:2], labels[:2]).item()) < 1e-6
+    assert (
+        abs(partial["loss"] - criterion(logits[:2], labels[:2]).item()) < 1e-6
+    )
     assert partial["accuracy"] == 0.5
     print("full:", metrics)
     print("first batch:", partial)
@@ -100,11 +118,14 @@ def test_checkpoint_roundtrip(tmp_path):
         loss_before = torch.nn.functional.cross_entropy(logits_before, labels)
 
     path = tmp_path / "checkpoints" / "model.pt"
-    save_checkpoint({
-        "model_state": model.state_dict(),
-        "model_config": model_config,
-        "epoch": 2,
-    }, path)
+    save_checkpoint(
+        {
+            "model_state": model.state_dict(),
+            "model_config": model_config,
+            "epoch": 2,
+        },
+        path,
+    )
     checkpoint = load_checkpoint(path)
     restored = MLP(**checkpoint["model_config"]).cpu().eval()
     restored.load_state_dict(checkpoint["model_state"])
@@ -113,11 +134,17 @@ def test_checkpoint_roundtrip(tmp_path):
         loss_after = torch.nn.functional.cross_entropy(logits_after, labels)
 
     assert checkpoint["epoch"] == 2
-    assert all(value.device.type == "cpu" for value in checkpoint["model_state"].values())
+    assert all(
+        value.device.type == "cpu"
+        for value in checkpoint["model_state"].values()
+    )
     torch.testing.assert_close(logits_after, logits_before, rtol=0, atol=1e-6)
     torch.testing.assert_close(loss_after, loss_before, rtol=0, atol=1e-6)
     assert torch.equal(logits_after.argmax(1), logits_before.argmax(1))
-    print("checkpoint logits max error:", (logits_after - logits_before).abs().max().item())
+    print(
+        "checkpoint logits max error:",
+        (logits_after - logits_before).abs().max().item(),
+    )
 
 
 def test_checkpoint_best_and_last(tmp_path, monkeypatch):
@@ -126,6 +153,7 @@ def test_checkpoint_best_and_last(tmp_path, monkeypatch):
     from pathlib import Path
 
     import yaml
+
     from petvision.utils.checkpoint import load_checkpoint
 
     # 调用实际训练入口，只替换数据来源与验证分数，检查真正写出的文件。
@@ -133,7 +161,9 @@ def test_checkpoint_best_and_last(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import train_cv
 
-    cfg = yaml.safe_load((project_root / "configs/cv/mlp_mnist.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/mlp_mnist.yaml").read_text()
+    )
     cfg["model"].update(input_dim=4, hidden_dims=[8], num_classes=3)
     cfg["training"].update(device="cpu", epochs=4)
     cfg["experiment_dir"] = str(tmp_path / "experiment")
@@ -143,15 +173,30 @@ def test_checkpoint_best_and_last(tmp_path, monkeypatch):
     cfg["data"]["split_path"] = str(split_path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    monkeypatch.setattr(train_cv, "parse_args", lambda: argparse.Namespace(
-        config=config_path, smoke=False, overfit_samples=None,
-    ))
+    monkeypatch.setattr(
+        train_cv,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            smoke=False,
+            overfit_samples=None,
+        ),
+    )
     batch = [(torch.randn(3, 4), torch.tensor([0, 1, 2], dtype=torch.long))]
-    monkeypatch.setattr(train_cv, "build_mnist_loaders", lambda **kwargs: (batch, batch, batch))
+    monkeypatch.setattr(
+        train_cv, "build_mnist_loaders", lambda **kwargs: (batch, batch, batch)
+    )
+    # 验证替身每次 next 取一个分数，用持平的最后一轮检验 best 的选择规则。
     accuracies = iter([0.80, 0.85, 0.82, 0.85])
-    monkeypatch.setattr(train_cv, "evaluate", lambda *args: {
-        "loss": 0.5, "accuracy": next(accuracies), "n_samples": 3,
-    })
+    monkeypatch.setattr(
+        train_cv,
+        "evaluate",
+        lambda *args: {
+            "loss": 0.5,
+            "accuracy": next(accuracies),
+            "n_samples": 3,
+        },
+    )
     monkeypatch.setattr(train_cv, "plot_history", lambda *args: None)
     train_cv.main()
 
@@ -162,9 +207,14 @@ def test_checkpoint_best_and_last(tmp_path, monkeypatch):
     assert best["val_accuracy"] == 0.85
     assert best["config"] == cfg
     assert best["model_config"] == cfg["model"]
-    assert best["split_sha256"] == hashlib.sha256(split_path.read_bytes()).hexdigest()
-    assert any(not torch.equal(best["model_state"][key], value)
-               for key, value in last["model_state"].items())
+    assert (
+        best["split_sha256"]
+        == hashlib.sha256(split_path.read_bytes()).hexdigest()
+    )
+    assert any(
+        not torch.equal(best["model_state"][key], value)
+        for key, value in last["model_state"].items()
+    )
     assert not (tmp_path / "weights" / "initial.pt").exists()
     assert not (tmp_path / "experiment" / "run_summary.json").exists()
 
@@ -174,6 +224,7 @@ def test_cifar_initial_checkpoint_precedes_training(tmp_path, monkeypatch):
     from pathlib import Path
 
     import yaml
+
     from petvision.models.cv.cnn import CNN
     from petvision.utils.checkpoint import load_checkpoint
 
@@ -181,7 +232,9 @@ def test_cifar_initial_checkpoint_precedes_training(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import train_cv
 
-    cfg = yaml.safe_load((project_root / "configs/cv/cnn_cifar10.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/cnn_cifar10.yaml").read_text()
+    )
     cfg["training"].update(device="cpu", epochs=1)
     cfg["experiment_dir"] = str(tmp_path / "experiment")
     cfg["output_dir"] = str(tmp_path / "weights")
@@ -190,7 +243,9 @@ def test_cifar_initial_checkpoint_precedes_training(tmp_path, monkeypatch):
     cfg["data"]["split_path"] = str(split_path)
     model = CNN(use_bn=True).cpu()
     batch = [(torch.randn(2, 3, 32, 32), torch.tensor([0, 1]))]
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["training"]["learning_rate"])
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=cfg["training"]["learning_rate"]
+    )
     criterion = torch.nn.CrossEntropyLoss()
     initial_path = tmp_path / "weights" / "initial.pt"
     initial_state = {}
@@ -205,22 +260,32 @@ def test_cifar_initial_checkpoint_precedes_training(tmp_path, monkeypatch):
         assert initial["seed"] == cfg["training"]["seed"]
         initial_state.update(initial["model_state"])
         for name, value in model.state_dict().items():
-            torch.testing.assert_close(value, initial_state[name], rtol=0, atol=0)
+            torch.testing.assert_close(
+                value, initial_state[name], rtol=0, atol=0
+            )
         for layer in model.modules():
             if isinstance(layer, torch.nn.BatchNorm2d):
-                assert torch.equal(layer.running_mean, torch.zeros_like(layer.running_mean))
-                assert torch.equal(layer.running_var, torch.ones_like(layer.running_var))
+                assert torch.equal(
+                    layer.running_mean, torch.zeros_like(layer.running_mean)
+                )
+                assert torch.equal(
+                    layer.running_var, torch.ones_like(layer.running_var)
+                )
                 assert layer.num_batches_tracked.item() == 0
         return original_train(model, loader, optimizer, criterion, device)
 
     monkeypatch.setattr(train_cv, "train_one_epoch", check_initial_and_train)
-    train_cv.run_training(cfg, model, batch, batch, optimizer, criterion, torch.device("cpu"))
+    train_cv.run_training(
+        cfg, model, batch, batch, optimizer, criterion, torch.device("cpu")
+    )
 
     # 完成真实的参数更新后，initial 仍保留训练前的参数与 BN 状态。
     initial = load_checkpoint(initial_path)
     last = load_checkpoint(tmp_path / "weights" / "last.pt")
     for name, value in initial_state.items():
-        torch.testing.assert_close(initial["model_state"][name], value, rtol=0, atol=0)
+        torch.testing.assert_close(
+            initial["model_state"][name], value, rtol=0, atol=0
+        )
     assert any(
         not torch.equal(initial_state[name], last["model_state"][name])
         for name, _ in model.named_parameters()
@@ -230,7 +295,9 @@ def test_cifar_initial_checkpoint_precedes_training(tmp_path, monkeypatch):
             assert layer.num_batches_tracked.item() == 1
     experiment_dir = Path(cfg["experiment_dir"])
     summary = json.loads((experiment_dir / "run_summary.json").read_text())
-    assert summary["params"] == sum(parameter.numel() for parameter in model.parameters())
+    assert summary["params"] == sum(
+        parameter.numel() for parameter in model.parameters()
+    )
     assert summary["epochs"] == 1
     assert summary["train_seconds"] >= 0
     assert summary["peak_allocated_mib"] is None
@@ -242,14 +309,16 @@ def test_cifar_check_modes_do_not_save_initial(tmp_path, monkeypatch):
     import argparse
     from pathlib import Path
 
-    import yaml
     from torch.utils.data import DataLoader, TensorDataset
+    import yaml
 
     project_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import train_cv
 
-    cfg = yaml.safe_load((project_root / "configs/cv/cnn_cifar10.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/cnn_cifar10.yaml").read_text()
+    )
     cfg["training"].update(device="cpu", epochs=1)
     cfg["experiment_dir"] = str(tmp_path / "experiment")
     cfg["output_dir"] = str(tmp_path / "weights")
@@ -258,10 +327,18 @@ def test_cifar_check_modes_do_not_save_initial(tmp_path, monkeypatch):
     cfg["data"]["split_path"] = str(split_path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    loader = DataLoader(TensorDataset(
-        torch.randn(4, 3, 32, 32), torch.tensor([0, 1, 2, 3]),
-    ), batch_size=2)
-    monkeypatch.setattr(train_cv, "build_cifar10_loaders", lambda **kwargs: (loader, loader, loader))
+    loader = DataLoader(
+        TensorDataset(
+            torch.randn(4, 3, 32, 32),
+            torch.tensor([0, 1, 2, 3]),
+        ),
+        batch_size=2,
+    )
+    monkeypatch.setattr(
+        train_cv,
+        "build_cifar10_loaders",
+        lambda **kwargs: (loader, loader, loader),
+    )
     train_calls = []
     metrics = {"loss": 0.1, "accuracy": 1.0, "n_samples": 2}
 
@@ -272,8 +349,13 @@ def test_cifar_check_modes_do_not_save_initial(tmp_path, monkeypatch):
     # 只检查运行模式与文件写入边界，跳过耗时的参数更新。
     monkeypatch.setattr(train_cv, "train_one_epoch", fake_train)
     monkeypatch.setattr(train_cv, "evaluate", lambda *args: metrics.copy())
-    for smoke, overfit_samples, expected_calls in ((True, None, 1), (False, 2, 200)):
-        args = argparse.Namespace(config=config_path, smoke=smoke, overfit_samples=overfit_samples)
+    for smoke, overfit_samples, expected_calls in (
+        (True, None, 1),
+        (False, 2, 200),
+    ):
+        args = argparse.Namespace(
+            config=config_path, smoke=smoke, overfit_samples=overfit_samples
+        )
         monkeypatch.setattr(train_cv, "parse_args", lambda: args)
         train_calls.clear()
         train_cv.main()
@@ -285,13 +367,23 @@ def test_cifar_check_modes_do_not_save_initial(tmp_path, monkeypatch):
 def test_history_save_and_append_use_same_columns(tmp_path):
     import csv
 
-    from petvision.utils.history import save_history, append_history
+    from petvision.utils.history import append_history, save_history
 
     history = [
-        {"epoch": 1, "train_loss": 0.8, "train_accuracy": 0.6,
-         "val_loss": 0.9, "val_accuracy": 0.5},
-        {"epoch": 2, "train_loss": 0.6, "train_accuracy": 0.7,
-         "val_loss": 0.8, "val_accuracy": 0.6},
+        {
+            "epoch": 1,
+            "train_loss": 0.8,
+            "train_accuracy": 0.6,
+            "val_loss": 0.9,
+            "val_accuracy": 0.5,
+        },
+        {
+            "epoch": 2,
+            "train_loss": 0.6,
+            "train_accuracy": 0.7,
+            "val_loss": 0.8,
+            "val_accuracy": 0.6,
+        },
     ]
     saved_dir = tmp_path / "saved"
     appended_dir = tmp_path / "appended"
@@ -301,15 +393,22 @@ def test_history_save_and_append_use_same_columns(tmp_path):
 
     with (saved_dir / "history.csv").open(newline="", encoding="utf-8") as file:
         saved_rows = list(csv.reader(file))
-    with (appended_dir / "history.csv").open(newline="", encoding="utf-8") as file:
+    with (appended_dir / "history.csv").open(
+        newline="", encoding="utf-8"
+    ) as file:
         appended_rows = list(csv.reader(file))
     assert saved_rows == appended_rows
     assert saved_rows[0] == [
-        "epoch", "train_loss", "train_accuracy", "val_loss", "val_accuracy",
+        "epoch",
+        "train_loss",
+        "train_accuracy",
+        "val_loss",
+        "val_accuracy",
     ]
     assert len(saved_rows) == 3
 
     # 向一次性保存的文件追加时，列仍对齐，且不会再次写入表头。
+    # 先展开上一轮记录，再覆盖 epoch。原字典保持原值。
     append_history({**history[-1], "epoch": 3}, saved_dir)
     with (saved_dir / "history.csv").open(newline="", encoding="utf-8") as file:
         combined_rows = list(csv.reader(file))
@@ -326,13 +425,16 @@ def test_cifar_resource_logging(tmp_path, monkeypatch, device_name):
     from types import SimpleNamespace
 
     import yaml
+
     from petvision.models.cv.cnn import CNN
 
     project_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import train_cv
 
-    cfg = yaml.safe_load((project_root / "configs/cv/cnn_cifar10.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/cnn_cifar10.yaml").read_text()
+    )
     cfg["training"].update(device=device_name, epochs=2)
     experiment_dir = tmp_path / "cnn_bn_on"
     cfg["experiment_dir"] = str(experiment_dir)
@@ -371,7 +473,9 @@ def test_cifar_resource_logging(tmp_path, monkeypatch, device_name):
         epoch += 1
         if epoch == 2:
             # 第二轮开始前，第一轮的记录已经落盘。
-            with (experiment_dir / "history.csv").open(newline="", encoding="utf-8") as file:
+            with (experiment_dir / "history.csv").open(
+                newline="", encoding="utf-8"
+            ) as file:
                 assert [row["epoch"] for row in csv.DictReader(file)] == ["1"]
             assert not (experiment_dir / "run_summary.json").exists()
         events.append(f"train{epoch}")
@@ -395,12 +499,22 @@ def test_cifar_resource_logging(tmp_path, monkeypatch, device_name):
         summary = json.loads((Path(directory) / "run_summary.json").read_text())
         assert summary["params"] == 94986 and summary["epochs"] == 2
         assert summary["train_seconds"] == 6.5
-        assert summary["peak_allocated_mib"] == (4.0 if device_name == "cuda" else None)
-        assert summary["device"] == device_name and summary["dtype"] == "torch.float32"
-        assert summary["timing_scope"] == "train+validation+epoch_logging+checkpoint_io"
+        assert summary["peak_allocated_mib"] == (
+            4.0 if device_name == "cuda" else None
+        )
+        assert (
+            summary["device"] == device_name
+            and summary["dtype"] == "torch.float32"
+        )
+        assert (
+            summary["timing_scope"]
+            == "train+validation+epoch_logging+checkpoint_io"
+        )
 
     # 使用 CPU 模型和模拟 CUDA 接口，验证时序与单位换算，无需 GPU。
-    monkeypatch.setattr(train_cv, "time", SimpleNamespace(perf_counter=read_timer))
+    monkeypatch.setattr(
+        train_cv, "time", SimpleNamespace(perf_counter=read_timer)
+    )
     monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
     monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", reset_peak)
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", peak_memory)
@@ -409,19 +523,41 @@ def test_cifar_resource_logging(tmp_path, monkeypatch, device_name):
     monkeypatch.setattr(train_cv, "append_history", append)
     monkeypatch.setattr(train_cv, "save_checkpoint", save)
     monkeypatch.setattr(train_cv, "plot_history", plot)
-    monkeypatch.setattr(train_cv, "save_history", lambda *args: pytest.fail("不能覆盖逐轮追加的日志"))
-    train_cv.run_training(cfg, model, [], [], optimizer, criterion, torch.device(device_name))
+    monkeypatch.setattr(
+        train_cv,
+        "save_history",
+        lambda *args: pytest.fail("不能覆盖逐轮追加的日志"),
+    )
+    train_cv.run_training(
+        cfg, model, [], [], optimizer, criterion, torch.device(device_name)
+    )
 
-    with (experiment_dir / "history.csv").open(newline="", encoding="utf-8") as file:
+    with (experiment_dir / "history.csv").open(
+        newline="", encoding="utf-8"
+    ) as file:
         rows = list(csv.reader(file))
-    assert rows[0] == ["epoch", "train_loss", "train_accuracy", "val_loss", "val_accuracy"]
+    assert rows[0] == [
+        "epoch",
+        "train_loss",
+        "train_accuracy",
+        "val_loss",
+        "val_accuracy",
+    ]
     assert [row[0] for row in rows[1:]] == ["1", "2"]
     expected_events = ["initial.pt"]
     if device_name == "cuda":
         expected_events += ["sync", "reset"]
     expected_events += [
-        "timer", "train1", "val1", "log1", "last.pt", "best.pt",
-        "train2", "val2", "log2", "last.pt",
+        "timer",
+        "train1",
+        "val1",
+        "log1",
+        "last.pt",
+        "best.pt",
+        "train2",
+        "val2",
+        "log2",
+        "last.pt",
     ]
     if device_name == "cuda":
         expected_events.append("sync")
@@ -432,17 +568,22 @@ def test_cifar_resource_logging(tmp_path, monkeypatch, device_name):
     assert events == expected_events
 
 
-def test_cifar_rejects_existing_history_before_overwriting_outputs(tmp_path, monkeypatch):
+def test_cifar_rejects_existing_history_before_overwriting_outputs(
+    tmp_path, monkeypatch
+):
     from pathlib import Path
 
     import yaml
+
     from petvision.models.cv.cnn import CNN
 
     project_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import train_cv
 
-    cfg = yaml.safe_load((project_root / "configs/cv/cnn_cifar10.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/cnn_cifar10.yaml").read_text()
+    )
     cfg["training"].update(device="cpu", epochs=1)
     experiment_dir = tmp_path / "experiment"
     cfg["experiment_dir"] = str(experiment_dir)
@@ -462,7 +603,13 @@ def test_cifar_rejects_existing_history_before_overwriting_outputs(tmp_path, mon
     optimizer = torch.optim.AdamW(model.parameters())
     with pytest.raises(FileExistsError, match="history.csv"):
         train_cv.run_training(
-            cfg, model, [], [], optimizer, torch.nn.CrossEntropyLoss(), torch.device("cpu"),
+            cfg,
+            model,
+            [],
+            [],
+            optimizer,
+            torch.nn.CrossEntropyLoss(),
+            torch.device("cpu"),
         )
     for path, content in existing_files.items():
         assert path.read_bytes() == content
@@ -474,8 +621,9 @@ def test_cifar_ablation_uses_initial_state(tmp_path, monkeypatch, model_name):
     import csv
     from pathlib import Path
 
-    import yaml
     from torch.utils.data import DataLoader, TensorDataset
+    import yaml
+
     from petvision.models.cv.cnn import CNN
     from petvision.models.cv.resnet import ResNet18
     from petvision.utils.checkpoint import load_checkpoint, save_checkpoint
@@ -497,13 +645,20 @@ def test_cifar_ablation_uses_initial_state(tmp_path, monkeypatch, model_name):
         image_size = 96
     source_state = source_model.state_dict()
     source_path = tmp_path / "source_initial.pt"
-    save_checkpoint({
-        "model_state": source_state, "model_config": source_config,
-        "seed": 42, "step": 0,
-    }, source_path)
+    save_checkpoint(
+        {
+            "model_state": source_state,
+            "model_config": source_config,
+            "seed": 42,
+            "step": 0,
+        },
+        source_path,
+    )
 
     cfg = yaml.safe_load((project_root / "configs/cv" / filename).read_text())
-    cfg["training"].update(device="cpu", epochs=1, init_checkpoint=str(source_path))
+    cfg["training"].update(
+        device="cpu", epochs=1, init_checkpoint=str(source_path)
+    )
     cfg["experiment_dir"] = str(tmp_path / "experiment")
     cfg["output_dir"] = str(tmp_path / "weights")
     split_path = tmp_path / "split.json"
@@ -511,13 +666,27 @@ def test_cifar_ablation_uses_initial_state(tmp_path, monkeypatch, model_name):
     cfg["data"]["split_path"] = str(split_path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    monkeypatch.setattr(train_cv, "parse_args", lambda: argparse.Namespace(
-        config=config_path, smoke=False, overfit_samples=None,
-    ))
-    loader = DataLoader(TensorDataset(
-        torch.randn(2, 3, image_size, image_size), torch.tensor([0, 1]),
-    ), batch_size=2)
-    monkeypatch.setattr(train_cv, "build_cifar10_loaders", lambda **kwargs: (loader, loader, loader))
+    monkeypatch.setattr(
+        train_cv,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            smoke=False,
+            overfit_samples=None,
+        ),
+    )
+    loader = DataLoader(
+        TensorDataset(
+            torch.randn(2, 3, image_size, image_size),
+            torch.tensor([0, 1]),
+        ),
+        batch_size=2,
+    )
+    monkeypatch.setattr(
+        train_cv,
+        "build_cifar10_loaders",
+        lambda **kwargs: (loader, loader, loader),
+    )
     original_train = train_cv.train_one_epoch
     train_calls = []
     parameter_names = []
@@ -542,8 +711,10 @@ def test_cifar_ablation_uses_initial_state(tmp_path, monkeypatch, model_name):
     assert len(train_calls) == 1
     assert best["epoch"] == last["epoch"] == 1
     assert last["config"]["training"]["init_checkpoint"] == str(source_path)
-    assert any(not torch.equal(initial["model_state"][name], last["model_state"][name])
-               for name in parameter_names)
+    assert any(
+        not torch.equal(initial["model_state"][name], last["model_state"][name])
+        for name in parameter_names
+    )
     for name, value in initial["model_state"].items():
         assert torch.equal(value, source_state[name])
     expected_removed = {
@@ -552,22 +723,39 @@ def test_cifar_ablation_uses_initial_state(tmp_path, monkeypatch, model_name):
         if isinstance(module, torch.nn.BatchNorm2d) and model_name == "cnn"
         for field in module.state_dict()
     }
-    assert source_state.keys() - initial["model_state"].keys() == expected_removed
+    assert (
+        source_state.keys() - initial["model_state"].keys() == expected_removed
+    )
     with (tmp_path / "experiment" / "history.csv").open(newline="") as file:
         rows = list(csv.DictReader(file))
     assert len(rows) == 1 and rows[0]["epoch"] == "1"
-    assert yaml.safe_load((tmp_path / "experiment" / "config.yaml").read_text()) == cfg
+    assert (
+        yaml.safe_load((tmp_path / "experiment" / "config.yaml").read_text())
+        == cfg
+    )
 
 
-@pytest.mark.parametrize("problem", (
-    "step", "seed", "model_config", "extra_key", "missing_key",
-    "missing_bn_key", "shape", "dtype",
-))
-def test_initial_checkpoint_rejects_invalid_state(tmp_path, monkeypatch, problem):
+@pytest.mark.parametrize(
+    "problem",
+    (
+        "step",
+        "seed",
+        "model_config",
+        "extra_key",
+        "missing_key",
+        "missing_bn_key",
+        "shape",
+        "dtype",
+    ),
+)
+def test_initial_checkpoint_rejects_invalid_state(
+    tmp_path, monkeypatch, problem
+):
     import argparse
     from pathlib import Path
 
     import yaml
+
     from petvision.models.cv.cnn import CNN
     from petvision.utils.checkpoint import save_checkpoint
 
@@ -578,7 +766,8 @@ def test_initial_checkpoint_rejects_invalid_state(tmp_path, monkeypatch, problem
     checkpoint = {
         "model_state": CNN().state_dict(),
         "model_config": {"name": "cnn", "num_classes": 10, "use_bn": True},
-        "seed": 42, "step": 0,
+        "seed": 42,
+        "step": 0,
     }
     if problem == "step":
         checkpoint["step"] = 1
@@ -595,24 +784,40 @@ def test_initial_checkpoint_rejects_invalid_state(tmp_path, monkeypatch, problem
     elif problem == "shape":
         checkpoint["model_state"]["net.0.weight"] = torch.zeros(1)
     elif problem == "dtype":
-        checkpoint["model_state"]["net.0.weight"] = checkpoint["model_state"]["net.0.weight"].double()
+        checkpoint["model_state"]["net.0.weight"] = checkpoint["model_state"][
+            "net.0.weight"
+        ].double()
     source_path = tmp_path / "source.pt"
     save_checkpoint(checkpoint, source_path)
     source_bytes = source_path.read_bytes()
 
-    cfg = yaml.safe_load((project_root / "configs/cv/cnn_no_bn_cifar10.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/cnn_no_bn_cifar10.yaml").read_text()
+    )
     cfg["training"].update(device="cpu", init_checkpoint=str(source_path))
     cfg["experiment_dir"] = str(tmp_path / "experiment")
     cfg["output_dir"] = str(tmp_path / "weights")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    monkeypatch.setattr(train_cv, "parse_args", lambda: argparse.Namespace(
-        config=config_path, smoke=False, overfit_samples=None,
-    ))
-    monkeypatch.setattr(train_cv, "build_cifar10_loaders", lambda **kwargs: ([], [], []))
-    monkeypatch.setattr(train_cv.torch.optim, "AdamW", lambda *args, **kwargs: pytest.fail(
-        "初始状态检查失败时不应创建优化器",
-    ))
+    monkeypatch.setattr(
+        train_cv,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            smoke=False,
+            overfit_samples=None,
+        ),
+    )
+    monkeypatch.setattr(
+        train_cv, "build_cifar10_loaders", lambda **kwargs: ([], [], [])
+    )
+    monkeypatch.setattr(
+        train_cv.torch.optim,
+        "AdamW",
+        lambda *args, **kwargs: pytest.fail(
+            "初始状态检查失败时不应创建优化器",
+        ),
+    )
     with pytest.raises(ValueError):
         train_cv.main()
     assert source_path.read_bytes() == source_bytes
@@ -621,16 +826,22 @@ def test_initial_checkpoint_rejects_invalid_state(tmp_path, monkeypatch, problem
 
 
 @pytest.mark.parametrize("filename", ("initial.pt", "best.pt", "last.pt"))
-def test_cifar_rejects_existing_checkpoint_before_overwriting_outputs(tmp_path, monkeypatch, filename):
+def test_cifar_rejects_existing_checkpoint_before_overwriting_outputs(
+    tmp_path, monkeypatch, filename
+):
     from pathlib import Path
 
     import yaml
+
     from petvision.models.cv.cnn import CNN
 
     project_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import train_cv
-    cfg = yaml.safe_load((project_root / "configs/cv/cnn_no_bn_cifar10.yaml").read_text())
+
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/cnn_no_bn_cifar10.yaml").read_text()
+    )
     cfg["training"].update(device="cpu", epochs=1)
     cfg["experiment_dir"] = str(tmp_path / "experiment")
     cfg["output_dir"] = str(tmp_path / "weights")
@@ -644,23 +855,38 @@ def test_cifar_rejects_existing_checkpoint_before_overwriting_outputs(tmp_path, 
     optimizer = torch.optim.AdamW(model.parameters())
     with pytest.raises(FileExistsError, match=filename):
         train_cv.run_training(
-            cfg, model, [], [], optimizer, torch.nn.CrossEntropyLoss(), torch.device("cpu"),
+            cfg,
+            model,
+            [],
+            [],
+            optimizer,
+            torch.nn.CrossEntropyLoss(),
+            torch.device("cpu"),
         )
     assert checkpoint_path.read_bytes() == b"existing checkpoint"
     assert not (tmp_path / "experiment").exists()
 
 
-@pytest.mark.parametrize("saved_flag, requested_flag", (
-    (None, True), (False, False), (True, None), (None, False),
-))
-def test_evaluate_resnet_residual_config_compatibility(tmp_path, monkeypatch, capsys, saved_flag, requested_flag):
+@pytest.mark.parametrize(
+    "saved_flag, requested_flag",
+    (
+        (None, True),
+        (False, False),
+        (True, None),
+        (None, False),
+    ),
+)
+def test_evaluate_resnet_residual_config_compatibility(
+    tmp_path, monkeypatch, capsys, saved_flag, requested_flag
+):
     import argparse
     import copy
     import hashlib
     from pathlib import Path
 
-    import yaml
     from torch.utils.data import DataLoader, TensorDataset
+    import yaml
+
     from petvision.models.cv.resnet import BasicBlock, ResNet18
     from petvision.utils.checkpoint import save_checkpoint
 
@@ -668,7 +894,9 @@ def test_evaluate_resnet_residual_config_compatibility(tmp_path, monkeypatch, ca
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import evaluate as evaluate_script
 
-    cfg = yaml.safe_load((project_root / "configs/cv/resnet_cifar10.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/resnet_cifar10.yaml").read_text()
+    )
     cfg["training"]["device"] = "cpu"
     cfg["experiment_dir"] = str(tmp_path / "experiment")
     cfg["output_dir"] = str(tmp_path / "weights")
@@ -682,25 +910,47 @@ def test_evaluate_resnet_residual_config_compatibility(tmp_path, monkeypatch, ca
     actual_flag = True if saved_flag is None else saved_flag
     model = ResNet18(use_residual=actual_flag).cpu()
     checkpoint_path = tmp_path / "model.pt"
-    save_checkpoint({
-        "model_state": model.state_dict(), "model_config": saved_cfg["model"],
-        "config": saved_cfg, "epoch": 1,
-        "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
-    }, checkpoint_path)
+    save_checkpoint(
+        {
+            "model_state": model.state_dict(),
+            "model_config": saved_cfg["model"],
+            "config": saved_cfg,
+            "epoch": 1,
+            "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
+        },
+        checkpoint_path,
+    )
     cfg["model"].pop("use_residual", None)
     if requested_flag is not None:
         cfg["model"]["use_residual"] = requested_flag
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    monkeypatch.setattr(evaluate_script, "parse_args", lambda: argparse.Namespace(
-        config=config_path, checkpoint=checkpoint_path, split="val",
-    ))
-    loader = DataLoader(TensorDataset(torch.randn(2, 3, 96, 96), torch.tensor([0, 1])), batch_size=2)
-    monkeypatch.setattr(evaluate_script, "build_cifar10_loaders", lambda **kwargs: (loader, loader, loader))
+    monkeypatch.setattr(
+        evaluate_script,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            checkpoint=checkpoint_path,
+            split="val",
+        ),
+    )
+    loader = DataLoader(
+        TensorDataset(torch.randn(2, 3, 96, 96), torch.tensor([0, 1])),
+        batch_size=2,
+    )
+    monkeypatch.setattr(
+        evaluate_script,
+        "build_cifar10_loaders",
+        lambda **kwargs: (loader, loader, loader),
+    )
     original_evaluate = evaluate_script.evaluate
 
     def check_model_and_evaluate(model, *args):
-        blocks = [module for module in model.modules() if isinstance(module, BasicBlock)]
+        blocks = [
+            module
+            for module in model.modules()
+            if isinstance(module, BasicBlock)
+        ]
         assert len(blocks) == 8
         assert all(block.use_residual is actual_flag for block in blocks)
         return original_evaluate(model, *args)
@@ -714,21 +964,26 @@ def test_evaluate_resnet_residual_config_compatibility(tmp_path, monkeypatch, ca
         evaluate_script.main()
         assert "'n_samples': 2" in capsys.readouterr().out
         assert not (tmp_path / "experiment" / "test_metrics.json").exists()
-        assert not (tmp_path / "experiment" / "figures" / "mistakes_test.png").exists()
+        assert not (
+            tmp_path / "experiment" / "figures" / "mistakes_test.png"
+        ).exists()
 
 
 @pytest.mark.parametrize("dataset_name", ("mnist", "cifar10"))
 @pytest.mark.parametrize("split", ("val", "test"))
-def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_name, split):
+def test_evaluate_saves_split_mistakes(
+    tmp_path, monkeypatch, capsys, dataset_name, split
+):
     import argparse
     import hashlib
     import json
     from pathlib import Path
 
-    import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
-    import yaml
+    import matplotlib.pyplot as plt
     from torch.utils.data import DataLoader, Subset, TensorDataset
+    import yaml
+
     from petvision.models.cv.cnn import CNN
     from petvision.utils.checkpoint import save_checkpoint
 
@@ -736,7 +991,9 @@ def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_na
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import evaluate as evaluate_script
 
-    filename = "mlp_mnist.yaml" if dataset_name == "mnist" else "cnn_cifar10.yaml"
+    filename = (
+        "mlp_mnist.yaml" if dataset_name == "mnist" else "cnn_cifar10.yaml"
+    )
     cfg = yaml.safe_load((project_root / "configs/cv" / filename).read_text())
     cfg["training"]["device"] = "cpu"
     cfg["data"]["batch_size"] = 5
@@ -754,15 +1011,27 @@ def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_na
     with torch.no_grad():
         for parameter in model.parameters():
             parameter.zero_()
-        head = [module for module in model.modules() if isinstance(module, torch.nn.Linear)][-1]
+        head = [
+            module
+            for module in model.modules()
+            if isinstance(module, torch.nn.Linear)
+        ][-1]
         head.bias[0] = 3
     val_data = TensorDataset(images, torch.ones(13, dtype=torch.long))
     test_data = TensorDataset(images[:9], torch.ones(9, dtype=torch.long))
     val_data.classes = test_data.classes = ["airplane", "automobile", "bird"]
     val_loader = DataLoader(Subset(val_data, list(range(13))), batch_size=5)
     test_loader = DataLoader(test_data, batch_size=5)
-    builder = "build_mnist_loaders" if dataset_name == "mnist" else "build_cifar10_loaders"
-    monkeypatch.setattr(evaluate_script, builder, lambda **kwargs: (val_loader, val_loader, test_loader))
+    builder = (
+        "build_mnist_loaders"
+        if dataset_name == "mnist"
+        else "build_cifar10_loaders"
+    )
+    monkeypatch.setattr(
+        evaluate_script,
+        builder,
+        lambda **kwargs: (val_loader, val_loader, test_loader),
+    )
 
     experiment = tmp_path / "experiment"
     cfg["experiment_dir"] = str(experiment)
@@ -773,21 +1042,34 @@ def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_na
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     checkpoint_path = tmp_path / "model.pt"
-    save_checkpoint({
-        "model_state": model.state_dict(), "model_config": cfg["model"],
-        "config": cfg, "epoch": 1,
-        "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
-    }, checkpoint_path)
-    monkeypatch.setattr(evaluate_script, "parse_args", lambda: argparse.Namespace(
-        config=config_path, checkpoint=checkpoint_path, split=split,
-    ))
+    save_checkpoint(
+        {
+            "model_state": model.state_dict(),
+            "model_config": cfg["model"],
+            "config": cfg,
+            "epoch": 1,
+            "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
+        },
+        checkpoint_path,
+    )
+    monkeypatch.setattr(
+        evaluate_script,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            checkpoint=checkpoint_path,
+            split=split,
+        ),
+    )
     other_split = "test" if split == "val" else "val"
     unchanged = {
         experiment / "val_metrics.json": b'{"source": "first-step validation"}',
         experiment / "history.csv": b"training history",
         experiment / "config.yaml": b"training config",
         experiment / "run_summary.json": b"training summary",
-        experiment / "figures" / f"mistakes_{other_split}.png": b"other split image",
+        experiment
+        / "figures"
+        / f"mistakes_{other_split}.png": b"other split image",
     }
     for path, content in unchanged.items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -822,10 +1104,18 @@ def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_na
             torch.testing.assert_close(image, torch.full_like(image, 0.5))
         else:
             assert image.shape == (32, 32, 3)
-            torch.testing.assert_close(image[0, 0], torch.tensor([0.0, 0.5, 1.0]))
+            torch.testing.assert_close(
+                image[0, 0], torch.tensor([0.0, 0.5, 1.0])
+            )
     label = "automobile" if dataset_name == "cifar10" else "1"
-    assert all(f"true={label}" in title and "score=" in title for title in titles)
-    assert (experiment / "figures" / f"mistakes_{split}.png").read_bytes().startswith(b"\x89PNG")
+    assert all(
+        f"true={label}" in title and "score=" in title for title in titles
+    )
+    assert (
+        (experiment / "figures" / f"mistakes_{split}.png")
+        .read_bytes()
+        .startswith(b"\x89PNG")
+    )
     assert not plt.get_fignums()
     for path, content in unchanged.items():
         assert path.read_bytes() == content
@@ -834,24 +1124,31 @@ def test_evaluate_saves_split_mistakes(tmp_path, monkeypatch, capsys, dataset_na
         assert result["split"] == "test" and result["n_samples"] == 9
         assert result["mistake_examples_count"] == 8
     else:
-        assert (experiment / "test_metrics.json").read_bytes() == old_test_metrics
+        assert (
+            experiment / "test_metrics.json"
+        ).read_bytes() == old_test_metrics
 
 
 @pytest.mark.parametrize("split", ("val", "test"))
-def test_evaluate_removes_only_current_split_stale_mistakes(tmp_path, monkeypatch, split):
+def test_evaluate_removes_only_current_split_stale_mistakes(
+    tmp_path, monkeypatch, split
+):
     import argparse
     import hashlib
     from pathlib import Path
 
-    import yaml
     from torch.utils.data import DataLoader, TensorDataset
+    import yaml
+
     from petvision.utils.checkpoint import save_checkpoint
 
     project_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(project_root / "scripts"))
     import evaluate as evaluate_script
 
-    cfg = yaml.safe_load((project_root / "configs/cv/mlp_mnist.yaml").read_text())
+    cfg = yaml.safe_load(
+        (project_root / "configs/cv/mlp_mnist.yaml").read_text()
+    )
     cfg["training"]["device"] = "cpu"
     cfg["model"].update(input_dim=4, hidden_dims=[8], num_classes=3)
     cfg["experiment_dir"] = str(tmp_path / "experiment")
@@ -861,25 +1158,42 @@ def test_evaluate_removes_only_current_split_stale_mistakes(tmp_path, monkeypatc
     with torch.no_grad():
         labels = model(images).argmax(1)
     loader = DataLoader(TensorDataset(images, labels), batch_size=2)
-    monkeypatch.setattr(evaluate_script, "build_mnist_loaders", lambda **kwargs: (loader, loader, loader))
+    monkeypatch.setattr(
+        evaluate_script,
+        "build_mnist_loaders",
+        lambda **kwargs: (loader, loader, loader),
+    )
     split_path = tmp_path / "split.json"
     split_path.write_text("{}", encoding="utf-8")
     cfg["data"]["split_path"] = str(split_path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     checkpoint_path = tmp_path / "model.pt"
-    save_checkpoint({
-        "model_state": model.state_dict(), "model_config": cfg["model"],
-        "config": cfg, "epoch": 1,
-        "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
-    }, checkpoint_path)
-    monkeypatch.setattr(evaluate_script, "parse_args", lambda: argparse.Namespace(
-        config=config_path, checkpoint=checkpoint_path, split=split,
-    ))
+    save_checkpoint(
+        {
+            "model_state": model.state_dict(),
+            "model_config": cfg["model"],
+            "config": cfg,
+            "epoch": 1,
+            "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(),
+        },
+        checkpoint_path,
+    )
+    monkeypatch.setattr(
+        evaluate_script,
+        "parse_args",
+        lambda: argparse.Namespace(
+            config=config_path,
+            checkpoint=checkpoint_path,
+            split=split,
+        ),
+    )
     figures = tmp_path / "experiment" / "figures"
     figures.mkdir(parents=True)
     current = figures / f"mistakes_{split}.png"
-    other = figures / ("mistakes_test.png" if split == "val" else "mistakes_val.png")
+    other = figures / (
+        "mistakes_test.png" if split == "val" else "mistakes_val.png"
+    )
     current.write_bytes(b"stale image")
     other.write_bytes(b"other split image")
     evaluate_script.main()

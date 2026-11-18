@@ -2,19 +2,37 @@
 
 import torch
 import torch.nn as nn
+
 from petvision.models.cv.resnet import BasicBlock as ReferenceBasicBlock
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, use_1x1conv=True, use_residual=True):
+    """用于复习两层卷积、可选投影与残差相加顺序的独立实现。"""
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        stride=1,
+        use_1x1conv=True,
+        use_residual=True,
+    ):
         super().__init__()
         self.use_residual = use_residual
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride)
+        self.conv1 = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, padding=1, stride=stride
+        )
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(
+            out_channels, out_channels, kernel_size=3, padding=1
+        )
         self.bn2 = nn.BatchNorm2d(out_channels)
-        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride) if use_1x1conv else None
+        self.shortcut = (
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride)
+            if use_1x1conv
+            else None
+        )
 
     def forward(self, X):
         y = self.relu(self.bn1(self.conv1(X)))
@@ -26,16 +44,42 @@ class BasicBlock(nn.Module):
         return self.relu(y)
 
 
-def check_block(name, out_channels, stride, use_1x1conv, expected_shape, device):
+def check_block(
+    name, out_channels, stride, use_1x1conv, expected_shape, device
+):
     # 被检查的是本文件中的重写类；两个例子都保留残差相加。
-    block = BasicBlock(
-        64, out_channels, stride=stride,
-        use_1x1conv=use_1x1conv, use_residual=True,
-    ).to(device).train()
-    reference = ReferenceBasicBlock(
-        64, out_channels, stride=stride,
-        use_1x1conv=use_1x1conv, use_residual=True,
-    ).to(device).train()
+    """将重写块与同权重的项目实现比较，检查两条路径及梯度。
+
+    Args:
+        name: 输出时使用的例子名称。
+        out_channels: 残差块的输出通道数。
+        stride: 主分支和可选投影的步幅。
+        use_1x1conv: 是否启用投影旁路。
+        expected_shape: 两条路径应共同满足的输出形状。
+        device: 计算设备。
+    """
+    block = (
+        BasicBlock(
+            64,
+            out_channels,
+            stride=stride,
+            use_1x1conv=use_1x1conv,
+            use_residual=True,
+        )
+        .to(device)
+        .train()
+    )
+    reference = (
+        ReferenceBasicBlock(
+            64,
+            out_channels,
+            stride=stride,
+            use_1x1conv=use_1x1conv,
+            use_residual=True,
+        )
+        .to(device)
+        .train()
+    )
     reference.load_state_dict(block.state_dict(), strict=True)
 
     X = torch.randn(2, 64, 32, 32, device=device, requires_grad=True)
@@ -54,14 +98,21 @@ def check_block(name, out_channels, stride, use_1x1conv, expected_shape, device)
     if block.shortcut is None:
         shapes["shortcut"] = tuple(X.shape)
     else:
-        handles.append(block.shortcut.register_forward_hook(remember_shortcut_shape))
+        handles.append(
+            block.shortcut.register_forward_hook(remember_shortcut_shape)
+        )
     try:
         output = block(X)
     finally:
         for handle in handles:
             handle.remove()
 
-    assert shapes["main"] == shapes["shortcut"] == tuple(output.shape) == expected_shape
+    assert (
+        shapes["main"]
+        == shapes["shortcut"]
+        == tuple(output.shape)
+        == expected_shape
+    )
     assert torch.isfinite(output).all()
     reference_output = reference(reference_X)
     torch.testing.assert_close(output, reference_output)
@@ -73,7 +124,9 @@ def check_block(name, out_channels, stride, use_1x1conv, expected_shape, device)
     loss.backward()
     reference_loss.backward()
     assert X.grad is not None and torch.isfinite(X.grad).all()
-    assert reference_X.grad is not None and torch.isfinite(reference_X.grad).all()
+    assert (
+        reference_X.grad is not None and torch.isfinite(reference_X.grad).all()
+    )
     torch.testing.assert_close(X.grad, reference_X.grad)
 
     reference_parameters = dict(reference.named_parameters())
@@ -82,7 +135,9 @@ def check_block(name, out_channels, stride, use_1x1conv, expected_shape, device)
     for parameter_name, parameter in block.named_parameters():
         reference_parameter = reference_parameters[parameter_name]
         assert parameter.grad is not None, f"{parameter_name} 缺少梯度"
-        assert torch.isfinite(parameter.grad).all(), f"{parameter_name} 梯度非有限"
+        assert torch.isfinite(parameter.grad).all(), (
+            f"{parameter_name} 梯度非有限"
+        )
         assert reference_parameter.grad is not None, parameter_name
         assert torch.isfinite(reference_parameter.grad).all(), parameter_name
         torch.testing.assert_close(parameter.grad, reference_parameter.grad)
@@ -100,8 +155,14 @@ def check_block(name, out_channels, stride, use_1x1conv, expected_shape, device)
     print(f"  活跃参数梯度: {len(checked_parameters)} 项均存在且有限")
     print(f"  已检查参数: {', '.join(checked_parameters)}")
     print(f"  输入梯度: 存在且有限，norm={X.grad.norm().item():.8f}")
-    print(f"  与原实现最大输出差: {(output - reference_output).abs().max().item():.8e}")
-    print(f"  与原实现最大输入梯度差: {(X.grad - reference_X.grad).abs().max().item():.8e}")
+    print(
+        "  与原实现最大输出差: "
+        f"{(output - reference_output).abs().max().item():.8e}"
+    )
+    print(
+        "  与原实现最大输入梯度差: "
+        f"{(X.grad - reference_X.grad).abs().max().item():.8e}"
+    )
     print(f"  与原实现最大参数梯度差: {max_parameter_grad_diff:.8e}")
     print("  检查通过")
 
@@ -117,13 +178,19 @@ def main():
 
     check_block(
         "例 A：普通块（恒等旁路）",
-        out_channels=64, stride=1, use_1x1conv=False,
-        expected_shape=(2, 64, 32, 32), device=device,
+        out_channels=64,
+        stride=1,
+        use_1x1conv=False,
+        expected_shape=(2, 64, 32, 32),
+        device=device,
     )
     check_block(
         "例 B：下采样块（1×1 投影旁路）",
-        out_channels=128, stride=2, use_1x1conv=True,
-        expected_shape=(2, 128, 16, 16), device=device,
+        out_channels=128,
+        stride=2,
+        use_1x1conv=True,
+        expected_shape=(2, 128, 16, 16),
+        device=device,
     )
     print("\n两种重写块的形状、梯度及原实现对照检查全部通过。")
 

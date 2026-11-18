@@ -1,6 +1,8 @@
 import torch
+
 from petvision.models.cv.cnn import CNN
 from petvision.models.cv.resnet import BasicBlock, ResNet18
+
 
 def test_cnn_forward_backward():
     for batch_size in (1, 4):
@@ -24,9 +26,15 @@ def test_cnn_forward_backward():
             loss.backward()
             for name, parameter in model.named_parameters():
                 assert parameter.grad is not None, f"{name} 没有梯度"
-                assert torch.isfinite(parameter.grad).all().item(), f"{name} 梯度不有限"
+                assert torch.isfinite(parameter.grad).all().item(), (
+                    f"{name} 梯度不有限"
+                )
 
-            print(f"batch={batch_size}, use_bn={bn}, logits={tuple(logits.shape)}, loss={loss.item():.6f}")
+            print(
+                f"batch={batch_size}, use_bn={bn}, "
+                f"logits={tuple(logits.shape)}, loss={loss.item():.6f}"
+            )
+
 
 def test_cnn_stage_shapes():
     model = CNN().cpu().eval()
@@ -35,11 +43,11 @@ def test_cnn_stage_shapes():
     # 键是 model.net 中的层号，从 0 开始。
     expected_shapes = {
         3: (2, 32, 16, 16),  # 第一次池化后
-        7: (2, 64, 8, 8),    # 第二次池化后
+        7: (2, 64, 8, 8),  # 第二次池化后
         10: (2, 128, 8, 8),  # 第三段卷积、BN、ReLU 后
         11: (2, 128, 1, 1),  # 全局平均池化后
-        12: (2, 128),        # Flatten 后
-        13: (2, 10),         # 分类层后
+        12: (2, 128),  # Flatten 后
+        13: (2, 10),  # 分类层后
     }
 
     with torch.no_grad():
@@ -54,6 +62,7 @@ def test_cnn_stage_shapes():
                     f"第 {index} 层形状错误："
                     f"预期 {expected_shapes[index]}，实际 {shape}"
                 )
+
 
 def test_batchnorm_train_eval():
     bn = torch.nn.BatchNorm2d(2).cpu()
@@ -88,14 +97,12 @@ def test_batchnorm_train_eval():
         eval_output_2 = bn(images)
 
         # eval 使用保存的运行统计，再应用可学习的缩放和偏移。
-        expected_eval = (
-            (images - mean_after.view(1, 2, 1, 1))
-            / torch.sqrt(var_after.view(1, 2, 1, 1) + bn.eps)
+        expected_eval = (images - mean_after.view(1, 2, 1, 1)) / torch.sqrt(
+            var_after.view(1, 2, 1, 1) + bn.eps
         )
-        expected_eval = (
-            expected_eval * bn.weight.view(1, 2, 1, 1)
-            + bn.bias.view(1, 2, 1, 1)
-        )
+        expected_eval = expected_eval * bn.weight.view(
+            1, 2, 1, 1
+        ) + bn.bias.view(1, 2, 1, 1)
 
     torch.testing.assert_close(eval_output_1, eval_output_2)
     torch.testing.assert_close(eval_output_1, expected_eval)
@@ -107,7 +114,11 @@ def test_batchnorm_train_eval():
     parameters = dict(bn.named_parameters())
     buffers = dict(bn.named_buffers())
     assert set(parameters) == {"weight", "bias"}
-    assert set(buffers) == {"running_mean", "running_var", "num_batches_tracked"}
+    assert set(buffers) == {
+        "running_mean",
+        "running_var",
+        "num_batches_tracked",
+    }
     assert all(parameter.requires_grad for parameter in parameters.values())
     assert all(not buffer.requires_grad for buffer in buffers.values())
 
@@ -115,7 +126,13 @@ def test_batchnorm_train_eval():
     print("buffers:", list(buffers))
     print("running_mean:", mean_before.tolist(), "->", mean_after.tolist())
     print("running_var:", var_before.tolist(), "->", var_after.tolist())
-    print("num_batches_tracked:", batches_before.item(), "->", batches_after.item())
+    print(
+        "num_batches_tracked:",
+        batches_before.item(),
+        "->",
+        batches_after.item(),
+    )
+
 
 def test_basicblock():
     # 输出通道、步幅、是否投影、预期的单样本输出形状
@@ -153,6 +170,7 @@ def test_basicblock():
                     f"{name} 梯度不有限"
                 )
 
+
 def test_basicblock_residual_switch():
     # 同尺寸普通块，以及同时改变通道和空间尺寸的投影块。
     cases = [
@@ -164,13 +182,17 @@ def test_basicblock_residual_switch():
         for out_channels, stride, use_1x1conv, expected_shape in cases:
             for use_residual in (True, False):
                 # 每组重新创建模型，避免旧梯度干扰关闭分支的检查。
-                model = BasicBlock(
-                    in_channels=64,
-                    out_channels=out_channels,
-                    stride=stride,
-                    use_1x1conv=use_1x1conv,
-                    use_residual=use_residual,
-                ).cpu().train()
+                model = (
+                    BasicBlock(
+                        in_channels=64,
+                        out_channels=out_channels,
+                        stride=stride,
+                        use_1x1conv=use_1x1conv,
+                        use_residual=use_residual,
+                    )
+                    .cpu()
+                    .train()
+                )
 
                 # 关闭残差只跳过计算，仍保留原来的投影模块。
                 if use_1x1conv:
@@ -198,16 +220,21 @@ def test_basicblock_residual_switch():
                             f"{name} 梯度不有限"
                         )
 
+
 def test_basicblock_identity_shortcut():
     for use_residual in (True, False):
         # 每轮新建模型，显式关闭投影，使用恒等旁路。
-        model = BasicBlock(
-            in_channels=64,
-            out_channels=64,
-            stride=1,
-            use_1x1conv=False,
-            use_residual=use_residual,
-        ).cpu().eval()
+        model = (
+            BasicBlock(
+                in_channels=64,
+                out_channels=64,
+                stride=1,
+                use_1x1conv=False,
+                use_residual=use_residual,
+            )
+            .cpu()
+            .eval()
+        )
 
         images = torch.ones(2, 64, 32, 32)
 
@@ -227,6 +254,7 @@ def test_basicblock_identity_shortcut():
         # 开启时 ReLU(0 + 1) = 1；关闭时 ReLU(0) = 0。
         expected = images if use_residual else torch.zeros_like(images)
         torch.testing.assert_close(outputs, expected)
+
 
 def test_resnet_forward_backward():
     for batch_size in (1, 2):
@@ -250,9 +278,15 @@ def test_resnet_forward_backward():
         loss.backward()
         for name, parameter in model.named_parameters():
             assert parameter.grad is not None, f"{name} 没有梯度"
-            assert torch.isfinite(parameter.grad).all().item(), f"{name} 梯度不有限"
+            assert torch.isfinite(parameter.grad).all().item(), (
+                f"{name} 梯度不有限"
+            )
 
-        print(f"batch={batch_size}, logits={tuple(logits.shape)}, loss={loss.item():.6f}")
+        print(
+            f"batch={batch_size}, logits={tuple(logits.shape)}, "
+            f"loss={loss.item():.6f}"
+        )
+
 
 def test_resnet_stage_shapes():
     model = ResNet18().cpu().eval()
@@ -260,14 +294,14 @@ def test_resnet_stage_shapes():
 
     # 键是 model.net 中的模块索引，与计划中的 b1–b5 对应。
     expected_shapes = {
-        0: (2, 64, 24, 24),   # b1：入口卷积、BN、ReLU、最大池化
-        1: (2, 64, 24, 24),   # b2：stage1，保持通道和尺寸
+        0: (2, 64, 24, 24),  # b1：入口卷积、BN、ReLU、最大池化
+        1: (2, 64, 24, 24),  # b2：stage1，保持通道和尺寸
         2: (2, 128, 12, 12),  # b3：stage2，首块下采样
-        3: (2, 256, 6, 6),    # b4：stage3，首块下采样
-        4: (2, 512, 3, 3),    # b5：stage4，首块下采样
-        5: (2, 512, 1, 1),    # 全局平均池化
-        6: (2, 512),          # Flatten
-        7: (2, 10),           # 分类层
+        3: (2, 256, 6, 6),  # b4：stage3，首块下采样
+        4: (2, 512, 3, 3),  # b5：stage4，首块下采样
+        5: (2, 512, 1, 1),  # 全局平均池化
+        6: (2, 512),  # Flatten
+        7: (2, 10),  # 分类层
     }
     assert len(model.net) == len(expected_shapes), "整网模块数量与预期不一致"
 
@@ -281,6 +315,7 @@ def test_resnet_stage_shapes():
                 f"第 {index} 层形状错误："
                 f"预期 {expected_shapes[index]}，实际 {shape}"
             )
+
 
 def test_resnet_residual_switch():
     model_on = ResNet18(use_residual=True).cpu().eval()
@@ -300,7 +335,11 @@ def test_resnet_residual_switch():
     images = torch.randn(2, 3, 96, 96)
 
     for use_residual, model in ((True, model_on), (False, model_off)):
-        blocks = [module for module in model.modules() if isinstance(module, BasicBlock)]
+        blocks = [
+            module
+            for module in model.modules()
+            if isinstance(module, BasicBlock)
+        ]
         assert len(blocks) == 8, "ResNet18 应包含八个 BasicBlock"
         for index, block in enumerate(blocks):
             assert block.use_residual is use_residual, (

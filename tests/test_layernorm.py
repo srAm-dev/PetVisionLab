@@ -19,10 +19,13 @@ def test_layernorm_known_values():
     torch.testing.assert_close(output, expected, rtol=0, atol=1e-12)
 
     # 只改一个 token 的一个特征，其他 token 的输出应逐项不变。
-    tokens = torch.tensor([
-        [[1.0, 3.0], [2.0, 4.0], [5.0, 9.0]],
-        [[0.0, 2.0], [3.0, 7.0], [4.0, 8.0]],
-    ], dtype=x.dtype)
+    tokens = torch.tensor(
+        [
+            [[1.0, 3.0], [2.0, 4.0], [5.0, 9.0]],
+            [[0.0, 2.0], [3.0, 7.0], [4.0, 8.0]],
+        ],
+        dtype=x.dtype,
+    )
     perturbed = tokens.clone()
     perturbed[0, 1, 0] += 5.0
     original_output = layer(tokens)
@@ -30,17 +33,23 @@ def test_layernorm_known_values():
     unchanged_tokens = torch.ones((2, 3), dtype=torch.bool)
     unchanged_tokens[0, 1] = False
     torch.testing.assert_close(
-        original_output[unchanged_tokens], perturbed_output[unchanged_tokens],
-        rtol=0, atol=1e-12,
+        original_output[unchanged_tokens],
+        perturbed_output[unchanged_tokens],
+        rtol=0,
+        atol=1e-12,
     )
-    assert (original_output[0, 1] - perturbed_output[0, 1]).abs().max().item() > 1e-6
+    assert (
+        original_output[0, 1] - perturbed_output[0, 1]
+    ).abs().max().item() > 1e-6
     print("手算 [1,3] 的输出:", output.detach().tolist())
 
 
 @pytest.mark.parametrize("embed_dim", [1, 2, 32])
 def test_layernorm_constant_input(embed_dim):
     layer = normalization.LayerNorm(embed_dim=embed_dim).cpu().double()
-    x = torch.full((2, 3, embed_dim), 7.0, dtype=torch.float64, requires_grad=True)
+    x = torch.full(
+        (2, 3, embed_dim), 7.0, dtype=torch.float64, requires_grad=True
+    )
     output = layer(x)
 
     assert output.shape == x.shape
@@ -51,18 +60,27 @@ def test_layernorm_constant_input(embed_dim):
     generator = torch.Generator(device="cpu").manual_seed(42)
     probe = torch.randn(x.shape, generator=generator, dtype=x.dtype)
     (output * probe).sum().backward()
-    for name, tensor in (("x", x), ("gamma", layer.gamma), ("beta", layer.beta)):
+    for name, tensor in (
+        ("x", x),
+        ("gamma", layer.gamma),
+        ("beta", layer.beta),
+    ):
         assert tensor.grad is not None, f"{name} 没有梯度"
         assert tensor.grad.shape == tensor.shape
-        assert torch.isfinite(tensor.grad).all().item(), f"{name} 梯度包含非有限值"
+        assert torch.isfinite(tensor.grad).all().item(), (
+            f"{name} 梯度包含非有限值"
+        )
 
 
-@pytest.mark.parametrize("embed_dim,input_shape", [
-    (32, (2, 3, 1)),
-    (1, (2, 3, 32)),
-    (32, (2, 3, 16)),
-    (32, ()),
-])
+@pytest.mark.parametrize(
+    "embed_dim,input_shape",
+    [
+        (32, (2, 3, 1)),
+        (1, (2, 3, 32)),
+        (32, (2, 3, 16)),
+        (32, ()),
+    ],
+)
 def test_layernorm_rejects_invalid_shape(embed_dim, input_shape):
     layer = normalization.LayerNorm(embed_dim).cpu().double()
     x = torch.zeros(input_shape, dtype=torch.float64)
@@ -83,8 +101,13 @@ def test_layernorm_reference(B, T):
 
     # 用非默认的缩放与偏移，检查两个参数都实际参与了计算。
     with torch.no_grad():
-        layer.gamma.copy_(0.5 + torch.rand(embed_dim, generator=generator, dtype=torch.float64))
-        layer.beta.copy_(torch.randn(embed_dim, generator=generator, dtype=torch.float64))
+        layer.gamma.copy_(
+            0.5
+            + torch.rand(embed_dim, generator=generator, dtype=torch.float64)
+        )
+        layer.beta.copy_(
+            torch.randn(embed_dim, generator=generator, dtype=torch.float64)
+        )
         reference.weight.copy_(layer.gamma)
         reference.bias.copy_(layer.beta)
 
@@ -108,10 +131,14 @@ def test_layernorm_reference(B, T):
         "beta/bias.grad": (layer.beta.grad, reference.bias.grad),
     }
     for name, (actual, expected) in comparisons.items():
-        assert actual is not None and expected is not None, f"{name} 缺少结果或梯度"
+        assert actual is not None and expected is not None, (
+            f"{name} 缺少结果或梯度"
+        )
         assert actual.shape == expected.shape, f"{name} 形状不一致"
         assert torch.isfinite(actual).all().item(), f"{name} 包含非有限值"
-        assert torch.isfinite(expected).all().item(), f"参考 {name} 包含非有限值"
+        assert torch.isfinite(expected).all().item(), (
+            f"参考 {name} 包含非有限值"
+        )
         max_error = (actual - expected).abs().max().item()
         print(
             f"B={B}, T={T}, {name}: shape={tuple(actual.shape)}, "

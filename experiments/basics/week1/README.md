@@ -52,6 +52,8 @@ python -c "import sys, numpy, matplotlib; print(sys.executable); print(numpy.__v
 
 输入设置、公式、自查结果和验收标准见[逐日指南](../../../docs/week1.md)。新增脚本的运行方法在本表补充。
 
+当前接口对应：linear_model.py 保存 self.w/self.b，predict 只做矩阵预测；gradient_basics.py 提供 predict、mse、gradients；linear_regression_numpy.py 导入这三个函数，generate_data 返回四项，train 返回 w,b,losses。重写脚本自己的 generate_data 接收 true_w、true_b，仅返回 X,y。learning_rate_comparison.py 在 main 的 results 列表累计三组结果后写 CSV。这些都是已有实现，不要求复习时再创建重复函数。
+
 ## 周总结
 
 本周完成了 Python、NumPy 基础、线性回归、数值梯度检查和学习率对照。结果来自本目录保存的曲线、CSV 和脚本输出。

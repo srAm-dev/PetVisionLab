@@ -1,5 +1,6 @@
-import numpy as np
+"""把矩阵运算与一维梯度下降的手算结果对应到数组运算。"""
 
+import numpy as np
 
 if __name__ == "__main__":
     X = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
@@ -53,14 +54,17 @@ if __name__ == "__main__":
     assert y_hat_five.shape == (3, 1)
     print("矩阵计算与手算结果一致，形状检查通过。")
 
-
     def f(w):
+        """返回一维梯度下降练习中的平方损失。"""
         return w**2
+
     def df(w):
-        return 2*w
+        """返回平方损失在当前 w 的导数。"""
+        return 2 * w
+
     learning_rate = 0.1
     w = 2.0
 
     for i in range(10):
         w = w - learning_rate * df(w)
-        print(f"迭代 {i+1}: w = {w}, f(w) = {f(w)}")
+        print(f"迭代 {i + 1}: w = {w}, f(w) = {f(w)}")

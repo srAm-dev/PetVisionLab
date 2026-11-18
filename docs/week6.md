@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week6/README.md)。
 
-更新日期：2026-11-11。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -143,6 +143,8 @@ class CharTokenizer:
 
 构造函数接收已经排序的训练字符列表 chars，建立字符→ID 和 ID→字符的对应关系，同时保存 self.chars、self.unk_id 和 self.vocab_size。
 
+CharTokenizer.__init__ 中令 self.chars=list(chars)，再创建 self.char_to_id={ch:i for i,ch in enumerate(self.chars)} 和 self.id_to_char={i:ch for i,ch in enumerate(self.chars)}；self.unk_id=len(self.chars)，self.vocab_size=self.unk_id+1。encode 返回 Python 整数列表，decode 接收整数序列并返回字符串；转为 long Tensor 由训练或生成入口负责。
+
 load 是类方法：它从 JSON 读回 chars，用 `cls(chars)` 创建同一种 tokenizer，再核对 version、unk_id，返回这个对象。重新加载时不再读取文本重建词表。已知字符必须往返一致；UNK 映射无法恢复原字符，需要报告 OOV，不把这种输入当成已知字符往返检查。
 
 为避免保存后 ID 改变，本轮可约定 `chars=sorted(set(train_text))`，已知字符 ID 为 `0..len(chars)-1`，UNK ID 为 `len(chars)`，实际 V 为 `len(chars)+1`。JSON 保存 `type="char"、version=1、chars、unk_id`，加载后按列表顺序还原映射，decode 遇到 UNK 可输出 `<unk>` 占位符。用训练文本 `ab\na` 检查已知编码 `[1,2,0,1]`，未见字符 `?` 编为 3，OOV=1；该未知字符的原值不能由 3 恢复。
@@ -177,6 +179,8 @@ used_text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
 设完整字符串长度为 L，令 `train_end=int(0.8*L)`、`val_end=int(0.9*L)`，依次保存 `text[:train_end]`、`text[train_end:val_end]`、`text[val_end:]` 到 `datasets/processed/tinyshakespeare/{train,val,test}.txt`。三个区间首尾相接，应覆盖全部字符。
 
 manifest 至少记录 source_url、原始文件 sha256、encoding、换行处理方式，以及三个 split 的路径、`[start,end)` 区间和各自 hash。下载时保留原始 bytes 的 hash；解码、处理换行后再记录实际使用文本的 hash。再次运行优先核对已有文件，避免悄悄覆盖第七周正在使用的数据。
+
+字段名称固定为 source_url、raw_sha256、used_text_sha256、encoding、newline_policy、total_chars、splits。splits 是以 train、val、test 为键的字典，每项包含 path、start、end、sha256；例如训练原文 hash 的读取位置为 manifest["splits"]["train"]["sha256"]。source_url 使用本次实际下载链接，newline_policy 本轮写 preserve。后续训练、tokenizer 和评估入口都按这份结构读取，不各自猜测键名。
 
 记录下载文件 hash 和读取/换行规范化方式；同一来源 URL 未来内容变化时，hash 能帮助确认是否还是同一份数据。
 
@@ -238,6 +242,8 @@ y：                 [1,2,3]
 
 调用者在训练开始前创建一次独立 CPU `torch.Generator().manual_seed(42)` 并持续传入，不能每批重新创建或重设种子。输入与 target 都为 long，模型参数是浮点数。本周训练直接从 token 序列取窗口，不需要套用图像 DataLoader。
 
+sample_batch 的函数体先令 N=token_ids.numel()、T=context_length，再检查 N>=T+1；N、T 都是本次调用的局部变量。torch.randint 返回 batch_size 个起点，遍历时把每个起点转为整数再切片；最后返回 x.to(device)、y.to(device)，不在这个函数内部创建 Generator。
+
 <a id="eval-windows"></a>
 
 ##### iter_eval_windows
@@ -271,7 +277,7 @@ def iter_eval_windows(token_ids, context_length):
 
 评估时先将 x、y 作为 long Tensor 移到模型设备，分别补 batch 维为 `[1,t]`；模型返回 `[1,t,V]`。t 可以小于 context，尤其尾窗不能强行 reshape 成固定长度。模型切 eval 并关闭梯度，每窗用 `cross_entropy(..., reduction="sum")` 得到 NLL 总和，累加 `y.numel()` 个目标，最后计算 `total_nll / total_target_tokens`。
 
-上例计数应为 `3+3+1=7=N-1`。若三个窗口的 mean loss 分别为 1、2、4，整体 loss 为 `(3*1+3*2+1*4)/7=13/7`，不能对三个 mean 直接平均。补到现有语言模型检查中：普通尾窗、刚好整除、N=2、不同 context 均满足目标索引恰好覆盖 1..N-1。
+上例计数应为 `3+3+1=7=N-1`。若三个窗口的 mean loss 分别为 1、2、4，整体 loss 为 `(3*1+3*2+1*4)/7=13/7`，不能对三个 mean 直接平均。本日只用上面的 N=8、T=3 例子核对目标覆盖，不扩展成不同长度和 context 的测试组合。
 
 该规则会在窗口边界重置模型可见上下文；它是本轮约定的固定评估方式，Bigram/GPT 必须一致，不把它和使用滑动长前缀的评估结果混在一列。每个 split 单独处理，不从 train 借前缀给 val，也不跨入 test。
 
@@ -282,6 +288,8 @@ def iter_eval_windows(token_ids, context_length):
 Embedding(V,V) 可视为一张转移 logits 表，当前 token ID 取出一行，决定下一 token 的分布。它不利用更早的上下文；GPT 将能利用前缀信息。参数量为 V²。在 bigram.py 定义 `BigramLanguageModel(vocab_size)`，构造函数创建 `nn.Embedding(vocab_size, vocab_size)`，forward(token_ids) 返回查表结果；token_ids 必须是 long Tensor。
 
 Embedding 是可学习的查找表：第一个 V 是“有多少行可供 ID 索引”，第二个 V 是“每行有多少个数”。假设 V=4，输入 ID=2 就取表的第 2 行，得到对下一 token 为 0、1、2、3 的四个 logits；不是把数字 2 乘上权重。输入 `[B,T]` 的每个 ID 都取一行，结果为 `[B,T,V]`。这里特意让每行宽度等于 V，以便直接作为分类分数；GPT 的 token embedding 则为 Embedding(V,C)，先取 C 维特征，再经网络输出 V 维分数。
+
+BigramLanguageModel 继承 nn.Module；__init__(self, vocab_size) 调用 super().__init__() 后创建 self.token_embedding=nn.Embedding(vocab_size,vocab_size)。forward(self, token_ids) 返回 self.token_embedding(token_ids)。这里的 vocab_size 由入口传入，模型类内部不读取 tokenizer 或 YAML。
 
 #### 第三步：在 lm_trainer.py 完成 train_step 与 evaluate_lm
 
@@ -301,6 +309,8 @@ loss 输入 target     [B*T]
 在 lm_trainer.py 实现 `train_step(model, x, y, optimizer)`：切 train、清梯度、前向、将 logits / y 展平计算交叉熵、backward、step，返回本批平均 loss 和目标数。`evaluate_lm(model, token_ids, context_length, device)` 切 eval/no_grad，完整累加所有窗口的 NLL 与目标数，返回 loss 和 n_target_tokens，再恢复原模式。两个函数的输入来自不同 split，不能在内部重新随机划分。
 
 两个函数统一返回 `{"loss": float值, "n_target_tokens": int值}`，键名固定；train_step 的数量为 y.numel()，evaluate_lm 为完整分窗的累计目标数。lm_trainer.py 顶层导入 torch、`torch.nn.functional as F` 和 iter_eval_windows；训练 loss 使用 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))`，验证使用相同展平方式但 reduction="sum"。evaluate_lm 开始先保存 `was_training = model.training`，在 try 中执行 eval/no_grad，在 finally 中 `model.train(was_training)`，确保退出时恢复原模式。
+
+train_step 中的 logits 先由 model(x) 得到；计算 loss 前执行 optimizer.zero_grad()，之后依次 loss.backward()、optimizer.step()，返回 loss.item() 与 y.numel()。evaluate_lm 在循环前设置 total_nll=0.0、total_target_tokens=0；每次从 iter_eval_windows 取得 x/y，分别 unsqueeze(0) 并迁移设备，再前向和累计 loss.item()。最后用累计 NLL 除以累计目标数，不能复用最后一窗的 loss 作为整份验证结果。
 
 #### 第四步：用错位例子和一次更新理解语言模型目标
 
@@ -375,6 +385,22 @@ train_generator = torch.Generator().manual_seed(cfg["training"]["seed"])
 
 词表大小从 tokenizer.vocab_size 实际读取；`model.context_length` 控制窗口长度，Bigram 本身仍只依赖当前位置。一次 step 指一个训练 batch 的参数更新，2000 steps 不是遍历完整语料 2000 次。今天先实现参数解析与小批更新，正式结果待 Day 4 写出。
 
+今天的 main 在创建对象后只调用一次 sample_batch、train_step 和 evaluate_lm，打印返回值后结束；Day 4 再把这段临时调度替换成正式 steps 循环。进入调用前明确创建：
+
+```python
+context_length = cfg["model"]["context_length"]
+batch_size = cfg["data"]["batch_size"]
+optimizer = torch.optim.AdamW(
+    model.parameters(), lr=cfg["training"]["learning_rate"],
+    weight_decay=cfg["training"]["weight_decay"],
+)
+x, y = sample_batch(train_ids, context_length, batch_size, train_generator, device)
+train_metrics = train_step(model, x, y, optimizer)
+val_metrics = evaluate_lm(model, val_ids, context_length, device)
+```
+
+这些变量都属于 main，模型和训练器不读取 cfg。model 已按上文在优化器之前创建并迁移到 device；每个模型分支都要先确定 model，随后才建立绑定它的 optimizer。
+
 ### 运行与自查
 
 ```bash
@@ -414,14 +440,63 @@ python -m pytest tests/test_language_model.py -q
 4. FFN 按 Linear(C,hidden_dim) → GELU → Linear(hidden_dim,C) → Dropout 组织，两个 Linear 使用 bias=True；这里按 nanoGPT 在第二个 Linear 后做一次 dropout，GELU 后不另加隐藏层 dropout。第二条残差为 `x = x + ffn(norm2(x))`。
 5. GPTBlock.forward 接收 x、attn_mask、key_padding_mask=None，将 Mask 传给 Attention，只返回新的 x。
 
+GPTBlock 继承 nn.Module。先在 __init__ 中调用 super().__init__()，将第 1-4 项具体注册为 self.norm1、self.norm2、self.attention、self.attn_output_dropout、self.ffn。norm1/norm2 各新建一个 LayerNorm(embed_dim)，attention 使用本构造函数的 embed_dim、num_heads、dropout，attn_output_dropout 为 nn.Dropout(dropout)。FFN 明确写为下面的顺序，第二个 Linear 是 self.ffn[2]：
+
+```python
+self.ffn = nn.Sequential(
+    nn.Linear(embed_dim, ffn_hidden_dim),
+    nn.GELU(),
+    nn.Linear(ffn_hidden_dim, embed_dim),
+    nn.Dropout(dropout),
+)
+```
+
+完整前向签名及计算为：
+
+```python
+def forward(self, x, attn_mask, key_padding_mask=None):
+    attention_output = self.attention(
+        self.norm1(x), attn_mask=attn_mask, key_padding_mask=key_padding_mask,
+    )
+    x = x + self.attn_output_dropout(attention_output)
+    return x + self.ffn(self.norm2(x))
+```
+
+第 3 项的 mask 是传入参数 attn_mask 的简写，不另建一个未定义的 mask 变量。
+
 再定义 `MiniGPT(vocab_size, context_length, embed_dim, depth, num_heads, ffn_hidden_dim, dropout)`，按下面顺序建立对象：
 
-1. 从 tokenizer 取实际 V，记录 context_length 与 C，检查 C 能被 num_heads 整除。YAML 的 heads 由入口显式传给 num_heads。
+MiniGPT 同样继承 nn.Module，在 __init__ 中先调用 super().__init__()。构造函数只使用传入的 vocab_size；下文“从 tokenizer 取 V”由入口完成，类内部令 V=vocab_size、C=embed_dim，并保存 self.context_length=context_length。
+
+1. 入口从 tokenizer 取实际 V 传给 vocab_size；构造函数保存 context_length 与 C，检查 C 能被 num_heads 整除。YAML 的 heads 由入口显式传给 num_heads。
 2. 注册 `token_embedding = nn.Embedding(V,C)` 和 `position_embedding = nn.Embedding(context_length,C)`，再注册 embedding_dropout。两种嵌入相加后做一次 dropout；GPT 不使用第四周文本 Encoder 的 sqrt(C) 缩放或正弦位置表。
 3. 按 depth 分别新建 GPTBlock，放入 ModuleList，各层参数独立。本周首轮 C=128、FFN=512、depth=2、heads=4。
 4. 创建最终 LayerNorm(C)，再创建 `head = nn.Linear(C,V,bias=False)`；在统一初始化之前令 `self.head.weight = self.token_embedding.weight`，共享同一个 Parameter。两者 shape 都为 `[V,C]`：输入时按 token ID 取行，输出时用这些行与隐藏状态计算词表 logits。位置嵌入单独保留。
 5. 按作者初始化：Embedding、Linear 的 weight 用均值 0、std=0.02 的正态分布，存在的 Linear bias 置零；LayerNorm 的 gamma/beta 保持 1/0。可在模型中定义初始化方法并用 apply 遍历。随后把各 GPTBlock 的 Attention 输出投影和 FFN 第二个 Linear 的 weight 标准差调整为 `0.02 / sqrt(2*depth)`，对应作者残差投影的初始化。
 6. 用 `model.head.weight is model.token_embedding.weight` 检查共享关系；named_parameters 默认对同一 Parameter 去重，因此不要求这份共享权重被列出两次。保存加载后也检查共享关系及固定输入输出；AdamW 直接使用 model.parameters()，不手动将共享权重重复加入参数组。
+
+构造成员名称固定为 self.token_embedding、self.position_embedding、self.embedding_dropout、self.blocks、self.final_norm、self.head。前三项按第 2 项创建，self.final_norm=LayerNorm(embed_dim)，其余具体写为：
+
+```python
+self.blocks = nn.ModuleList([
+    GPTBlock(embed_dim, num_heads, ffn_hidden_dim, dropout)
+    for _ in range(depth)
+])
+self.head = nn.Linear(embed_dim, vocab_size, bias=False)
+self.head.weight = self.token_embedding.weight
+```
+
+初始化方法定义为 MiniGPT._init_weights(self, module)，其中 module 是 apply 传入的当前子模块；用 isinstance 区分 nn.Linear、nn.Embedding，再按第 5 项初始化。所有成员建好并共享权重后调用 self.apply(self._init_weights)，接着遍历 self.blocks，用 nn.init.normal_(weight, mean=0.0, std=0.02/math.sqrt(2*depth)) 分别处理 block.attention.out_proj.weight 和 block.ffn[2].weight。depth 在构造开始时检查为正整数，初始化也只在构造中执行。
+
+这个辅助方法与 __init__、forward 平级，定义在 MiniGPT 类内：
+
+```python
+def _init_weights(self, module):
+    if isinstance(module, (nn.Linear, nn.Embedding)):
+        nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    if isinstance(module, nn.Linear) and module.bias is not None:
+        nn.init.zeros_(module.bias)
+```
 
 ```text
 token IDs                    [B,T]
@@ -453,6 +528,8 @@ for block in self.blocks:
 ```
 
 上述 self.token_embedding、self.position_embedding 和 self.blocks 均在构造函数中建立；堆叠后接最终 LayerNorm 和词表输出层。每层收到同一个 causal_mask，当前样本不含 padding。ViT 不传 causal mask，GPT 不能沿用它的双向设置。
+
+forward 中用 self.context_length 检查 T；上面循环结束后，实际返回语句是 return self.head(self.final_norm(x))。位置 ID 由本次 T 生成，模型不额外接收 targets，返回值始终是 logits Tensor。
 
 #### 第二步：沿 GPT 张量流做一次前向与反向
 
@@ -493,13 +570,25 @@ model:
 
 同时将 experiment_dir 改为 `experiments/mini_gpt/week6/runs/gpt`，output_dir 改为 `outputs/mini_gpt`。GPT 创建自己的 GPTBlock 实例，复用 Attention 与 LayerNorm；token embedding、可学习位置嵌入、embedding dropout、最终 LayerNorm 和权重共享由 MiniGPT 管理。
 
+train_gpt.py 中先令 model_cfg=cfg["model"]。mini_gpt 分支按下面字段映射创建 model，再迁移到 device；Bigram 分支仍只传 tokenizer.vocab_size。生成和重载也沿用这份映射，不把整个包含 name 的字典直接展开：
+
+```python
+model = MiniGPT(
+    vocab_size=tokenizer.vocab_size,
+    context_length=model_cfg["context_length"],
+    embed_dim=model_cfg["embed_dim"], depth=model_cfg["depth"],
+    num_heads=model_cfg["heads"], ffn_hidden_dim=model_cfg["ffn_hidden_dim"],
+    dropout=model_cfg["dropout"],
+).to(device)
+```
+
 ### 运行与自查
 
 ```bash
 python -m pytest tests/test_language_model.py -q
 ```
 
-加入 GPTBlock 参考输出/梯度，以及 GPT 的形状、有限梯度、共享权重及未来扰动检查：输入 `[B,T]`，输出 `[B,T,V]`；修改位置 k 之后的输入，前 k+1 个位置的 logits 应在容差内一致。小样本拟合只验证学习路径，正式两组训练在明天运行。
+完成 GPT 的形状、代表参数有限梯度、共享权重及一次未来扰动检查：输入 `[B,T]`，输出 `[B,T,V]`；修改位置 k 之后的输入，前 k+1 个位置的 logits 应在容差内一致。小样本拟合只验证学习路径，正式两组训练在明天运行。
 
 - [ ] logits 只依赖当前与过去的输入，未来隔离通过。
 - [ ] 能解释 token embedding、position embedding、无 bias head 的词表维度和输入 / 输出权重共享。
@@ -577,6 +666,10 @@ for step in range(1, target_steps + 1):
 
 checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路径与 hash、split manifest 的 hash，以及本次 step 和验证 loss。加载时核对这些信息，再按结构重建并读取 state_dict。用新建模型重新计算固定验证集，比较保存前后的 loss 与目标 token 数，同时核对数值与计数。
 
+save_checkpoint 的已有接口是 save_checkpoint(checkpoint, path)，第一个参数为字典，不是 model 对象；load_checkpoint(path) 返回同样结构的字典。定期验证分支中先准备 model_state=model.state_dict()、model_config=cfg["model"].copy()，再把上文其余字段放入 checkpoint。best 和 last 分别调用 save_checkpoint(checkpoint, output_dir/"best.pt")、save_checkpoint(checkpoint, output_dir/"last.pt")；output_dir 在 main 读配置后由 Path(cfg["output_dir"]) 创建。
+
+实现顺序为：先在文件顶层写完 append_lm_history、plot_lm_history，再在 main 建立 experiment_dir/output_dir 和 history_path=experiment_dir/"history.csv"，之后接入上一步循环。循环中创建 row 后，先 append_lm_history(row, history_path)，再判断 best、写 last，最后清零区间累计值。循环结束后用 csv.DictReader 读取 history_path，再调用 plot_lm_history；不要让函数或 history 变量第一次出现在调用处。
+
 在 `scripts/train_gpt.py` 顶层新增 `append_lm_history(row,path)`：将 path 转为 Path 并创建父目录；打开前检查文件是否不存在或为空，再以 a 模式、encoding="utf-8"、newline="" 打开，用 csv.DictWriter 在新文件 / 空文件写一次表头，每次调用只 writerow(row) 一条；列名改为 step、train_loss、val_loss、val_target_tokens，表头只在新文件 / 空文件写一次。正式分支创建各自 experiment_dir / output_dir，保存 config.yaml，在上面 row 创建后立即调用追加函数；每次仅传这一条 row。新运行使用空日志，已有同名结果先归档；第七周的 resume 才继续现有日志。
 
 每个模型训练结束后读取自己 experiment_dir/history.csv，用 step 为横轴、train_loss / val_loss 为纵轴，保存 `experiment_dir/figures/loss_curves.png`。不要复用要求 epoch / accuracy 的视觉 plot_history；在 train_gpt.py 顶层写 `plot_lm_history(history, experiment_dir)`，函数内用 plt.subplots 创建图，横轴取各行 step，分别 plot 两列 loss 并添加图例；先创建 experiment_dir/figures，savefig 后关闭该 figure。
@@ -626,9 +719,13 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 
 参数解析时 max-new-tokens 与 seed 用 type=int，checkpoint 和 output 用 Path，prompt 为字符串；max-new-tokens 要为非负数。
 
+在 generate.py 顶层定义 parse_args(argv=None)，给 --checkpoint、--prompt、--output 设置 required=True，--max-new-tokens 默认 200、--seed 默认 42；main 首行令 args=parse_args()。同时从 petvision.utils.checkpoint 导入 load_checkpoint、从 petvision.utils.seed 导入 set_seed。采样前调用 set_seed(args.seed)，不在逐 token 循环中重设种子。
+
 新进程读取结构、context 与 tokenizer，创建模型并加载；固定 seed，在 eval/no_grad 下生成。脚本不应依赖训练程序内存中的对象。
 
 generate.py 的 main 按以下顺序接入：load_checkpoint(args.checkpoint) → 核对 tokenizer 文件 hash → CharTokenizer.load → 核对 tokenizer.vocab_size 与 checkpoint.vocab_size → 根据 model_config.name 新建 Bigram 或 MiniGPT → 严格 load_state_dict → 迁移设备并 eval。MiniGPT 的 heads 仍映射为构造参数 num_heads；context_length 从 checkpoint 读取，不在生成脚本另写 128。main() 用 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 选择设备并打印，再执行 model.to(device)；本次设备不要求与 checkpoint 记录的训练设备相同。
+
+这里 checkpoint 是 load_checkpoint 返回的字典，访问时写 checkpoint["model_config"]、checkpoint["vocab_size"] 等。令 model_cfg=checkpoint["model_config"]、context_length=checkpoint["context_length"]；tokenizer_path 从 checkpoint["tokenizer_path"] 读取。模型构造按 Day 3 的映射，加载参数用 model.load_state_dict(checkpoint["model_state"])。
 
 若后续把 main 中的循环抽成函数，可约定 `generate_ids(model, prompt_ids, context_length, max_new_tokens, device)`，返回完整 token ID 列表；抽取时将循环里的 args 字段改为函数参数，编码与参数解析仍由 main 完成。下方 JSONL 记录还要写实际 device / dtype、prompt 的 OOV 数；第七周再将加载替换为按 tokenizer 类型分派的入口。
 
@@ -666,6 +763,25 @@ with torch.no_grad():
 samples.jsonl 每行记录 model、checkpoint、tokenizer_hash、prompt、seed、生成设置和原始文本。角色名等短 prompt 要先确认属于字符词表。
 
 JSONL 是每行一个完整 JSON 对象。先构造本次实际结果字典 record，文本中的换行由 json.dumps 转义；一条记录只占文件的一行：
+
+在 main 的生成循环与 all_ids/new_ids 计算完成后，先创建 record，再执行下面的写入片段。最小字段可以直接从已定义变量取得：
+
+```python
+record = {
+    "model": checkpoint["model_config"]["name"],
+    "checkpoint": str(args.checkpoint),
+    "tokenizer_hash": checkpoint["tokenizer_hash"],
+    "prompt": args.prompt, "seed": args.seed,
+    "prompt_ids": prompt_ids, "new_ids": new_ids,
+    "generated_tokens": len(new_ids),
+    "max_new_tokens": args.max_new_tokens,
+    "context_length": context_length,
+    "text": tokenizer.decode(all_ids),
+    "device": str(device), "dtype": str(next(model.parameters()).dtype),
+}
+```
+
+prompt 的 OOV 数从字符 tokenizer 的 unk_id 与 prompt_ids 统计后追加到 record。记录中的 Path、device、dtype 都转成字符串，IDs 保持普通整数列表。
 
 ```python
 import json

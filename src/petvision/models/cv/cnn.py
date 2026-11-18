@@ -1,10 +1,21 @@
+"""提供用于批归一化对照的 CIFAR-10 卷积分类器。"""
+
 from torch import nn
 
+
 class CNN(nn.Module):
+    """用三层卷积、全局平均池化和分类头将 RGB 图片转为 logits。"""
+
     def __init__(self, num_classes=10, use_bn=True):
+        """创建用于 BN 对照的卷积分类器。
+
+        Args:
+            num_classes: 分类头的输出数。
+            use_bn: 是否使用批归一化。关闭时在原位置使用 Identity。
+        """
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1), 
+            nn.Conv2d(3, 32, 3, padding=1),
             nn.BatchNorm2d(32) if use_bn else nn.Identity(),
             nn.ReLU(),
             nn.MaxPool2d(2),
@@ -17,11 +28,13 @@ class CNN(nn.Module):
             nn.ReLU(),
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Linear(128, num_classes)
+            nn.Linear(128, num_classes),
         )
+
     def forward(self, images):
         logits = self.net(images)
         return logits
+
 
 if __name__ == "__main__":
     print(CNN())

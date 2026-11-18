@@ -1,3 +1,5 @@
+"""用同一输入比较卷积步幅与池化对输出形状的影响。"""
+
 import torch
 from torch import nn
 
@@ -9,7 +11,7 @@ pool = nn.MaxPool2d(kernel_size=2, stride=2)
 with torch.no_grad():
     output_s1 = conv_s1(images)
     output_s2 = conv_s2(images)  # 分别作用于原始图片，不串联两个卷积。
-    pooled = pool(output_s1)   # 池化接在 stride=1 的卷积后面。
+    pooled = pool(output_s1)  # 池化接在 stride=1 的卷积后面。
 
 print("输入：", images.shape)
 print("stride=1 卷积：", output_s1.shape)

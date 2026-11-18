@@ -53,6 +53,8 @@ python -m pytest tests/test_cv_training.py -q
 
 以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day1-4 的实现，以及 Day5 的 checkpoint 保存加载和独立 evaluate 入口；相关检查已通过。含 best/last 的正式五轮训练已完成，独立加载验证也已通过；Day6 的完整测试、误分类输出和单批次练习也已完成。若要重新训练，先归档需要保留的当前结果与权重。
 
+当前训练入口将对象创建放在 main，三种模式分别交给 run_smoke、run_overfit、run_training；记录函数位于 utils/history.py。evaluate.py 的 val 模式打印指标并保存 figures/mistakes_val.png，test 模式另写 test_metrics.json 和 figures/mistakes_test.png。已有 figures/mistakes.png 保留为历史展示图，不是当前脚本的输出文件名；下方日期明确的历史记录与数值保持原样。
+
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/check_environment.py --output-dir experiments/mnist_mlp/week2` | 打印并记录环境 |
@@ -76,6 +78,8 @@ python -m pytest tests/test_cv_training.py -q
 MNIST 下载、固定划分与 DataLoader 见[Day 2 数据步骤](../../../docs/week2.md#mnist-data)，创建训练对象见[Day 4](../../../docs/week2.md#training-objects)，实际保存 / 加载操作见[Day 5](../../../docs/week2.md#checkpoint-io)。
 
 Day 2 数据条件：`data_dir=datasets/raw`，`split_path=experiments/mnist_mlp/week2/mnist_split.json`，seed=42，batch_size=128，num_workers=0，drop_last=False；预处理依次为 ToTensor 与 Normalize(mean=(0.5,), std=(0.5,))。训练打乱批次顺序，验证和测试按固定顺序取样；划分不随每轮训练改变。
+
+当前 build_mnist_loaders 的完整参数顺序是 data_dir、split_path、batch_size、seed、train_transform、eval_transform、validation_size=5000、num_workers=0；mean/std 由调用脚本创建 Normalize 时使用，不直接传给数据函数。MLP 的尺寸参数默认值仍为 784、(256,128)、10，训练统计函数返回 loss、accuracy、n_samples。
 
 <details>
 <summary>历史检查记录：Day 3-5 的实现与调试过程（2026-10-24 至 2026-10-27）</summary>

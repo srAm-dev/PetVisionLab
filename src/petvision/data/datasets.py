@@ -1,28 +1,60 @@
+"""为 MNIST 和 CIFAR-10 复用固定划分，由调用方提供预处理。"""
+
 import json
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import MNIST, CIFAR10
+from torchvision.datasets import CIFAR10, MNIST
 
 
 def build_mnist_loaders(
-    data_dir, split_path, batch_size, seed, train_transform, eval_transform,
-    validation_size=5000, num_workers=0,
+    data_dir,
+    split_path,
+    batch_size,
+    seed,
+    train_transform,
+    eval_transform,
+    validation_size=5000,
+    num_workers=0,
 ):
-    """复用固定划分，返回 train/val/test loader。
+    """创建 MNIST 的训练、验证与官方测试加载器。
 
-    预处理由调用者创建：训练使用 train_transform，验证和测试使用
-    确定性的 eval_transform。训练与验证各有独立的 Dataset 实例。
+    Args:
+        data_dir: 数据缓存根目录。
+        split_path: 保存或复用训练与验证索引的 JSON 路径。
+        batch_size: 每批最多包含的样本数。
+        seed: 划分索引和训练批次顺序使用的种子。
+        train_transform: 训练图片的预处理。
+        eval_transform: 验证与测试图片的预处理，通常是确定性的。
+        validation_size: 从官方训练集划出的验证样本数。
+        num_workers: DataLoader 使用的工作进程数。
+
+    Returns:
+        (train_loader, val_loader, test_loader)。训练顺序会打乱，
+        三个加载器都保留最后一个不足整批的批次。
+
+    Raises:
+        ValueError: 训练集数量、验证集大小或保存的划分与当前设置不符。
     """
     train_base = MNIST(
-        root=data_dir, train=True, download=True, transform=train_transform,
+        root=data_dir,
+        train=True,
+        download=True,
+        transform=train_transform,
     )
+    # 两个实例读取同一训练文件，各自保存 transform，避免训练增强进入验证集。
     val_base = MNIST(
-        root=data_dir, train=True, download=True, transform=eval_transform,
+        root=data_dir,
+        train=True,
+        download=True,
+        transform=eval_transform,
     )
     test_set = MNIST(
-        root=data_dir, train=False, download=True, transform=eval_transform,
+        root=data_dir,
+        train=False,
+        download=True,
+        transform=eval_transform,
     )
     split_path = Path(split_path)
     n_total = len(train_base)
@@ -55,7 +87,10 @@ def build_mnist_loaders(
     if not isinstance(split_data, dict):
         raise ValueError("划分 JSON 的顶层必须是字典")
     expected_metadata = {
-        "dataset": "mnist", "version": 1, "seed": seed, "n_total": n_total,
+        "dataset": "mnist",
+        "version": 1,
+        "seed": seed,
+        "n_total": n_total,
     }
     for name, expected in expected_metadata.items():
         if split_data.get(name) != expected:
@@ -72,7 +107,9 @@ def build_mnist_loaders(
         if not isinstance(values, list):
             raise ValueError(f"{name} 必须是列表")
         if len(values) != expected_size:
-            raise ValueError(f"{name} 应有 {expected_size} 项，实际为 {len(values)}")
+            raise ValueError(
+                f"{name} 应有 {expected_size} 项，实际为 {len(values)}"
+            )
         if not all(type(index) is int for index in values):
             raise ValueError(f"{name} 中的索引必须是整数")
         if not all(0 <= index < n_total for index in values):
@@ -84,6 +121,7 @@ def build_mnist_loaders(
     val_indices = split_data["val_indices"]
     train_index_set = set(train_indices)
     val_index_set = set(val_indices)
+    # & 取交集，| 取并集。训练和验证应互不重叠，合起来覆盖官方训练集。
     if train_index_set & val_index_set:
         raise ValueError("训练集与验证集的索引存在重叠")
     if train_index_set | val_index_set != set(range(n_total)):
@@ -98,40 +136,77 @@ def build_mnist_loaders(
     train_set = Subset(train_base, train_indices)
     val_set = Subset(val_base, val_indices)
 
-    # 第四步：分别创建训练、验证和测试 DataLoader。
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True,
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
         generator=torch.Generator().manual_seed(seed),
-        num_workers=num_workers, drop_last=False,
+        num_workers=num_workers,
+        drop_last=False,
     )
     val_loader = DataLoader(
-        val_set, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, drop_last=False,
+        val_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        drop_last=False,
     )
     test_loader = DataLoader(
-        test_set, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, drop_last=False,
+        test_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        drop_last=False,
     )
     return train_loader, val_loader, test_loader
 
 
 def build_cifar10_loaders(
-    data_dir, split_path, batch_size, seed, train_transform, eval_transform,
-    validation_size=5000, num_workers=0,
+    data_dir,
+    split_path,
+    batch_size,
+    seed,
+    train_transform,
+    eval_transform,
+    validation_size=5000,
+    num_workers=0,
 ):
-    """复用固定划分，返回 train/val/test loader。
-    
-    预处理由调用者创建：训练使用 train_transform，验证和测试使用
-    确定性的 eval_transform。训练与验证各有独立的 Dataset 实例。
+    """创建 CIFAR-10 的训练、验证与官方测试加载器。
+
+    Args:
+        data_dir: 数据缓存根目录。
+        split_path: 保存或复用训练与验证索引的 JSON 路径。
+        batch_size: 每批最多包含的样本数。
+        seed: 划分索引和训练批次顺序使用的种子。
+        train_transform: 训练图片的预处理。
+        eval_transform: 验证与测试图片的预处理，通常是确定性的。
+        validation_size: 从官方训练集划出的验证样本数。
+        num_workers: DataLoader 使用的工作进程数。
+
+    Returns:
+        (train_loader, val_loader, test_loader)。训练顺序会打乱，
+        三个加载器都保留最后一个不足整批的批次。
+
+    Raises:
+        ValueError: 训练集数量、验证集大小或保存的划分与当前设置不符。
     """
     train_base = CIFAR10(
-        root=data_dir, train=True, download=True, transform=train_transform,
+        root=data_dir,
+        train=True,
+        download=True,
+        transform=train_transform,
     )
     val_base = CIFAR10(
-        root=data_dir, train=True, download=True, transform=eval_transform,
+        root=data_dir,
+        train=True,
+        download=True,
+        transform=eval_transform,
     )
     test_set = CIFAR10(
-        root=data_dir, train=False, download=True, transform=eval_transform,
+        root=data_dir,
+        train=False,
+        download=True,
+        transform=eval_transform,
     )
     split_path = Path(split_path)
     n_total = len(train_base)
@@ -164,7 +239,10 @@ def build_cifar10_loaders(
     if not isinstance(split_data, dict):
         raise ValueError("划分 JSON 的顶层必须是字典")
     expected_metadata = {
-        "dataset": "cifar10", "version": 1, "seed": seed, "n_total": n_total,
+        "dataset": "cifar10",
+        "version": 1,
+        "seed": seed,
+        "n_total": n_total,
     }
     for name, expected in expected_metadata.items():
         if split_data.get(name) != expected:
@@ -181,7 +259,9 @@ def build_cifar10_loaders(
         if not isinstance(values, list):
             raise ValueError(f"{name} 必须是列表")
         if len(values) != expected_size:
-            raise ValueError(f"{name} 应有 {expected_size} 项，实际为 {len(values)}")
+            raise ValueError(
+                f"{name} 应有 {expected_size} 项，实际为 {len(values)}"
+            )
         if not all(type(index) is int for index in values):
             raise ValueError(f"{name} 中的索引必须是整数")
         if not all(0 <= index < n_total for index in values):
@@ -209,16 +289,25 @@ def build_cifar10_loaders(
 
     # 第四步：分别创建训练、验证和测试 DataLoader。
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True,
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
         generator=torch.Generator().manual_seed(seed),
-        num_workers=num_workers, drop_last=False,
+        num_workers=num_workers,
+        drop_last=False,
     )
     val_loader = DataLoader(
-        val_set, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, drop_last=False,
+        val_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        drop_last=False,
     )
     test_loader = DataLoader(
-        test_set, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, drop_last=False,
+        test_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        drop_last=False,
     )
     return train_loader, val_loader, test_loader

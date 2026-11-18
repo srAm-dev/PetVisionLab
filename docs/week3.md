@@ -12,7 +12,7 @@ MNIST 的训练、验证和保存加载已跑通；能说明 `train()`、`eval()
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/cnn_vs_resnet/week3/README.md)。
 
-更新日期：2026-11-10。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -221,6 +221,8 @@ assert pooled.shape == (4, 32, 16, 16)
 <a id="unified-loader-interface"></a>
 先把 MNIST 的预处理从加载函数中移到调用者，再按同一接口实现 CIFAR-10。先完成本步和第三步的加载函数，再在第四步迁移调用处并执行检查；若已有实现，逐项核对即可。完成情况和实际检查结果记录在[第三周 README](../experiments/cnn_vs_resnet/week3/README.md#progress)。
 
+当前两个函数已统一为下面的接口，第二周文档也已同步。这里按职责解释数据函数与调用者如何连接；复习时核对现有实现，不再对 datasets.py 或四个调用脚本重复迁移。
+
 1. 先确定两个函数共同接收什么、返回什么。
 
 `build_mnist_loaders` 与 `build_cifar10_loaders` 使用相同的参数名称和顺序：
@@ -234,7 +236,7 @@ validation_size=5000, num_workers=0
 
 2. 把 MNIST 的预处理创建移到调用前。
 
-打开 `src/petvision/data/datasets.py`，原先 build_mnist_loaders 接收 mean/std 并在内部创建 Compose，现在改为接收两个已经创建好的 transform。加载函数只负责读取数据、管理划分和创建 DataLoader。mean/std 仍保留在 YAML 的 data.normalize 中，由调用脚本读取并交给 Normalize，不能从配置中删掉。
+打开 `src/petvision/data/datasets.py`，当前 build_mnist_loaders 接收两个已经创建好的 transform；早期在函数内部创建 Compose 的写法已经替换。加载函数只负责读取数据、管理划分和创建 DataLoader。mean/std 仍保留在 YAML 的 data.normalize 中，由调用脚本读取并交给 Normalize，不能从配置中删掉。
 
 MNIST 沿用原来的 `transforms.ToTensor()` → `transforms.Normalize(...)`。训练脚本与评估脚本从配置取 mean/std，两个独立检查脚本使用原来的 `(0.5,)`。先创建 eval_transform；当前 MNIST 没有随机增强，可以让 train_transform 指向同一个确定性 Compose，再通过两个具名参数传入加载函数。这里统一的是加载接口，MNIST 本次不同时迁移到 v2，以便核对旧权重与预处理保持一致；新增 CIFAR 路径按下文使用 v2。
 
@@ -293,7 +295,7 @@ datasets.py 的两个加载函数都已完整返回三个 loader 后，再按下
 
 ##### 更新 MNIST 接口检查
 
-修改 `tests/test_datasets.py`：在 `test_mnist_training_transform_does_not_leak_into_evaluation` 中，使用不下载数据的 FakeMNIST 和两个明显不同的 transform，调用 build_mnist_loaders，断言 train / val 的底层 Dataset 不同、修改训练 transform 不影响 val/test；在 `test_mnist_transform_change_reuses_saved_split` 中，保存首次 split 文件内容与索引，再更换 transform 重建 loader，断言文件、索引和相同 seed 下的取样顺序未变。同时核对图片 / 标签形状、dtype，以及已有划分与 validation_size 冲突时仍明确报错。原 `tests/test_cv_training.py` 保留模型、训练统计和 checkpoint 检查；若已按第二周定义 test_mnist_configurable_loaders，也在该函数中把 mean/std 改为先创建 Compose，再以 train_transform / eval_transform 传入，保留原验证集大小与像素范围断言。
+修改 `tests/test_datasets.py`：在 `test_mnist_training_transform_does_not_leak_into_evaluation` 中，使用不下载数据的 FakeMNIST 和两个明显不同的 transform，调用 build_mnist_loaders，断言 train / val 的底层 Dataset 不同、修改训练 transform 不影响 val/test；在 `test_mnist_transform_change_reuses_saved_split` 中，保存首次 split 文件内容与索引，再更换 transform 重建 loader，断言文件、索引和相同 seed 下的取样顺序未变。同时核对图片 / 标签形状、dtype，以及已有划分与 validation_size 冲突时仍明确报错。原 `tests/test_cv_training.py` 保留模型、训练统计和 checkpoint 检查；当前仓库没有 test_mnist_configurable_loaders；不要把这个早期计划名当成已存在的测试入口。数据接口检查使用这里列出的 tests/test_datasets.py 中两个函数。
 
 从项目根目录激活 petvision 后，先执行：
 
@@ -399,9 +401,13 @@ BN 输入为 `[B,C,H,W]` 时，每个通道用 B×H×W 个值统计均值和方�
 
 按本结构计算：BN off 参数量为 94538，BN on 多 448 个 gamma/beta 参数，为 94986；running mean/variance 属于 buffer，不计入 parameters。若实现结构变化，重新列明差异。
 
+当前 CNN 的签名是 __init__(self,num_classes=10,use_bn=True)，构造函数先调用 super().__init__()，把上表全部层顺序注册到 self.net=nn.Sequential(...)。GAP 后用 nn.Flatten() 保留 batch 维，forward(self,images) 返回 self.net(images)。BN off 直接在同一位置用 nn.Identity()，不改变后续层编号。
+
 #### 第二步：创建首份 CIFAR 配置
 
 创建 `configs/cv/cnn_cifar10.yaml`，沿用第二周字段层级。以下给出完整起始配置，训练入口需要读取这些字段：
+
+这份 YAML 是首次练习的起始预算。当前 configs/cv 中已经保存实际四组配置：100 epochs，CNN batch=2048、ResNet batch=512；复现已完成实验时读各组 runs/<variant>/config.yaml 和对应权重，不用下面的 20 轮示例解释历史结果。
 
 ```yaml
 model:
@@ -466,7 +472,7 @@ output_dir: outputs/cnn_bn_on
 | `run_overfit(model, train_loader, optimizer, criterion, device, n_samples)` | 检查样本数量，固定一批图片，初始评估、200 次更新与最终评估 | 用 n_samples 替换原来的 args.overfit_samples；批次在循环外只取一次 |
 | `run_training(cfg, model, train_loader, val_loader, optimizer, criterion, device)` | epoch 检查、split hash、配置保存、完整训练循环、best/last、history 和曲线 | best_accuracy、history、experiment_dir 都在函数内建立 |
 
-提取后，`main()` 中原来的三个大分支各剩一次函数调用。先判断 smoke，调用后 `return`；再判断 `args.overfit_samples is not None`，调用后 `return`；最后调用 `run_training`。`return` 用来明确结束检查模式。
+当前 main 的三个互斥分支各剩一次函数调用：if args.smoke 调用 run_smoke；elif args.overfit_samples 调用 run_overfit；else 调用 run_training。parse_args 保证过拟合数量为正，这组分支执行后 main 结束；已有代码不需要额外插入正式训练调用。
 
 接着将保存与绘图函数提取到单独模块，按下面顺序操作：
 
@@ -492,7 +498,7 @@ output_dir: outputs/cnn_bn_on
 1. `name == "mnist"`：保留原来的 `transforms.ToTensor()` → `transforms.Normalize(...)`；当前没有随机增强，两个返回位置使用同一套确定性变换。
 2. `name == "cifar10"`：先检查 `image_size == 32`。mean/std 列表各有三个数，分别对应 RGB 通道；读取 `augmentation.random_crop_padding` 和 `random_horizontal_flip`。
 3. 创建 CIFAR 的 eval_transform：`v2.ToImage()` → `v2.ToDtype(torch.float32, scale=True)` → `v2.Normalize(...)`。它始终使用确定性预处理。
-4. 训练增强启用时，先建立以 `v2.ToImage()` 开始的操作列表；padding 大于 0 时加入 `v2.RandomCrop(image_size, padding=padding)`，flip 为 true 时加入 `v2.RandomHorizontalFlip()`；最后加入 ToDtype 和 Normalize，再用 `v2.Compose` 包起来。padding 必须为非负整数，flip 必须为布尔值。padding=0 时省略裁剪；flip=true 使用默认概率 0.5。
+4. 当前训练 Compose 从 v2.ToImage() 开始，随后固定调用 v2.RandomCrop(32,padding=augmentation.random_crop_padding)；random_horizontal_flip 为 true 时使用 v2.RandomHorizontalFlip()，否则使用 nn.Identity()。再加入 ToDtype 和 Normalize。padding 配置为非负整数；当前 padding=0 时仍执行原尺寸 RandomCrop，不在脚本中省略它。ResNet 分支在 ToDtype 之前增加第 4 天说明的 Resize。
 5. 判断 `args.overfit_samples is not None`，如果正在做过拟合检查，就令 train_transform 使用 eval_transform。只覆盖本次使用的局部变量，保持 YAML 中正式训练的增强设置。正式训练和 smoke 使用配置指定的训练增强。
 6. 未知数据名称明确抛出 ValueError。自查两个变量都是可调用的 transform，而不是已经变换过的图片。
 
@@ -775,7 +781,7 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml
 
 #### 第一步：分别实现主分支和 shortcut
 
-创建 `src/petvision/models/cv/resnet.py`，顶层写 `import torch` 和 `from torch import nn`，在其中定义继承 `nn.Module` 的 `BasicBlock(in_channels, out_channels, stride=1, use_1x1conv=True)`。接口沿用教材的投影开关，项目约定默认 True，步幅参数命名为 stride；调用时用关键字明确传入这两个参数。今天先实现单块，明天在同一文件增加 ResNet18；测试从 `petvision.models.cv.resnet` 导入 BasicBlock。
+在已有 `src/petvision/models/cv/resnet.py` 中阅读 BasicBlock；当前完整接口是 BasicBlock(in_channels,out_channels,stride=1,use_1x1conv=True,use_residual=True)。本日先按 use_residual=True 理解主分支与旁路，Day 5 再解释开关。接口沿用教材的投影参数，项目约定默认 True，步幅参数命名为 stride；调用时用关键字明确传入。ResNet18 也已在同一文件，复习单块时保留整网定义；测试从 petvision.models.cv.resnet 导入 BasicBlock。
 
 主分支按两层 3×3 卷积写出，第一层负责 stride；第二层保持尺寸。第二层 BN 的输出直接进入残差相加，最后再 ReLU，与教材的 forward 顺序一致。
 
@@ -788,6 +794,8 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml
 5. 对相加结果执行最后一次 ReLU 并返回。再用下一步的两个输入逐段打印形状，定位哪一层第一次偏离手算。
 
 两层主分支卷积都用 padding=1；第一层将 in_channels 变为 out_channels，使用传入 stride，第二层接收并输出 out_channels，stride=1。投影使用 `Conv2d(in_channels, out_channels, 1, stride=stride)`，今天各卷积保持教材默认的 bias=True。这个 1×1 卷积称为 projection（投影）：它调整通道数，并按相同步幅缩小高宽，使两条路径能逐元素相加。旁路为 None 时表示恒等路径，仍然参与相加。
+
+成员名称与当前 resnet.py 对应为 self.conv1、self.bn1、self.relu、self.conv2、self.bn2、self.shortcut；use_residual 也已作为构造参数保存到 self.use_residual，默认 True。当前 forward(self,X) 用 y 保存主分支，必要时将 X 经过 shortcut，再相加和 ReLU。下方教学片段中的 x/out/identity 是等价的局部命名，实际写方法时统一用一组名称；不要把未定义的 x 混入参数名为 X 的方法。已有残差开关保留，第 5 天再解释关闭时的行为。
 
 ```text
 x ── Conv/BN/ReLU ── Conv/BN ── + ── ReLU
@@ -867,7 +875,7 @@ python -m pytest tests/test_resnet.py -q
 
 继续修改 `src/petvision/models/cv/resnet.py`。先核对 BasicBlock：两层主分支卷积和存在的投影卷积都使用 bias=True，shortcut 为单个 1×1 Conv 或 None。如果当前写成了 bias=False 或在投影后接 BN，先调整为上述教材结构，再运行 Day 3 的块检查。
 
-接着在同一文件添加 `resnet_block(in_channels, out_channels, num_residuals, first_block=False)`，用于创建一个 stage，按下面顺序处理：
+当前 resnet_block 是定义在 ResNet18.__init__ 内的局部辅助函数，签名为 resnet_block(in_channels,out_channels,num_residuals,first_block=False,use_residual=True)，不是模块顶层函数，也不是 self.resnet_block。它用于创建一个 stage，按下面顺序处理：
 
 1. 建立一个空列表，按 num_residuals 循环，每次新建一个 BasicBlock。
 2. 如果是该 stage 的第一个块且 first_block=False，创建 in_channels→out_channels、stride=2、use_1x1conv=True 的块。
@@ -883,6 +891,8 @@ python -m pytest tests/test_resnet.py -q
 3. b3、b4、b5 分别是 64→128、128→256、256→512，块数均为 2、first_block=False。各 stage 仅首块下采样。
 4. 用一个 Sequential 将 b1、b2、b3、b4、b5、AdaptiveAvgPool2d((1,1))、Flatten(start_dim=1)、Linear(512,num_classes) 按顺序保存到 self.net。
 5. forward 调用 self.net 并返回 logits。先用随机 `[B,3,96,96]` 输入核对下表；use_residual 在 Day 5 再加入。
+
+当前 ResNet18 已接收 num_classes=10、use_residual=True，四次调用局部 resnet_block 都传入 use_residual，各块再接收同一开关；复习时保留这个已实现参数。b1-b5 是构造函数的局部变量，组装后由 self.net 管理，不另外创建 self.b1 等重复成员。检查 stage 时访问 self.net[0] 到 self.net[4]，forward(self,X) 返回 self.net(X)。
 
 | self.net 索引 | 教材分组 / 操作 | 预期输出 |
 | --- | --- | --- |
@@ -1122,9 +1132,11 @@ Day 2 和 Day 4 的 on 组已经完成时直接复用，不为填写对照表再
 
 将四组汇总结果保存为 `experiments/cnn_vs_resnet/week3/results.csv`。在 Python 草稿或交互环境读取各组 history 和独立验证结果，按下面的字段为每组建立一个字典，合成四项 rows 列表。用 Path 创建结果文件的父目录，以 w 模式、UTF-8、newline="" 打开文件，创建 csv.DictWriter 并依次调用 writeheader()、writerows(rows)；读回后核对四个 variant 各有一行、指标来自相应组的真实文件。不需要另建必做脚本。
 
-每行至少包括 variant、split=val、image_size、best_epoch、val_loss、val_accuracy、params、epochs、batch、train_seconds、config、checkpoint。结果表的 image_size 记录实际送入模型的尺寸：先从预处理后的 images.shape 核对并保存到该组运行摘要，再由汇总读取；CNN 两组为 32，ResNet 两组为 96。它与 config 中记录原图尺寸的 data.image_size 分别说明，不能直接复制后者填入结果表。
+每行至少包括 variant、split=val、image_size、best_epoch、val_loss、val_accuracy、params、epochs、batch、train_seconds、config、checkpoint。结果表的 image_size 记录实际送入模型的尺寸：先从预处理分支或一次 images.shape 打印核对，再写入汇总表；CNN 两组为 32，ResNet 两组为 96。它与 config 中记录原图尺寸的 data.image_size 分别说明，不能直接复制后者填入结果表。
 
 params 和 train_seconds 读取各组 experiment_dir/run_summary.json，epoch 指标读取同目录 history.csv；batch、epochs 来自对应 config.yaml。独立验证先打印并核对完整结果；本周汇总表由这里明确列出的文件与该次验证输出填写。
+
+当前 run_summary.json 的字段是 params、epochs、train_seconds、peak_allocated_mib、device、dtype、timing_scope，没有 image_size；不要要求从不存在的字段读取尺寸。当前 evaluate.py 在 val 模式打印完整指标并保存 mistakes_val.png，只有 test 模式自动保存 test_metrics.json。本实验目录已有 val_metrics.json 是独立复验记录，重新执行 --split val 不会自动改写它；需要另存本次结果时，手动记录实际输出和来源。
 
 best 的指标来自同一个验证选择规则。最终一轮指标和 best epoch 的指标可以不同，汇总时写清选择口径。
 

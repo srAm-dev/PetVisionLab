@@ -1,3 +1,5 @@
+"""实现缩放点积注意力和接受布尔 Mask 的多头自注意力。"""
+
 import math
 
 import torch
@@ -5,6 +7,16 @@ from torch import nn
 
 
 def scaled_dot_product_attention(q, k, v):
+    """计算不带掩码的缩放点积注意力。
+
+    Args:
+        q: 查询张量，形状 [..., Tq, d]。
+        k: 键张量，形状 [..., Tk, d]。
+        v: 值张量，形状 [..., Tk, dv]。
+
+    Returns:
+        (output, weights)，形状分别为 [..., Tq, dv] 和 [..., Tq, Tk]。
+    """
     scores = q @ k.transpose(-2, -1) / math.sqrt(q.shape[-1])
     weights = torch.softmax(scores, dim=-1)
     output = weights @ v
@@ -15,7 +27,17 @@ class MultiHeadSelfAttention(nn.Module):
     """多头自注意力，输入和输出均为 [B,T,C]。"""
 
     def __init__(self, embed_dim, num_heads, dropout=0.0, bias=False):
-        """创建投影层；embed_dim 是总特征数，num_heads 是头数。"""
+        """创建 Q/K/V 投影、合头后的输出投影和注意力 dropout。
+
+        Args:
+            embed_dim: 每个 token 的总特征数。
+        num_heads: 注意力头数，必须整除 embed_dim。
+            dropout: softmax 权重的 dropout 概率。
+            bias: 四个投影层是否使用偏置。
+
+        Raises:
+            ValueError: 特征数或头数不是正整数，或特征数不能被头数整除。
+        """
         super().__init__()
 
         if type(embed_dim) is not int or embed_dim <= 0:
@@ -36,8 +58,25 @@ class MultiHeadSelfAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, attn_mask=None, key_padding_mask=None, return_weights=False):
-        """Mask 中 True 表示屏蔽，形状分别为 [T,T] 和 [B,T]。"""
+    def forward(
+        self, x, attn_mask=None, key_padding_mask=None, return_weights=False
+    ):
+        """对同一输入做多头自注意力。布尔 Mask 中的 True 表示屏蔽。
+
+        Args:
+            x: 输入特征，形状 [B, T, C]。
+            attn_mask: 可选的 [T, T] 屏蔽表，行对应 query，列对应 key。
+            key_padding_mask: 可选的 [B, T] 屏蔽表，标记每条序列的无效 key。
+            return_weights: 是否同时返回 dropout 前的每头权重。
+
+        Returns:
+            形状 [B, T, C] 的输出。return_weights 为 True 时返回
+            (output, weights)，其中 weights 的形状为 [B, heads, T, T]。
+
+        Raises:
+            TypeError: Mask 不是布尔 Tensor。
+            ValueError: Mask 形状或设备不匹配，或某个 query 的 key 全被屏蔽。
+        """
         assert x.ndim == 3, "x应为3维"
         B, T, C = x.shape
         assert C == self.embed_dim
@@ -46,6 +85,7 @@ class MultiHeadSelfAttention(nn.Module):
         K = self.k_proj(x)
         V = self.v_proj(x)
 
+        # 先将 C 拆成 heads 和 head_dim，再交换轴得到 [B, heads, T, head_dim]。
         Q = Q.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         K = K.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         V = V.reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
@@ -69,10 +109,13 @@ class MultiHeadSelfAttention(nn.Module):
                 if mask.device != scores.device:
                     raise ValueError(f"{name} 必须与 scores 位于同一设备")
 
-            # [B,1,T,T]：各序列分别合并规则，所有头共用同一张表。
             blocked_mask = torch.zeros(
-                (B, 1, T, T), dtype=torch.bool, device=scores.device,
+                (B, 1, T, T),
+                dtype=torch.bool,
+                device=scores.device,
             )
+            # None 插入长度为 1 的轴，两张表分别按 [1,1,T,T] 和 [B,1,1,T] 广播。
+            # |= 用逻辑或合并屏蔽位置，expand_as 再让所有注意力头共用这份规则。
             if attn_mask is not None:
                 blocked_mask |= attn_mask[None, None, :, :]
             if key_padding_mask is not None:

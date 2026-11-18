@@ -5,6 +5,8 @@
 
 这里记录 CIFAR-10 四组实验的环境、命令和验证结果。首次跟做见第三周指南；复验时使用各组保存的配置和对应权重。
 
+当前代码核对：CNN 的全部层位于 self.net；BasicBlock 使用 conv1/bn1/relu/conv2/bn2/shortcut 和 use_residual；ResNet18 的 resnet_block 是构造函数内的局部函数，stage 由 self.net[0:5] 管理。正式 CIFAR 记录由 train_cv.run_training 产生，run_summary 不含 image_size，32/96 的实际输入尺寸由相应预处理核对。当前 evaluate.py 的 --split val 打印指标和保存错图，不自动写 val_metrics.json；下方已有同名 JSON 是当时独立复验保存的记录。
+
 <a id="progress"></a>
 
 ## 当前进度（2026-11-04）

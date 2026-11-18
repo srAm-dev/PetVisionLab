@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/basics/week1/README.md)。
 
-更新日期：2026-11-10。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -261,6 +261,8 @@ python scripts/numpy_basics.py
 
 在 linear_model.py 中，将演示调用放在 `if __name__ == "__main__":` 下，观察“直接运行”与“被另一个文件导入”的区别。Day 5 的训练脚本采用独立函数，方便 Day 6 检查梯度；本题用于理解状态、方法和模块。
 
+当前 LinearModel.__init__ 将传入值保存为 self.w、self.b；predict(self, X) 返回 X @ self.w + self.b。w、b 是对象成员，X 是每次预测传入的数据；构造函数不生成数据，也不执行梯度更新。
+
 入口保护里的内容包括创建示例数据、实例化模型和打印结果；类和函数定义留在顶层。用同一组 X、w、b 分别调用 `model.predict(X)` 与矩阵公式，比较每个元素，最大绝对差应小于 `1e-10`。下方第三条命令只导入模块，应正常退出且没有演示输出。
 
 完成 linear_model.py 后，再修改调用它的 numpy_basics.py：
@@ -475,6 +477,8 @@ def gradients(X, y, w, b):
 
 使用 Day 1 的 X、标签 `[[1.0], [2.0], [3.0]]`、零初始化 w 与 b，学习率取 0.01。计算更新前的 loss，求出 dw / db，执行一次更新，再重新计算预测和 loss。
 
+三个函数在 gradient_basics.py 顶层定义，示例数据与更新放在文件末尾的入口保护内。gradients 先令 y_pred=predict(X,w,b)、E=y_pred-y、N=X.shape[0]，再按公式返回 dw、db；它只计算梯度，不修改 w、b。当前文件在入口保护中还演示了后续 100 次更新，第一步的手算只比较最前面那次更新。
+
 本例初始 MSE 为 `14/3`，`dw=[[-44/3],[-56/3]]`、`db=-4`；更新后 w 约为 `[[0.1466666667],[0.1866666667]]`、b 为 `0.04`，重新计算的 MSE 约为 `0.6721185185`。按「更新前 loss → 梯度 → 新参数 → 更新后 loss」打印；若新参数正确而 loss 未变，检查是否仍在使用更新前的预测。
 
 ### 运行与自查
@@ -550,12 +554,14 @@ y = X @ true_w + true_b + noise
 | `predict(X, w, b)` | 返回预测 |
 | `mse(y_true, y_pred)` | 返回标量损失 |
 | `gradients(X, y, w, b)` | 返回 dw、db |
-| `train(X, y, learning_rate, steps)` | 每次调用从零初始化，返回最终 w、b、loss_history |
+| `train(X, y, learning_rate=0.05, steps=500)` | 每次调用从零初始化，返回最终 w、b、losses |
 | `main()` | 调用各步骤、打印结果、保存图表 |
 
-训练时先记录初始 loss，再执行 500 次更新；每次更新后记录重新计算的 loss，因此 loss_history 长度应为 501。每 50 步打印一次进度。
+训练时先记录初始 loss，再执行 500 次更新；每次更新后记录重新计算的 loss，因此 losses 长度应为 501。每 50 步打印一次进度。
 
 把 main 调用放入 `if __name__ == "__main__":`，为 Day 6 的函数导入做准备。Day 4 的公式和函数可作为重构参考。
+
+当前 linear_regression_numpy.py 从同目录 gradient_basics.py 导入 predict、mse、gradients，自己定义 generate_data、train、main；不要在两处维护不同公式。main 先用 X,y,true_w,true_b=generate_data() 接收四项返回值，再令 w,b,losses=train(X,y,learning_rate=0.05,steps=500)。train 内创建零参数和 losses 列表，每次更新后追加新 loss，返回顺序固定为 w、b、losses；绘图放在 main 的训练调用之后。
 
 ### 第四步：保存结果
 
@@ -567,13 +573,13 @@ experiments/basics/week1/figures/loss_curve.png
 
 可用 `fig.savefig(path, dpi=150, bbox_inches="tight")` 保存，在保存后关闭图。路径从项目根目录计算，文件所在目录先创建。
 
-先创建图和坐标轴，`loss_history` 使用本次 train 返回的损失列表：
+先创建图和坐标轴，`losses` 使用本次 train 返回的损失列表：
 
 ```python
 import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots()
-ax.plot(range(len(loss_history)), loss_history)
+ax.plot(range(len(losses)), losses)
 ax.set(xlabel="Update steps", ylabel="Training MSE", title="NumPy linear regression")
 ax.grid()
 ```
@@ -619,6 +625,8 @@ python scripts/linear_regression_numpy.py
 
 从同目录的 `linear_regression_numpy.py` 导入 generate_data、predict、mse、gradients。使用固定的 5 条样本、非零 w 与 b，数据采用 float64，逐个检查两个权重和一个偏置。
 
+当前 gradient_check.py 将逐参数检查封装为 check_gradients(X,y,w,b,epsilon=1e-6)，返回由 parameter、analytical_gradient、numerical_gradient、absolute_error 组成的字典列表。main 调用 generate_data 时用 X,y,_,_=generate_data(seed=42,n_samples=5) 接收四项，再创建检查点 w、b，调用该函数并汇总误差；返回列表不是一个可直接与阈值比较的标量。
+
 调用 Day 5 的 `generate_data(seed=42, n_samples=5)`，生成固定的 5 条 X、y，参数固定为 `w=[[0.3],[-0.7]]`、`b=0.2`。先复制参数，扰动 `w[0,0]` 时只改这个元素；分别算加/减 epsilon 的 loss 后恢复，再检查另一个权重和 b。打印参数名、解析梯度、数值梯度与绝对差，最后汇总三项最大误差。
 
 数值梯度使用中心差分：
@@ -654,7 +662,9 @@ epsilon = 1e-6
 learning_rate,steps,initial_loss,final_loss,w1,w2,b
 ```
 
-每组训练结束后，把这些实际数值加入一个字典，三组形成 `rows` 列表，再使用标准库 csv 保存。先读当天资料的 DictWriter 示例：
+每组训练结束后，把这些实际数值加入一个字典，三组形成 `results` 列表，再使用标准库 csv 保存。先读当天资料的 DictWriter 示例：
+
+results 在 main 的学习率循环前初始化为空列表。每次用 w,b,losses=train(...) 接收当前组返回值，将 losses[0]、losses[-1]、w[0,0]、w[1,0]、b 转为普通数值写入一个字典并 append 到 results；当前脚本也使用 results 这个名称。
 
 ```python
 import csv
@@ -666,7 +676,7 @@ columns = ["learning_rate", "steps", "initial_loss", "final_loss", "w1", "w2", "
 with result_path.open("w", encoding="utf-8", newline="") as file:
     writer = csv.DictWriter(file, fieldnames=columns)
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows(results)
 ```
 
 检查 CSV 有一行表头、三行结果，三行 initial_loss 一致，曲线与 CSV 来自同一次训练返回值；不要为填表又随机生成一次数据。后续周的 history 和汇总表沿用这种写法。
@@ -690,9 +700,11 @@ experiments/basics/week1/figures/learning_rates.png
 3. 梯度与更新循环。
 4. 初始 / 最终 loss 和参数输出。
 
-在 `scripts/linear_regression_rewrite.py` 中自行定义 predict、mse、gradients、train；main() 用同一份数据调用这些函数并打印最终 w、b、loss。通过后分别运行 `python scripts/linear_regression_numpy.py` 和 `python scripts/linear_regression_rewrite.py`，按下一段的固定条件比较输出；绘图部分在本文件 main() 的训练调用之后，用返回的 loss_history 创建图，先创建父目录，再保存到 `experiments/basics/week1/figures/loss_curve2.png`。
+在 `scripts/linear_regression_rewrite.py` 中自行定义 predict、mse、gradients、train；main() 用同一份数据调用这些函数并打印最终 w、b、loss。通过后分别运行 `python scripts/linear_regression_numpy.py` 和 `python scripts/linear_regression_rewrite.py`，按下一段的固定条件比较输出；绘图部分在本文件 main() 的训练调用之后，用返回的 losses 创建图，先创建父目录，再保存到 `experiments/basics/week1/figures/loss_curve2.png`。
 
 比较时固定同一份 X、y、零初始化、学习率 0.05 和 500 步，核对两份实现的最终 loss、w、b；相同 float64 条件下，最大绝对差以 `1e-8` 为自查目标。运行重写脚本并打印这些结果，再与原脚本比较。
+
+两份脚本的数据函数签名不同：基准脚本 generate_data(seed=42,n_samples=200) 返回 X,y,true_w,true_b；当前重写脚本 generate_data(true_w,true_b,seed=42,n_samples=200) 返回 X,y。重写脚本的 main 先创建 true_w=[[3.0],[-2.0]]、true_b=1.0，再传入自己的数据函数；不要把基准脚本的四项接收写法直接套到重写脚本。
 
 ### 第四步：更新 experiments/basics/week1/README.md
 

@@ -1,10 +1,23 @@
+"""用中心差分验证 NumPy 线性回归的解析梯度。"""
+
 import numpy as np
 
 from linear_regression_numpy import generate_data, gradients, mse, predict
 
 
 def check_gradients(X, y, w, b, epsilon=1e-6):
-    """用中心差分逐个核对权重和偏置，返回各参数的比较结果。"""
+    """逐个扰动线性模型参数，用中心差分比较解析梯度。
+
+    Args:
+        X: 特征矩阵，形状 (N, d)。
+        y: 目标列向量，形状 (N, 1)。
+        w: 检查点的权重列向量，形状 (d, 1)。
+        b: 检查点的标量偏置。
+        epsilon: 每个参数向两侧扰动的步长。
+
+    Returns:
+        字典列表，每项记录参数名称、解析梯度、数值梯度及绝对误差。
+    """
     # 解析梯度：使用 Day 4 推导的公式，在原始参数处计算一次。
     dw, db = gradients(X, y, w, b)
     results = []
@@ -22,27 +35,34 @@ def check_gradients(X, y, w, b, epsilon=1e-6):
         numerical_gradient = (loss_plus - loss_minus) / (2 * epsilon)
         analytical_gradient = dw[index, 0]
 
-        results.append({
-            "parameter": f"w{index + 1}",
-            "analytical_gradient": float(analytical_gradient),
-            "numerical_gradient": float(numerical_gradient),
-            "absolute_error": float(abs(analytical_gradient - numerical_gradient)),
-        })
+        results.append(
+            {
+                "parameter": f"w{index + 1}",
+                "analytical_gradient": float(analytical_gradient),
+                "numerical_gradient": float(numerical_gradient),
+                "absolute_error": float(
+                    abs(analytical_gradient - numerical_gradient)
+                ),
+            }
+        )
 
     # 检查偏置：w 保持原值，仅将 b 分别增加和减少 epsilon。
     loss_plus = mse(y, predict(X, w, b + epsilon))
     loss_minus = mse(y, predict(X, w, b - epsilon))
     numerical_gradient = (loss_plus - loss_minus) / (2 * epsilon)
-    results.append({
-        "parameter": "b",
-        "analytical_gradient": float(db),
-        "numerical_gradient": float(numerical_gradient),
-        "absolute_error": float(abs(db - numerical_gradient)),
-    })
+    results.append(
+        {
+            "parameter": "b",
+            "analytical_gradient": float(db),
+            "numerical_gradient": float(numerical_gradient),
+            "absolute_error": float(abs(db - numerical_gradient)),
+        }
+    )
     return results
 
 
 def main():
+    """在固定数据与参数上检查解析梯度并打印逐项误差。"""
     epsilon = 1e-6
     tolerance = 1e-5
 

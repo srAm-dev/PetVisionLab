@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/transformer_encoder/week4/README.md)。
 
-更新日期：2026-11-11。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -134,6 +134,8 @@ output = weights @ V
 
 打印 scores.shape、weights.shape、output.shape。softmax 输出每行非负、和约为 1；不要沿 query 维归一化。
 
+函数只返回 output 和 weights，内部的 scores 是局部变量。脚本若要打印 scores，先用当前示例的 Q/K 在 main 中按同一公式计算它，再调用单头函数；不要直接访问函数内部变量。
+
 对一般批次，Q 为 `[B,T_q,d]`、K/V 为 `[B,T_k,d]`，T_q 是查询数、T_k 是可供关注的位置数；自注意力中两者都为 T。`K.transpose(-2,-1)` 只交换最后两轴，得到 `[B,d,T_k]`，不交换 batch 轴；矩阵乘法得到 `[B,T_q,T_k]`。`dim=-1` 指最后一轴，即固定一个 query 后沿所有 key 归一化。再乘 `[B,T_k,d]` 的 V，输出为 `[B,T_q,d]`。单头例子中 d=2，缩放项就是 sqrt(2)，不是 sqrt(T)。
 
 #### 第三步：比较缩放前后权重，并检查 Q/K/V 梯度
@@ -197,7 +199,7 @@ transpose 后内存可能不连续，合并时用 contiguous().view 或 reshape�
 
 在 `src/petvision/models/transformer/attention.py` 中实现 `MultiHeadSelfAttention`：构造函数负责建立层和检查参数，forward 按本节顺序完成多头计算。已有实现时逐项核对输入输出和结构。Day 1 的 `scaled_dot_product_attention` 函数保留，演示脚本继续使用它。
 
-类里有两个方法，接口如下。这里列出签名，具体初始化代码看同一文件中的构造函数：
+类里有两个方法，接口如下。这里列出签名，构造函数按下面的属性表逐项完成：
 
 ```python
 class MultiHeadSelfAttention(nn.Module):
@@ -320,7 +322,7 @@ bias=False 时四个投影的 bias 都为 None，只复制 weight；再用 bias=
 3. 生成一份与输出同形状的固定 probe；两边都用 `(output * probe).sum()` 作为目标，各自 backward。probe 数值相同，不能各自重新抽样。
 4. 比较输出、两个输入的 grad、Q/K/V 和 out_proj 的参数梯度；每项用 `(actual-expected).abs().max().item()` 求最大绝对差，打印并断言小于 `1e-6`。
 
-参考 `in_proj_weight.grad` 的 `[:C]、[C:2*C]、[2*C:]` 分别对应自写 q/k/v 的 weight.grad；存在 bias 时其 grad 同样分段，bias=False 时跳过这些不存在的项，out_proj 直接对应。每项先检查 shape、梯度非 None 且有限，再做数值比较。后面的 LayerNorm 与 Encoder 对照沿用这套「相同权重、独立输入、同一目标」流程。
+参考 `in_proj_weight.grad` 的 `[:C]、[C:2*C]、[2*C:]` 分别对应自写 q/k/v 的 weight.grad；存在 bias 时其 grad 同样分段，bias=False 时跳过这些不存在的项，out_proj 直接对应。每项先检查 shape、梯度非 None 且有限，再做数值比较。后面的 LayerNorm 对照沿用这套「相同权重、独立输入、同一目标」流程；Day 5 的 Encoder 只保留小输入、一次反向和因果隔离检查。
 
 输出每项最大绝对误差、容差和 shape，不打印成千上万个权重。注意力行和使用 softmax 后、dropout 前的权重。
 
@@ -380,6 +382,8 @@ query\key  0 1 2 3
 | 3 | 0、1、2、3 | `[1/4,1/4,1/4,1/4]` | `(1+3+5+7)/4=4` |
 
 当 batch=1 时，教材按 query 提供的有效长度可写成 `valid_lens=[[1,2,3,4]]`，正好对应上表四行；本项目用上三角布尔 Mask 表达同一规则。
+
+将手算例子对应到已有多头模块时，在 no_grad 下把 q_proj.weight、k_proj.weight 置零，把 v_proj.weight、out_proj.weight 复制为 C×C 单位矩阵，并使用 bias=False、dropout=0。输入四个位置的特征分别全为 1、3、5、7；这样投影后的 Q/K 为零，V 才与表中的数值一致。
 
 #### 第二步：在 forward 中校验、合并并应用两种 Mask
 
@@ -534,6 +538,8 @@ y    = (x - mean) / sqrt(var + eps) * gamma + beta
 1. 在构造函数注册 C→hidden_dim 的 Linear、ReLU、hidden_dim→C 的 Linear，两个 Linear 都使用 bias=True。教材这段 FFN 内部没有 dropout，本周按同样位置组织。
 2. forward 按这三个模块依次计算。输入 `[2,3,32]`，当 hidden_dim=128 时，中间输出为 `[2,3,128]`，出口回到 `[2,3,32]`；Linear 只处理最后的特征轴。
 3. 将同一个 FFN 类交给下面的 EncoderBlock 创建实例。ViT 和 GPT 的激活及 dropout 位置另按各自章节定义。
+
+成员名称统一为 self.dense1、self.relu、self.dense2，分别保存上述两个 Linear 和 ReLU。在构造函数中创建这些成员；forward(self, x) 返回 self.dense2(self.relu(self.dense1(x)))，无需额外创建层。
 
 ##### AddNorm 与 EncoderBlock
 

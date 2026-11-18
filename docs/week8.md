@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vlm_qa/week8/README.md)。
 
-更新日期：2026-11-11。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -169,6 +169,8 @@ print(revision)
 
 先加载 `train=True` 的原始 CIFAR 图片及 targets，按第三周 val_indices 筛出候选索引；每类从候选中用固定 Generator 无放回选 20 个，保存到配置的 subset_path，记录 dataset、seed、原划分标识和全局 indices。断言 200 个索引无重复、全部属于 val、每类恰好 20；已有文件直接读取并核对条件。取图时使用这些全局索引，不能把 Subset 内的局部编号误当原始 image_id。
 
+main 内统一用 dataset 表示原始 CIFAR10 对象，用 indices 表示保存或读回的 200 个全局索引。顶层补 from torchvision.datasets import CIFAR10；创建 dataset 时 root=cfg["data"]["root"]、train=True、transform=None。后面的 targets、classes 都从这个 dataset 读取，不能另建带训练增强的数据集覆盖它。
+
 10 个类别各对应一句固定英文模板，例如 `a photo of a cat`。类别顺序与输出列顺序一致，先打印类别列表核对。
 
 <a id="clip-inputs"></a>
@@ -219,6 +221,8 @@ print(outputs.image_embeds.shape, outputs.text_embeds.shape, scores.shape)
 
 本路径的 scores 为模型缩放后的 clip_logits，形状 `[B,10]`；输出图像 / 文本特征用于下方余弦相似度核对。先跑一个批次核对，再遍历完整 200 张并写结果。不要把普通 DataLoader 默认的 Tensor 拼批方式用于未转换的 PIL 图片，直接按保存索引建立图片列表即可。
 
+在 main 中先令 batch_size=cfg["data"]["batch_size"]、records=[]。用 range(0,len(indices),batch_size) 遍历起点，每次取 batch_indices=indices[start:start+batch_size]，再令 images=[dataset[i][0] for i in batch_indices]；上述 processor 与模型片段放在这个循环内。每批 scores/predicted 转为 CPU 列表，按 batch_indices 的顺序与 dataset.targets 配对，逐行加入 records；第五步统一写出 records。
+
 #### 第四步：从相似度得到分类预测
 
 沿 K 维 argmax 得到类别。需要展示分数时，在固定候选类别上 softmax；这些分数会受模板和候选集合影响，不直接当校准后的正确率概率。
@@ -228,6 +232,8 @@ print(outputs.image_embeds.shape, outputs.text_embeds.shape, scores.shape)
 先用两维特征核对方向：图像特征 `[[3,4],[0,2]]`，文本特征 `[[1,0],[0,1]]`，逐行 L2 归一化后相似度应为 `[[0.6,0.8],[0,1]]`，两个预测均为类别 1。真实模型中取出实际特征 Tensor，再计算 `image_unit @ text_unit.T`，输出 `[B,10]`；检查最后一维对应 classes 的顺序，而不是沿 batch 做 argmax。
 
 这里 L2 归一化是“向量除以自身长度”，长度为各分量平方和的平方根：`[3,4]` 的长度是 `sqrt(3²+4²)=5`，归一化后为 `[0.6,0.8]`。单位向量之间的点积就是余弦相似度。它与前几周对像素做 `(x-mean)/std` 的 Normalize 是两种不同操作，不能相互替代。
+
+真实特征来自当前批的 outputs.image_embeds 和 outputs.text_embeds。分别除以各自 norm(dim=-1,keepdim=True) 得到 image_unit、text_unit，再计算点积；这两个单位向量变量要先创建，不能只复制 image_unit @ text_unit.T 这一行。正式预测仍使用第三步的 scores 和 predicted，余弦计算只用于理解及核对 argmax。
 
 #### 第五步：保存一次完整子集结果
 
@@ -397,6 +403,8 @@ inputs = {name: value.to(device) for name, value in inputs.items()}
 逐个参数理解：`tokenize=False` 先返回格式化后的字符串，便于查看；`add_generation_prompt=True` 请求模板加入开始回答所需的提示部分，实际标记取决于该模型模板；`return_tensors="pt"` 让编码结果使用 PyTorch Tensor。inputs 通常含 input_ids（整数 token ID）和 attention_mask（区分有效输入与填充的位置，具体形状由接口决定）。后者不能直接当作第四周约定 True=屏蔽的手写布尔 Mask 使用，接口含义需分别核对。
 
 每条 prompt 单独构造一轮 user 消息，不把上一题回答放进下一题。设置 greedy 时不需要 temperature/top-k；先用第一题跑通，再遍历 cfg["data"]["prompts"] 中的五题。
+
+正式循环放在 infer_llm.py 的 main：for index, prompt_text in enumerate(cfg["data"]["prompts"], start=1)。循环内先令 messages=[{"role":"user","content":prompt_text}]，再执行上面的模板、编码和下一步生成片段；prompt_id 由 index 生成。模型与 tokenizer 只在循环外加载一次，inputs、generated、new_ids、answer 都是当前题的局部结果。
 
 当前入口只实现单条逐题处理，在读取配置后校验 data.batch_size==1，max_new_tokens 为正整数；配置其他 batch 值时明确报错，不能仍逐条执行却报告为批量推理。device、dtype、do_sample、max_new_tokens 都必须用于实际对象或调用。本轮固定 do_sample=False；以后启用采样时，再补充种子和采样参数。
 
@@ -580,11 +588,30 @@ print(answer)
 
 将图片加载、messages 构造、processor、设备迁移、generate 和新增 ID 解码封装为文件顶层的 `infer_one(model, processor, image_path, question, device, dtype, generation_config)`，返回 raw_answer、新增 ID 列表和本题测量结果；main 负责加载模型一次，并把 args.image / args.question 传给它。Day 4 循环也调用这个函数，不能让内部仍读取单图模式的 args.image。与 LLM 一样校验 batch_size==1，单图模式要求同时提供 image、question 和 smoke；批量模式禁止 smoke，避免参数被静默忽略。单图通过后更新 model_manifest 的 vlm 条目，记录完整 cfg、模型类、processor 和实际依赖。
 
+先写完 infer_one，再在 main 调用它，参数与返回值固定如下：
+
+1. 将第一步演示片段的 args.image 改为函数参数 image_path，args.question 改为 question；每次调用都新建 messages。函数内部不访问 main 的 args 或 cfg。
+2. generation_config 由 main 传入 cfg["inference"]。generate 只显式读取其中的 do_sample、max_new_tokens，不把包含 device、dtype、attention_implementation 的整个字典展开给 generate。
+3. 沿用 Day 2 的计时范围，在 generate 前同步并计时，后同步得到 generate_seconds；CUDA 峰值记为 peak_allocated_mib，CPU 时该字段用 None。调用前的 inputs 属于本题，调试 hook 也在这个函数内使用它。
+4. 函数返回一个 Python 字典，键为 raw_answer、new_ids、generate_seconds、peak_allocated_mib。raw_answer 取本题解码的 answer；new_ids 取 new_ids[0].detach().cpu().tolist()。这样 main 可以直接打印或合并进 JSONL 记录。
+
+单图分支的调用为：
+
+```python
+result = infer_one(
+    model, processor, args.image, args.question,
+    device, dtype, cfg["inference"],
+)
+print(result["raw_answer"])
+```
+
+main 负责 parse_args、读配置、模式校验、模型加载和结果写入；infer_one 负责一题的图像与文本处理、生成、解码和测量。
+
 #### 第三步：观察视觉特征的实际路径，保存张量流表
 
 在 scripts/infer_vlm.py 的 infer_one 内，processor 和设备迁移完成后、generate 之前插入临时调试分支。使用单图检查中的同一张图片、同一个问题，以及该函数内已经得到的 inputs，按下列顺序观察：
 
-1. 打印 config 中的架构信息和 model.named_modules() 的模块路径，先找出视觉编码器、连接 / 压缩模块、语言模型三个候选模块；不要仅凭文件名里含 vision 就认定它是特征出口。同时从实际 text_config / 模块查归一化类型、位置编码、query / key-value 头数和 FFN 激活，把观察写入 tensor_flow.md；现代 LLM 的 RMSNorm、RoPE 或 GQA 等设计可能与第六周 GPT-2 风格不同，不自行替换成 MiniGPT 的结构。
+1. 打印 model.config 中的架构信息和 model.named_modules() 的模块路径，先找出视觉编码器、连接 / 压缩模块、语言模型三个候选模块；不要仅凭文件名里含 vision 就认定它是特征出口。同时从实际 text_config / 模块查归一化类型、位置编码、query / key-value 头数和 FFN 激活，把观察写入 tensor_flow.md；现代 LLM 的 RMSNorm、RoPE 或 GQA 等设计可能与第六周 GPT-2 风格不同，不自行替换成 MiniGPT 的结构。
 2. 阅读这些模块的 forward 调用关系，确认谁接收 pixel_values、谁接收视觉输出、图像特征在哪里与文本特征合并。记录实际模块路径，供下一步挂 hook。
 3. 先只观察视觉编码器：挂一个 hook，运行一次 `model(**inputs)`，查看返回类型，再从 Tensor、tuple 或 ModelOutput 中找到实际特征及 shape。
 4. 按同样方式观察连接模块输出，最后观察语言模型实际接收的 embedding；每增加一个观察点都运行一次，避免多个不确定字段同时报错而难以定位。
@@ -593,6 +620,8 @@ print(answer)
 不同版本可能有多视图、裁剪或 token 压缩，不预先假定 pixel_values 必为四维或固定图像 token 数。以当前 processor 和模型实际结果为准。
 
 先用 `model.named_modules()` 找视觉编码器、连接模块和语言模型的实际名称，再根据输出类型选 Tensor：输出若是 tuple 或 ModelOutput，先查看实际字段，再取对应的特征。以下是某个输出已确定为 Tensor 的模块的最小 hook 用法，target_module 为刚找到的真实模块：
+
+在 infer_one 的临时调试分支先令 modules=dict(model.named_modules())，从打印结果选择实际存在的 module_name，再令 target_module=modules[module_name]。module_name 要填写本次模型的真实路径，不把“视觉编码器”这样的说明文字直接当作成员名。下方 args 是 hook 回调接收的位置参数元组，与 main 的命令行 args 无关。
 
 ```python
 def show_output_shape(module, args, output):
@@ -671,6 +700,8 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 每题独立构造上下文，不把前一道题的答案喂给下一道。结果记录 qid、image_id、raw_answer、模型版本、设置、耗时、峰值显存和 status。
 
 批量分支按以下顺序连接已有 infer_one，不另写第二套图像预处理：
+
+读图片清单时创建 image_by_id={row["image_id"]:row for row in image_rows}，questions 则为按行 json.loads 得到的列表；image_rows 来自 csv.DictReader。每题的 image_path=Path(image_by_id[item["image_id"]]["local_path"])，question=item["question"]。调用 infer_one 返回的字典用 result 接收；成功时将 result 的四个字段加入当前题 record，再补 status="ok"，不再重新解码或测一次生成。
 
 1. 读入并检查两个清单，用 image_id 建立查路径的字典；确定本轮唯一 run_id，加载模型和 processor 一次。
 2. 按问题清单顺序取一题，从字典找到图片路径，将路径和该题 question 传给 infer_one；reference 只用于之后评分，不作为模型输入。

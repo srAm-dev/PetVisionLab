@@ -1,3 +1,5 @@
+"""用合成数据复习一个批次的训练和验证循环。"""
+
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -5,7 +7,15 @@ from petvision.models.cv.mlp import MLP
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device):
-    """练习版：保留原函数名，但这里只训练一个批次。"""
+    """取一个批次训练一次并打印损失。
+
+    Args:
+        model: MNIST 分类模型。
+        loader: 提供至少一个批次的加载器。
+        optimizer: 绑定模型参数的优化器。
+        criterion: 分类损失函数。
+        device: 计算设备。
+    """
     model.train()
     X, y = next(iter(loader))
     X = X.to(device)
@@ -21,7 +31,14 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
 
 def evaluate(model, loader, criterion, device):
-    """练习版：只验证一个批次，不返回汇总指标。"""
+    """取一个批次做无梯度验证并打印损失。
+
+    Args:
+        model: MNIST 分类模型。
+        loader: 提供至少一个批次的加载器。
+        criterion: 分类损失函数。
+        device: 计算设备。
+    """
     model.eval()
     with torch.no_grad():
         X, y = next(iter(loader))
@@ -66,7 +83,8 @@ def main():
     train_one_epoch(model, train_loader, optimizer, criterion, device)
     assert model.training
     changed = [
-        name for name, parameter in model.named_parameters()
+        name
+        for name, parameter in model.named_parameters()
         if not torch.equal(before_train[name], parameter.detach())
     ]
     assert changed, "训练后没有任何参数发生变化"

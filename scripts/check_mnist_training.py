@@ -1,3 +1,5 @@
+"""在正式训练前检查 MNIST 的批次更新与小样本拟合。"""
+
 from itertools import islice
 import math
 
@@ -7,17 +9,20 @@ from torchvision import transforms
 
 from petvision.data.datasets import build_mnist_loaders
 from petvision.models.cv.mlp import MLP
-from petvision.training.cv_trainer import train_one_epoch, evaluate
+from petvision.training.cv_trainer import evaluate, train_one_epoch
 from petvision.utils.seed import set_seed
 
 
 def main():
+    """用少量批次检查 MNIST 训练，再用固定 64 条样本观察拟合。"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(42)
-    eval_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=(0.5,), std=(0.5,)),
-    ])
+    eval_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.5,), std=(0.5,)),
+        ]
+    )
     train_loader, val_loader, _ = build_mnist_loaders(
         data_dir="datasets/raw",
         split_path="experiments/mnist_mlp/week2/mnist_split.json",

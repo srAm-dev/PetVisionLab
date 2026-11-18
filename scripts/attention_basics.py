@@ -1,11 +1,15 @@
 """第四周 Day 1：用手算、小张量和梯度检查理解缩放点积 Attention。"""
+
 import math
+
 import torch
+
 from petvision.models.transformer.attention import scaled_dot_product_attention
 
 
 def main():
     # 使用 CPU float64，固定随机流，方便重复运行并核对结果。
+    """运行手算、批次梯度和分数缩放三个注意力例子。"""
     dtype = torch.float64
     generator = torch.Generator(device="cpu").manual_seed(42)
 
@@ -21,7 +25,12 @@ def main():
     print("Q:", q)
     print("K:", k)
     print("V:", v)
-    print("K 转置前后形状:", tuple(k.shape), "->", tuple(k.transpose(-2, -1).shape))
+    print(
+        "K 转置前后形状:",
+        tuple(k.shape),
+        "->",
+        tuple(k.transpose(-2, -1).shape),
+    )
     print("scores:", scores, "shape:", tuple(scores.shape))
     print("weights:", weights, "shape:", tuple(weights.shape))
     print("权重行和:", weights.sum(dim=-1))
@@ -33,9 +42,15 @@ def main():
 
     print("\n2. 批次例子：检查形状、权重行和与 Q/K/V 梯度")
     # 直接创建叶子 Tensor，使 backward 后可以读取各自的 .grad。
-    q = torch.randn((2, 3, 2), generator=generator, dtype=dtype, requires_grad=True)
-    k = torch.randn((2, 3, 2), generator=generator, dtype=dtype, requires_grad=True)
-    v = torch.randn((2, 3, 2), generator=generator, dtype=dtype, requires_grad=True)
+    q = torch.randn(
+        (2, 3, 2), generator=generator, dtype=dtype, requires_grad=True
+    )
+    k = torch.randn(
+        (2, 3, 2), generator=generator, dtype=dtype, requires_grad=True
+    )
+    v = torch.randn(
+        (2, 3, 2), generator=generator, dtype=dtype, requires_grad=True
+    )
 
     scores = q @ k.transpose(-2, -1) / math.sqrt(q.shape[-1])
     output, weights = scaled_dot_product_attention(q, k, v)
@@ -56,7 +71,10 @@ def main():
     assert torch.isfinite(output).all().item(), "output 中出现非有限值"
     assert (weights >= 0).all().item(), "softmax 权重应非负"
     torch.testing.assert_close(
-        row_sums, torch.ones((2, 3), dtype=dtype), rtol=0, atol=1e-12,
+        row_sums,
+        torch.ones((2, 3), dtype=dtype),
+        rtol=0,
+        atol=1e-12,
     )
 
     loss = output.square().mean()
@@ -67,7 +85,9 @@ def main():
     for name, tensor in (("Q", q), ("K", k), ("V", v)):
         assert tensor.grad is not None, f"{name} 没有梯度"
         assert tensor.grad.shape == tensor.shape, f"{name} 的梯度形状不匹配"
-        assert torch.isfinite(tensor.grad).all().item(), f"{name} 的梯度包含非有限值"
+        assert torch.isfinite(tensor.grad).all().item(), (
+            f"{name} 的梯度包含非有限值"
+        )
         print(
             f"{name}.grad shape: {tuple(tensor.grad.shape)}, "
             f"最大绝对值: {tensor.grad.abs().max().item():.6f}，梯度均有限"
@@ -81,6 +101,7 @@ def main():
 
     print("每行最大权重越接近 1，表示该行越集中在某个 key。")
     for head_dim in (2, 32, 128):
+        # ... 保留前面的 batch 和 token 轴，只切最后一维的特征。
         q = q_full[..., :head_dim]
         k = k_full[..., :head_dim]
         raw_scores = q @ k.transpose(-2, -1)
@@ -96,7 +117,8 @@ def main():
             mean_max_weight = weight_values.max(dim=-1).values.mean().item()
             print(
                 f"  {label}: scores 范围 "
-                f"[{score_values.min().item():.4f}, {score_values.max().item():.4f}]，"
+                f"[{score_values.min().item():.4f}, "
+                f"{score_values.max().item():.4f}]，"
                 f"每行最大权重的平均值 {mean_max_weight:.4f}"
             )
 

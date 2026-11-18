@@ -8,7 +8,7 @@
 
 本轮完成小模型的实现、训练和实验报告，并体验预训练推理。完整 Encoder-Decoder、宠物迁移对照、模型微调和 App 放入后续拓展。首次跟做可先看[学习与执行入口](README.md)。
 
-版本：v1.31；更新日期：2026-11-11。
+版本：v1.32；更新日期：2026-11-18。
 
 ## 目录
 
@@ -49,6 +49,8 @@
 跟做时先找到当天指定的文件和函数，准备例子，完成计算，再运行检查。每一步写清修改对象、输入、操作顺序和完成标准。需要新数据或预训练权重时，先完成来源、加载和配置，再执行后续计算。
 
 同一组件先完成实现文件，再编写测试文件；配置先于读取它的入口，被调用模块先于调用者。一个实现段写完导入、构造、参数和计算方法后再切换文件，测试数据与断言留在后面的测试段。若测试的是训练或推理入口，先接通该入口再测试。
+
+类的实现步骤应写明 __init__/forward 的完整签名，以及 forward 依赖的 self 成员如何创建。函数片段应写明放在模块顶层、类方法还是 main 内，输入和返回值使用稳定名称；脚本局部变量不隐式传进模型或辅助函数。多层结构直接说明 ModuleList 的创建方式和逐层调用，不要求先写一版单层再改成多层。
 
 手算步骤给出要算的数值或形状；实现步骤给出函数职责和返回值；检查步骤给出固定条件、比较项和容差。术语、接口差异和输出格式随相关操作说明。阅读一个未使用的接口、打印已有结果或重复一句结论，不单独计作实现任务。
 
@@ -785,6 +787,8 @@ conda list --explicit > experiments/basics/week1/conda-explicit.txt
 YAML 只保存数值和名称，不会自动改造代码。第二周先按[接口改造步骤](week2.md#mnist-configurable-interfaces)让模型和数据函数接收配置参数，再由入口读取并传入；通过默认兼容和非默认参数检查后，才运行配置驱动的 smoke / 训练。
 
 字段层级从第二周开始统一：数据路径与批次放在 `data.root / split_path / batch_size`，优化设置放在 `training`，日志与权重分别使用顶层 `experiment_dir / output_dir`；相对路径均从项目根目录解释。完整 MNIST YAML 和参数读取示例见[第二周 Day 4](week2.md#mnist-config)。smoke/overfit 只打印检查结果，正式配置、history、曲线和 checkpoint 仅由正式训练分支写入。
+
+当前第一至三周代码已完成接口统一：build_mnist_loaders 与 build_cifar10_loaders 都接收调用者创建的 train_transform、eval_transform；mean/std 只用于创建 Normalize。训练流程在 train_cv.py 的 run_smoke、run_overfit、run_training，日志工具在 utils/history.py。独立 evaluate.py 对 val 打印指标、对 test 写 test_metrics.json，两种 split 的错图分开保存；历史验证 JSON 和示例预算不等同于当前入口的自动输出。
 
 以下字段是逐周实现时的配置约定。ResNet18 的入口结构固定在模型类中；data.image_size 记录数据集原图尺寸，额外 Resize 的目标由对应模型预处理决定。第 3 周的 `configs/cv/resnet_cifar10.yaml` 示例：
 

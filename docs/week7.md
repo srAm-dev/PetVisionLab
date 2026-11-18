@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week7/README.md)。
 
-更新日期：2026-11-11。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -21,7 +21,7 @@
 ```text
 PetVisionLab/
 ├── src/petvision/models/llm/tokenizer.py    # Day 1–2：增加 ByteBPETokenizer
-├── src/petvision/utils/checkpoint.py       # Day 4：扩展训练状态与随机状态
+├── src/petvision/utils/checkpoint.py       # Day 4：沿用字典读写，状态由训练入口组装
 ├── configs/llm/mini_gpt_bpe.yaml           # Day 5：BPE 独立训练配置
 ├── scripts/
 │   ├── train_tokenizer.py                 # Day 2：训练/保存 BPE
@@ -148,6 +148,8 @@ count_pairs 返回 `{(left_id, right_id): 次数}` 字典；merge_pair 返回替
 
 ByteBPETokenizer 的构造函数先建立 `self.vocab = {i: bytes([i]) for i in range(256)}` 和空的有序 merge 列表；bytes([i]) 表示包含一个值为 i 的字节，不能写成创建 i 个零字节的 bytes(i)。训练每产生新 ID，就把左右 token 的 bytes 拼接后加入 vocab；vocab_size 用只读属性返回 `len(self.vocab)`，调用方读取 `tokenizer.vocab_size`，不加括号，与字符 tokenizer 的属性一致。decode 逐个查 vocab，先拼接全部 bytes，再调用 UTF-8 decode，并把 errors 参数传入；默认 errors="replace" 与 minbpe 一致。往返检查显式传 errors="strict"，生成展示使用默认策略；未知 ID 仍应报错。CharTokenizer 的 decode 接口无需改变。
 
+有序列表明确命名为 self.merges=[]，每个元素为 [left_id,right_id,new_id]；元数据容器命名为 self.training_metadata={}。decode(self, ids, errors="replace") 返回 b"".join(self.vocab[token_id] for token_id in ids).decode("utf-8", errors=errors)，其中 ids 是调用参数，vocab 是构造函数已创建的成员。
+
 先对短整数列表逐项核对，再将这些函数组合进 tokenizer 类。空串和单 token 没有 pair，应正常返回。
 
 #### 第三步：创建 test_tokenizer.py，检查 pair 规则与字节解码
@@ -187,6 +189,8 @@ python -m pytest tests/test_tokenizer.py -q
 
 修改 `src/petvision/models/llm/tokenizer.py` 的 ByteBPETokenizer.train / encode / save / load 方法，先完成本步的 train，再在第二步完成 encode / save / load。
 
+四个方法都定义在已有 ByteBPETokenizer 类内部：train(self, text, vocab_size) 更新当前对象并返回 None；encode(self, text) 返回整数 ID 列表；save(self, path) 写 JSON；load(cls, path) 带 @classmethod，返回重建的 ByteBPETokenizer。train 开始重置 self.vocab、self.merges，按 text.encode("utf-8") 计算子集 hash，保存到 self.training_metadata["subset_sha256"]。
+
 在 ByteBPETokenizer.train 内按以下顺序完成训练算法：
 
 1. 检查目标词表大小至少为 256。本轮每次训练都从新的 256 字节词表和空 merges 开始，不沿用上次训练的规则。
@@ -207,6 +211,10 @@ python -m pytest tests/test_tokenizer.py -q
 实现 encode 时先从 merges 建立“pair → rank / new_id”的查询表。把新文本转成基础字节 ID 后，扫描当前相邻 pair，只保留查询表中已有的候选；候选为空就返回当前序列，否则选择 rank 最小的一对，调用 merge_pair，再重新扫描。整个过程只读词表与规则，不新增 ID。用一个新文本里高频 pair 与低 rank pair 不一致的短例子，确认选择依据是已保存 rank，而不是当前频率。
 
 JSON 中 merge 顺序就是规则优先级，加载时保留原顺序。词表使用 hex 时，token 256 的 `ab` 保存为 `6162`；解码先将每个 token 的 hex 还原为 bytes，全部拼接后再 UTF-8 解码。JSON 对象的 key 是字符串，需要在加载时按约定还原 token ID 类型。
+
+本轮统一采用按 ID 排列的 vocab_hex 列表，save 从 self.vocab 的 0..V-1 依次取 bytes.hex()，并保存 self.merges 和 self.training_metadata。load 先读取并检查 JSON，使用 tokenizer=cls() 建立对象，再用 enumerate(vocab_hex) 和 bytes.fromhex 重建 tokenizer.vocab，恢复 tokenizer.merges、tokenizer.training_metadata，完成规则校验后返回 tokenizer；不要返回原始 JSON 字典。encode 内部的 pair 查询表由 enumerate(self.merges) 临时建立，加载后不依赖之前进程中的缓存。
+
+JSON 中对应的键名为 merges、vocab_hex、training_metadata，子集 hash 放在 training_metadata["subset_sha256"]。load 用同样的层级取值，再赋给对象成员。
 
 给 ByteBPETokenizer 补齐 `train(text, vocab_size)、encode、decode、save、load` 接口。JSON 至少带 `type="byte_bpe"、version=1、base_vocab_size=256、merges、vocab_hex、训练子集hash`；merges 可用 `[left_id,right_id,new_id]` 的有序列表，vocab_hex 可用按 ID 排列的 hex 字符串列表。加载时核对第 r 次合并的新 ID 为 `256+r`、左右 ID 先前已经存在，新 token bytes 等于两侧 bytes 的拼接。
 
@@ -239,6 +247,8 @@ encode 得到的 ID 来自可严格编码为 UTF-8 的原文本，往返用 `dec
 在 `scripts/train_tokenizer.py` 定义 parse_args(argv=None)，用 argparse.ArgumentParser 添加 `--vocab-size`（type=int，默认 512）与 `--max-train-chars`（type=int，默认 100000）；main() 调用 parse_args，先检查后者为正，再读取训练文本。main 读取 `datasets/processed/tinyshakespeare/train.txt` 的 bytes 并按 UTF-8 解码，先按字符截取再转 bytes；新建 ByteBPETokenizer，调用 train(text_subset, vocab_size)，随后 save 到 `experiments/mini_gpt/week7/bpe_tokenizer.json`。父目录先创建，记录子集 hash、字符数和字节数。重新加载时调用第二步已实现的类方法 load，从保存规则还原对象，不重新训练。
 
 读取 train.txt 后先与第六周 split_manifest 的 train hash 核对，再计算截取子集的 hash；两者分别保存为原训练 split 标识和 BPE 学习子集标识。已有 bpe_tokenizer.json 时先核对这些条件，改变词表或子集应另存版本，不能覆盖仍被 checkpoint 引用的 tokenizer。
+
+main 的对象和变量按顺序为：args=parse_args() → train_text 读取与 hash 核对 → text_subset=train_text[:args.max_train_chars] → tokenizer=ByteBPETokenizer() → tokenizer.train(text_subset,args.vocab_size) → tokenizer.training_metadata 中补充 train_split_sha256、实际字符数和字节数 → tokenizer.save(output_path)。output_path 是本步指定的 bpe_tokenizer.json 路径，不使用尚未定义的 cfg。
 
 ### 运行与自查
 
@@ -287,6 +297,8 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 ```
 
 在生成脚本参数解析中添加 temperature（float，默认 1.0）与 top-k（int，默认 None），在生成循环中用 `next_id = sample_next_token(logits[:, -1, :], args.temperature, args.top_k)` 替换第六周直接 softmax / multinomial 的两行。生成长度、上下文裁剪和累计输出仍沿用原循环；不能只接收参数却继续使用旧采样路径。
+
+实现顺序先写 filter_logits，再写调用它的 sample_next_token，最后修改 main 的生成循环和 record。两个函数只使用传入的 last_logits、temperature、top_k，在函数体令 V=last_logits.shape[-1]；不读取 main 中的 args。record 另外增加 temperature=args.temperature、top_k=args.top_k，保证保存的设置与实际采样一致。
 
 在脚本顶层导入 math，检查 `math.isfinite(temperature) and temperature > 0`，top_k 为 None 或正整数；非 None 时令 effective_k=min(top_k,V)，与作者实现一致。top-k=1 且最高分唯一时，总选这一项，可以作为确定性最小例子。
 
@@ -413,6 +425,8 @@ completed_steps = checkpoint["step"]
 
 NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载时用 `np.asarray(values, dtype=np.uint32)` 还原，再拼回原五项 tuple。独立 default_rng 不受 `np.random.set_state` 控制，实际使用哪条流就单独保存哪条流；Torch 与采样 Generator 的状态保持 CPU ByteTensor。读取使用 `map_location="cpu", weights_only=True`，模型/优化器加载并迁移后，再恢复各随机流。
 
+本轮 RNG 字典的构造与恢复都放在 train_gpt.py 的 main 中，顶层补 import random、import numpy as np；train_generator 是第六周 main 中创建并持续采样的那个对象。保存前从表中 API 取得状态写入 checkpoint；恢复分支先令 checkpoint=load_checkpoint(args.resume)，再逐字段恢复。utils/checkpoint.py 仍只做字典读写，不在其中创建模型、优化器或新的训练 Generator。
+
 #### 第三步：接通恢复流程，观察一次小模型续训
 
 先把恢复分支按下列顺序接通，再做下面的小模型续训观察：
@@ -506,6 +520,8 @@ output_dir: outputs/mini_gpt_bpe
 <a id="tokenizer-dispatch"></a>
 在 tokenizer.py 增加供训练和生成共用的 `load_tokenizer(path)`：先读 JSON 的 type；为 char 调用 CharTokenizer.load，为 byte_bpe 调用 ByteBPETokenizer.load，未知类型明确报错。两类对象都提供 encode、decode、save、load 和实际 vocab_size。
 
+load_tokenizer 是模块顶层函数，不是某个类的方法，返回选中的 tokenizer 对象。它只读取文件并分派，不触发 train；训练、生成和比较入口都在顶层导入它，分别在自己的 main 中调用。
+
 将 train_gpt.py、generate.py 中第六周写死的 CharTokenizer.load 改为调用 load_tokenizer，再核对文件 hash；compare_tokenizers.py 也用同一入口分别读两个文件。不能只修改训练脚本，却让生成脚本仍把 BPE 文件当字符表读取。模型、优化器和 embedding/head 均新建，第六周的字符权重保留不动。
 
 同时改造生成后的解码分支：字符 tokenizer 继续 decode(all_ids)；BPE 用 vocab 中的 bytes 拼接完整输出，严格解码失败时按 Day 2 的展示规则处理，并记录 decode_ok、raw_bytes_hex 和原始 IDs。不能仍无条件调用严格 decode 后在无效 UTF-8 处终止整个生成脚本。严格往返测试显式调用 `tokenizer.decode(ids, errors="strict")`，不经过展示分支。若统计替换字符数，注明这是展示文本中的 U+FFFD 数量，并不能准确代表无效字节数量。
@@ -517,6 +533,8 @@ context=128 在字符模型中约为 128 个已编码字符，在 BPE 中可能�
 在 scripts/train_gpt.py 的 main 中，与区间 NLL 统计一起累计每个实际训练批次的输入 token / bytes，并写入 run_summary。恢复训练时将这两个累计值与其他训练统计一起保存、恢复，不从本进程重新计零。
 
 累计训练输入 token 数按每批 `x.numel()` 统计；BPE 的处理 bytes 数按输入 ID 对应的 vocab bytes 长度求和，重复采样重复计数，不包括只作为目标而未进入 x 的额外 token。静态训练文件大小、累计处理量和生成输出大小分列，避免把整个语料长度当作本次模型实际看过的字节数。
+
+新运行在 main 的循环外创建 input_tokens=0、input_bytes=0；恢复运行从 checkpoint 读取这两个累计值。每次 sample_batch 得到 x 后，先累加 x.numel()，再遍历 x.detach().cpu().reshape(-1).tolist() 的输入 ID：BPE 加 len(tokenizer.vocab[token_id])，字符模型加 len(tokenizer.chars[token_id].encode("utf-8"))。训练 split 不含字符 UNK；这段累计放在 train_step 调用附近，run_summary 与 checkpoint 使用同名字段，不能只统计最后一批。
 
 #### 第三步：实现 compare_tokenizers，编码同一原文并保存两行结果
 

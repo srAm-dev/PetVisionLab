@@ -12,7 +12,7 @@ Attention、Mask、LayerNorm 检查通过；第三周四组配置、best 和同�
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vit_patch_size/week5/README.md)。
 
-更新日期：2026-11-11。
+更新日期：2026-11-18。
 
 ## 本周文件
 
@@ -102,7 +102,7 @@ CLS 参数的原始形状为 `[1,1,C]`，位置参数为 `[1,N+1,C]`；拼接时
 
 #### 第一步：实现 PatchEmbedding 并计算 Patch 数与投影尺寸
 
-创建 `src/petvision/models/cv/vit.py`，顶层写 `import torch` 和 `from torch import nn`，定义继承 nn.Module 的 `PatchEmbedding(in_channels, patch_size, embed_dim)`。选择 Conv2d 或显式展开后 Linear 的一种正式路径，forward 返回 `[B,N,C]`；下方两条形状用于理解同一投影过程。今天还在同一文件建立 ViT 的 CLS / 位置参数，完整 ViT.forward 明天接通。
+创建 `src/petvision/models/cv/vit.py`，顶层写 `import torch` 和 `from torch import nn`，定义继承 nn.Module 的 `PatchEmbedding(in_channels, patch_size, embed_dim)`。正式路径使用 Conv2d，forward 返回 `[B,N,C]`；显式展开后 Linear 用于下面的等价关系演示。今天还在同一文件建立 ViT 的 CLS / 位置参数，完整 ViT.forward 明天接通。
 
 对输入 `[B,3,32,32]`，P=4 时每个 Patch 含 `3*4*4=48` 个数，共 `8*8=64` 个 Patch；P=8 时维度为 192，共 16 个 Patch。
 
@@ -114,6 +114,8 @@ P=8：图像 → [B,16,192] → Linear → [B,16,128]
 ```
 
 投影后的 C 都为 128；不要把 Patch 像素维度直接当作 Encoder hidden size。
+
+在 PatchEmbedding.__init__ 中先调用 super().__init__()，保存 self.patch_size，并创建 self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size, padding=0, bias=True)。forward(self, images) 先从 images.shape 读取 B、通道数、H、W，检查 H/W 可整除 patch_size，再返回 self.proj(images).flatten(2).transpose(1,2)。self.proj 在构造时创建一次，forward 只调用它。
 
 #### 第二步：在 vit.py 完成 ViT 的 CLS 与位置参数
 
@@ -131,6 +133,17 @@ CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训
 按教材 PyTorch 版初始化：CLS 使用 `nn.Parameter(torch.zeros(1,1,C))`，可学习位置参数使用 `nn.Parameter(torch.randn(1,N+1,C))`。两者均注册为 Parameter；本轮保持这套教材初始化，torchvision 等实现可能使用其他初始化，应按所选参考明确区分。forward 只 expand/concat/相加，不临时创建新 Parameter。检查两者出现在 named_parameters 和 state_dict 中，位置长度与实际 N+1 不符时明确报错，B=1 与 B=4 都保持 batch 维。
 
 构造 ViT 时先检查 image_size 能被正整数 patch_size 整除；完整 forward 还要检查输入 H、W 均等于配置 image_size。仅比较 token 数不能识别例如 16×64 与 32×32 这类同数量、不同位置网格的输入。
+
+ViT.__init__ 的完整签名为 `__init__(self, num_classes, image_size, patch_size, embed_dim, depth, heads, ffn_hidden_dim, dropout)`。先调用 super().__init__()，令 C=embed_dim、N=(image_size//patch_size)**2；这两个是构造函数内的局部尺寸。今天创建以下成员，Day 2 再在同一构造函数中接着创建 blocks 和 head：
+
+| 成员 | 在构造函数中创建的内容 |
+| --- | --- |
+| self.image_size | image_size，供完整 forward 检查图片高宽 |
+| self.patch_embed | PatchEmbedding(in_channels=3, patch_size=patch_size, embed_dim=embed_dim) |
+| self.cls_token | 上述 `[1,1,C]` 的 nn.Parameter |
+| self.position_embedding | 上述 `[1,N+1,C]` 的 nn.Parameter |
+
+今天的 ViT.forward 可以先明确抛出 NotImplementedError；下面的交互观察只调用已完成的 patch_embed 和两个参数，完整 forward 待 Day 2 所有成员创建后再写。
 
 #### 第三步：在 test_vit.py 检查 Patch 投影与 token 参数
 
@@ -153,6 +166,8 @@ CLS 是所有样本共享的一组可学习参数，扩展到 batch 后参与训
 这里 `flatten(2)` 从第 2 轴开始合并高宽两轴，例如 `[B,128,8,8]→[B,128,64]`；`transpose(1,2)` 再交换特征轴和 Patch 轴，得到 `[B,64,128]`。位置编号顺序沿每一行从左到右，再进入下一行。
 
 把「对齐」落实为一个小张量检查：先在 CPU float64 上建立相同输出通道 C、bias=True 的 Conv2d 与 Linear；Linear 输入宽度为 `输入通道数*P*P`。给定同一图片后：
+
+下方片段放在 test_patch_projection_reference 内，先令 P=2、C=4，创建 images=torch.randn(1,3,4,4,dtype=torch.float64)、conv=nn.Conv2d(3,C,kernel_size=P,stride=P,bias=True).double() 和 linear=nn.Linear(3*P*P,C,bias=True).double()；测试文件补 from torch import nn。这些是本例的局部对象，正式 PatchEmbedding 中仍只保留 self.proj。
 
 ```python
 patches = torch.nn.functional.unfold(images, kernel_size=P, stride=P).transpose(1, 2)
@@ -206,6 +221,44 @@ python -m pytest tests/test_vit.py -q
 3. ViTBlock.forward(x) 先执行 `x = x + attention(norm1(x))`，再执行 `x = x + mlp(norm2(x))`。Attention 的 dropout 在 softmax 权重处，MLP 的两处 dropout 已在内部；按教材顺序计算，Attention 投影后不再额外插一次残差 dropout。图像 token 都有效，不传 causal mask。
 4. 在 ViT 构造函数中按 depth 创建独立 ViTBlock 并放入 ModuleList。注册 `self.embedding_dropout = nn.Dropout(dropout)`，作用在 CLS / Patch 拼接且加上可学习位置之后。教材区分 emb_dropout 与 blk_dropout，本项目配置的同一个 dropout 值分别传给这两处，放置位置保持一致。
 5. 分类头使用 `self.head = nn.Sequential(LayerNorm(embed_dim), nn.Linear(embed_dim, num_classes))`。Block 堆叠结束后先取 CLS，再交给 head；分类头只执行一次最终 LayerNorm。
+
+三个类的成员与方法分别按以下约定连接：
+
+- ViTMLP.__init__ 先调用 super().__init__()，创建下面的 self.net；forward(self, x) 只返回 self.net(x)。hidden_dim 对应第 1 项的隐藏层宽度。
+- ViTBlock.__init__ 先调用 super().__init__()，分别创建 self.norm1/self.norm2 = LayerNorm(embed_dim)，self.attention = MultiHeadSelfAttention(embed_dim, num_heads, dropout=dropout, bias=False)，self.mlp = ViTMLP(embed_dim, ffn_hidden_dim, dropout)。第 3 项中的 attention、norm1、mlp、norm2 都是这些 self 成员的简写。
+- ViT.__init__ 继续使用 Day 1 的成员，再按下面代码创建 self.blocks；这里将 ViT 的 heads 映射到 ViTBlock 的 num_heads。之后创建 self.embedding_dropout 和上述 self.head。
+
+下面两段分别放在 ViTMLP.__init__ 和 ViT.__init__ 中，不写在模块顶层：
+
+```python
+self.net = nn.Sequential(
+    nn.Linear(embed_dim, hidden_dim),
+    nn.GELU(),
+    nn.Dropout(dropout),
+    nn.Linear(hidden_dim, embed_dim),
+    nn.Dropout(dropout),
+)
+```
+
+```python
+self.blocks = nn.ModuleList([
+    ViTBlock(
+        embed_dim=embed_dim, num_heads=heads,
+        ffn_hidden_dim=ffn_hidden_dim, dropout=dropout,
+    )
+    for _ in range(depth)
+])
+```
+
+ViTBlock.forward 的实际写法为：
+
+```python
+def forward(self, x):
+    x = x + self.attention(self.norm1(x))
+    return x + self.mlp(self.norm2(x))
+```
+
+先完成这三个类的构造函数和 ViTBlock.forward，再写下面的 ViT.forward(self, images)。这样片段中的每个 self 成员都已有定义。
 
 完整 ViT.forward 在检查图片高宽后按下面顺序执行：
 
@@ -290,6 +343,8 @@ output_dir: outputs/vit_patch4
 修改已有 `scripts/train_cv.py` 和 `scripts/evaluate.py`，顶层从 `petvision.models.cv.vit` 导入 ViT，在已有模型选择处添加 vit 分支，按下方 model 字段创建该类。两处构造参数保持一致，独立评估继续按 checkpoint 保存的 model_config 重建，具体职责见[第三周入口整理步骤](week3.md#cv-entry-refactor)。
 
 模型选择添加 vit，配置明确 image_size、patch_size、embed_dim、depth、heads、dropout；split_path 原样复用第三周文件。通过短运行后再冻结预算。
+
+在 train_cv.py 的模型选择分支中，令 model_cfg=cfg["model"]，使用 ViT(num_classes=model_cfg["num_classes"], image_size=model_cfg["image_size"], patch_size=model_cfg["patch_size"], embed_dim=model_cfg["embed_dim"], depth=model_cfg["depth"], heads=model_cfg["heads"], ffn_hidden_dim=model_cfg["ffn_hidden_dim"], dropout=model_cfg["dropout"]) 创建模型，再迁移到 device。evaluate.py 使用同样字段，但取值来自核对后的 saved_model_cfg；不要把 name 字段作为 ViT 的构造参数。
 
 测一轮训练前在 CUDA 分支调用 `torch.cuda.synchronize()`、`torch.cuda.reset_peak_memory_stats()`，用 `time.perf_counter()` 记开始/结束，结束前再次同步；峰值取 `torch.cuda.max_memory_allocated()/1024**2`，注明 MiB 和测量范围。CPU 分支跳过 CUDA 接口，记录设备即可。
 
@@ -424,6 +479,13 @@ for true_id, pred_id in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
 
 metrics_from_confusion 用整数矩阵累计、用浮点除法计算 F1；总样本数为 0 时明确报错。两类 / 三类断言保留在 classification.py 的上述检查分支中。误分类继续由 `scripts/evaluate.py::collect_mistakes(model,loader,device,limit=8)` 采集；main() 先调用 evaluate_classification 完成全部样本的统计，再调用 collect_mistakes 获取展示图片，不用展示样本覆盖完整指标。
 
+返回值和变量归属统一如下，先写完函数，再接 main：
+
+1. metrics_from_confusion(matrix) 返回 `{"accuracy": accuracy, "macro_f1": macro_f1}`，两个值均为 Python float；accuracy 是对角线和除以总数，macro_f1 按全部行对应的类别求平均。
+2. evaluate_classification 开始调用 model.eval()，初始化 total_loss=0.0、correct=0、n_samples=0 和 CPU matrix。每批取 images、labels，迁移到 device，令 logits=model(images)、loss=criterion(logits,labels)、predicted=logits.argmax(dim=-1)，再按上文累计。criterion 继续使用 reduction="mean" 的交叉熵。
+3. 函数返回的字典固定包含 loss、accuracy、macro_f1、n_samples、confusion_matrix、params、image_size；confusion_matrix 的值是 matrix.tolist()，其余字段按上文计算。不要把每批的局部 matrix 当成全数据结果。
+4. main 中用 result 接收该字典。后续绘图需要 Tensor 时，用 matrix=torch.tensor(result["confusion_matrix"], dtype=torch.long) 还原；再加入测时和配置字段，最后统一写 JSON。
+
 <a id="inference-timing"></a>
 
 #### 第三步：实现 benchmark_forward，分别保存加载与前向耗时
@@ -456,6 +518,8 @@ print("batch mean ms/img:", ms_per_image)
 这是模型前向的批量平均值，验证指标仍由完整验证集单独计算。每条测时记录写 warmup=5、repeats=20、实际 batch、输入形状、dtype、device 和是否包含数据搬运；本片段不包含搬运。如记录峰值，CUDA allocated 包含已加载模型等当前分配，不能写成整张显卡的总使用量。
 
 将计时片段封装为 evaluate.py 顶层的 `benchmark_forward(model, images)`，返回包含 ms_per_image、warmup、repeats、batch_size、input_shape、dtype、device、include_transfer=False 的字典，input_shape 从 images.shape 取得。main 在完整评估后取所选 loader 的一批图片、迁移到设备，调用该函数，将返回值放入结果的 inference 字段，再写 metrics JSON。加载阶段的秒数另记 load_seconds，两个数字不能混用；六个模型都读取相同 batch 设置，并记录实际批大小。图片来自各自 loader，保留其训练时使用的分辨率。
+
+main 的执行顺序固定为：读配置和确定 device → 记录加载计时起点 → load_checkpoint、重建模型、load_state_dict、model.to(device) → 同步 GPU 并得到 load_seconds → 建立所选 loader → 完整评估 → 从 loader 取一批 images 并迁移 → benchmark_forward → 写结果。result["inference"] 保存前向测时字典，result["load_seconds"] 保存加载秒数；数据下载、loader 遍历与两段计时都分开。
 
 #### 第四步：冻结六个变体
 

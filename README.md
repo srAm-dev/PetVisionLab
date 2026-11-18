@@ -35,3 +35,5 @@
 | `pyproject.toml` | 构建方式、包发现和 Python 版本要求 |
 
 环境准备从[第一周](docs/week1.md#day-1)开始，第二周再补 PyTorch 和 GPU 依赖。现有 `environment.yml` 含平台构建与本机路径，跨平台按指南选择依赖。`pip install -e .` 只安装本地项目包，运行依赖需要另行安装。
+
+第一至三周已实现，复习时以现有函数签名和各运行目录保存的配置为准。MNIST/CIFAR 加载函数均由调用者传入 train_transform、eval_transform；早期实验图、环境快照和有日期的指标记录保留原样。计划中的起始训练预算用于学习，复现历史结果使用对应 config.yaml 和 checkpoint。
