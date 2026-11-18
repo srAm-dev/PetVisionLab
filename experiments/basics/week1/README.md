@@ -60,7 +60,7 @@ python -c "import sys, numpy, matplotlib; print(sys.executable); print(numpy.__v
 
 ### 完成情况与关键理解
 
-- Python 练习覆盖列表、字典、循环、函数、类、模块导入及脚本入口保护；NumPy 练习覆盖索引、切片、转置、广播、矩阵乘法和沿轴求和。
+- `python_basics.py` 直接执行列表、字典、循环和 MSE 练习。类、模块导入和入口保护见 `linear_model.py`。数组切片、转置、广播、矩阵乘法和沿轴求和见 `numpy_basics.py`、`math_basics.py`。
 - 完成线性预测、MSE、解析梯度、参数更新和损失曲线保存；训练记录包含初始损失与 500 次更新后的损失，共 501 个点。
 - 完成两个权重与偏置的数值梯度检查，以及三组学习率在相同条件下的对照实验。
 - 重写脚本中已定义 `predict`、`mse`、`gradients`、数据生成和训练循环；在相同配置下，训练结果与基准脚本一致。

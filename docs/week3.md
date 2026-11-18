@@ -12,7 +12,7 @@ MNIST 的训练、验证和保存加载已跑通；能说明 `train()`、`eval()
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/cnn_vs_resnet/week3/README.md)。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -57,7 +57,7 @@ python -m pip check
 
 确认解释器属于 `petvision`，`petvision.__file__` 指向当前仓库的 `src/petvision/`。导入失败时先在根目录运行 `python -m pip install -e . --no-deps`；依赖或 CUDA 问题按[第二周环境排查](week2.md#environment)处理。
 
-复用第二周的分类训练器，新增 CIFAR-10 数据与视觉模型。本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当天脚本和检查文件在对应任务中创建，完成实现后再运行下方命令。
+复用第二周的分类训练器，新增 CIFAR-10 数据与视觉模型。本周沿用已有依赖；版本没有变化时复用原环境快照，新增或调整依赖后才更新实际安装记录。当前仓库已有 CIFAR 检查脚本和四份配置。先运行数据与形状检查，再按需要加载已有 best 或用新目录重训。
 
 ## 固定条件与接口约定
 
@@ -67,7 +67,7 @@ Day 1-2 的 CNN 使用 32×32 输入。Day 4 起，ResNet 在上述随机增强�
 
 CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool，最后 GAP→Linear(128,10)；BN 开关只替换归一化，同一对中卷积 bias 均保持 True。ResNet18 按教材使用 7×7,stride=2,padding=3 的入口卷积、BN、ReLU 和 3×3,stride=2,padding=1 的最大池化，接 [2,2,2,2] 个 BasicBlock、通道 64/128/256/512；卷积 bias=True，投影只用 1×1 Conv。保留 CIFAR 的 RGB 三通道，输入缩放到 96×96。四组从零训练，起始 batch=64、AdamW lr=1e-3、weight_decay=1e-4、20 epochs、FP32；先短运行测时，再冻结两组对照的预算。显存不足可统一减小同一对的 batch，正式结果需注明预算变化。测试集保留到第五周。
 
-BN 两组内部都使用 32×32，残差两组内部都使用 96×96。第五周的 ViT 使用 32×32；跨架构表必须注明 image_size，结果反映各自完整配置的表现，不能只归因于架构。
+BN 两组内部都使用 32×32，残差两组内部都使用 96×96。第五周的 ViT 使用 32×32；跨架构表的 `image_size` 填实际模型输入边长，CNN、ViT 填 32，ResNet 填 96。
 
 下文的 batch=64、20 epochs 是首次学习的起始示例。复现已有实验时，读取[本周记录](../experiments/cnn_vs_resnet/week3/README.md)所链接的运行配置快照；正式命令使用当前 YAML 中的值。运行前核对 batch、epochs 和输出目录，保留需要的旧结果。同一对实验调整预算时，两组一起调整。
 
@@ -115,7 +115,7 @@ BN 两组内部都使用 32×32，残差两组内部都使用 96×96。第五周
 
 #### 第一步：先手算空间尺寸
 
-本步做一个小练习：先计算图片经过卷积和池化后的形状，再用 PyTorch 检查。暂时使用随机图片，不需要下载 CIFAR-10 或训练模型。可新建临时脚本 `tmp/conv_shapes.py` 保存下方验证代码；后续的数据检查入口仍按第二步创建。
+本步做一个小练习：先计算图片经过卷积和池化后的形状，再用 PyTorch 检查。暂时使用随机图片，不需要下载 CIFAR-10 或训练模型。用 `tmp/conv_shapes.py` 核对下面的尺寸。它只运行随机张量；真正的 CIFAR 批次由第四步的 `inspect_cifar10.py` 检查。
 
 1. 先读懂输入形状。
 
@@ -278,7 +278,7 @@ val_set = Subset(val_base, val_indices)
 
 随后按[第二周 DataLoader 示例](week2.md#mnist-loaders)分别构建三个 loader：训练 shuffle=True 并使用独立 Generator，验证 / 测试 shuffle=False，三者 num_workers 从参数读取、drop_last=False。函数最后返回三个 loader；不要把 test_set 放进训练 / 验证的随机划分。
 
-#### 第四步：在检查脚本调用函数，验证增强隔离
+#### 第四步：核对调用者的 transform，再运行 CIFAR 检查
 
 datasets.py 的两个加载函数都已完整返回三个 loader 后，再按下面顺序修改调用方和检查文件。
 
@@ -735,7 +735,7 @@ python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml --overfit-sample
 python scripts/train_cv.py --config configs/cv/cnn_cifar10.yaml
 ```
 
-今天先完成 CNN 检查，后两天再增加残差块和整网检查。前三条通过、预算确定后才执行正式训练；先保存 step=0 的 initial，再保存 history、曲线和 best/last。20 epochs 是示例预算，实际轮数读取配置中的 training.epochs，短运行测时后将两组预算一起固定。
+前三条检查 CNN 和训练入口。第四条用于首次训练，运行前确认结果和权重目录可用于新实验。复查只做前三项。重训用改过两个目录的配置副本。正式运行先保存 step=0 的 initial，然后保存 history、曲线和 best/last。示例预算为 20 轮，已有基线按实际配置的 100 轮复查。
 
 - [ ] CNN logits、loss、梯度正确，小样本能够拟合。
 - [ ] 能解释 BN 对 batch/channel 的统计与评估行为。
@@ -976,11 +976,11 @@ output_dir: outputs/resnet_on
 3. 在 no_grad 下按顺序遍历 model.net，每次将上一层输出送入下一层，打印模块索引、类型与实际 shape。
 4. 对每层立即断言实际 shape 与预期一致，错误信息同时列出模块索引、预期值和实际值，定位最先发生偏差的位置。
 
-前反向检查和阶段形状检查通过后，再进行下一步的短训练。
+前反向和阶段尺寸通过后，再测训练入口。
 
-#### 第五步：保存初始状态并启动基线
+#### 第五步：用新运行目录训练 ResNet 基线
 
-先执行下方的 smoke 和固定 64 样本过拟合检查，按 96×96 输入测量一轮实际耗时，再冻结残差 on/off 的 epoch、batch 等预算。CNN 与 ResNet 的分辨率不同，记录实际 image_size 和耗时，跨架构比较按完整配置解释。
+先执行下方的 smoke 和固定 64 样本过拟合检查。需要重新定预算时，用临时配置测一轮。将 `training.epochs` 设为 1，`experiment_dir` 和 `output_dir` 都指到新目录，从其 `run_summary.json` 读取 `train_seconds`。正式 on / off 共用确定后的轮数和 batch，使用各自的正式目录。复查已有实验用原运行配置，CNN 32×32、ResNet 96×96 写进汇总表。
 
 短检查结束后重新创建正式模型和优化器，按 Day 2 的规则先保存 step=0 的 `outputs/resnet_on/initial.pt`，再开始正式训练；短训练参数和 BN 统计只属于检查模型。Day 5 将复用这份教材结构的初始状态。
 
@@ -995,7 +995,7 @@ python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml --overfit-sam
 python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml
 ```
 
-前三条通过且预算冻结后，再执行最后一条。整网检查应打印各阶段尺寸，并在断言失败时指出具体的模块索引或参数名称。
+前三条通过且预算冻结后，首次训练才运行最后一条。复查只做前三项。重新训练要将最后一条的 `--config` 改成新目录对应的配置副本。整网检查应打印各阶段尺寸，并在断言失败时指出具体的模块索引或参数名称。
 
 - [ ] CIFAR RGB 图片经过正确的增强 / Resize 顺序，训练与评估输入均为 96×96。
 - [ ] 7×7 入口、最大池化、bias=True 和单卷积投影与教材结构对应，普通块明确关闭投影。
@@ -1146,7 +1146,7 @@ best 的指标来自同一个验证选择规则。最终一轮指标和 best epo
 
 BN 图只画同 CNN 两组的 train/val；残差图只画同深宽两组。横轴 epoch，纵轴 loss 或 accuracy，标图例、单位与训练预算。
 
-在 Python 草稿或交互环境用 csv.DictReader 读取四个 runs/<variant>/history.csv，把 epoch 转为 int、四列 loss / accuracy 转为 float。用 plt.subplots 创建 loss、accuracy 两个坐标轴：BN 图叠加 cnn_bn_on / cnn_bn_off 的曲线，残差图叠加 resnet_on / resnet_off 的曲线；横轴均为 epoch，图例同时标明 variant 与 train / val。先创建 figures 父目录，分别 savefig 到 `experiments/cnn_vs_resnet/week3/figures/bn_comparison.png` 和 `experiments/cnn_vs_resnet/week3/figures/residual_comparison.png`，保存后关闭各 figure。图与 results.csv 来自已有训练记录，不为绘图重新训练；在本周 README 链接这两张图和结果表。
+在 Python 草稿或交互环境，用 `csv.DictReader` 打开 `experiments/cnn_vs_resnet/week3/runs/` 下四组各自的 `history.csv`。把 epoch 转为 int、四列 loss / accuracy 转为 float。用 plt.subplots 创建 loss、accuracy 两个坐标轴：BN 图叠加 cnn_bn_on / cnn_bn_off 的曲线，残差图叠加 resnet_on / resnet_off 的曲线；横轴均为 epoch，图例同时标明 variant 与 train / val。先创建 figures 父目录，分别 savefig 到 `experiments/cnn_vs_resnet/week3/figures/bn_comparison.png` 和 `experiments/cnn_vs_resnet/week3/figures/residual_comparison.png`，保存后关闭各 figure。图与 results.csv 来自已有训练记录，不为绘图重新训练；在本周 README 链接这两张图和结果表。
 
 选少量验证误分类，注明真实类和预测类。对照结论依次写观察事实、可能解释、控制条件和局限。
 

@@ -14,7 +14,7 @@
 
 本页的数据调用已按当前代码统一：build_mnist_loaders 必须接收 train_transform、eval_transform，mean/std 交给调用者创建的 Normalize。第三周的[接口步骤](week3.md#unified-loader-interface)用于解释这次组织方式；复习时不再退回四参数版本。当前训练模式已提取到 run_smoke、run_overfit、run_training，记录函数在 utils/history.py；本页按学习日解释它们，保留已完成的模型、数据分支和 checkpoint 功能。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -121,7 +121,7 @@ nvidia-smi
 
 `nvidia-smi` 中的 CUDA Version 表示驱动支持能力，`torch.version.cuda` 表示当前 PyTorch 构建对应的 CUDA 版本，两者不要求完全相同。选择依据是驱动与所选构建的兼容关系，可查 [NVIDIA CUDA 兼容说明](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)。本周使用预编译 PyTorch 包，不编译 CUDA 扩展，先验证安装包能否工作，不以额外安装完整 Toolkit 作为前置任务。
 
-安装后检查依赖：
+检查 torch、torchvision 和前面准备的 PyYAML、pytest 能否一起导入。
 
 ```bash
 python -m pip check
@@ -489,7 +489,7 @@ from petvision.data.datasets import build_mnist_loaders
 
 2. 在项目根目录创建 pyproject.toml，告诉安装工具怎样找到这些代码。
 
-pyproject.toml 是文本配置文件，使用 TOML 格式：`[名称]` 表示一组配置，下面的 `键 = 值` 描述这组设置。setuptools 是负责查找包、准备安装内容的工具，pip 按这里指定的方式调用它。先使用以下完整最小配置：
+pyproject.toml 是文本配置文件，使用 TOML 格式：`[名称]` 表示一组配置，下面的 `键 = 值` 描述这组设置。setuptools 是负责查找包、准备安装内容的工具，pip 按这里指定的方式调用它。从空项目起步时使用下面的打包配置。当前仓库的 `pyproject.toml` 已经有这些字段，还包含 Ruff 排版和导入排序设置，直接使用现有文件。
 
 ```toml
 [build-system]
@@ -1553,7 +1553,7 @@ python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --overfit-samples 
 python -m pytest tests/test_cv_training.py -q
 ```
 
-`--help` 应列出本日实现的参数。smoke 最多处理两个训练和两个验证批次；过拟合检查反复使用固定 64 条样本。两者只打印检查结果，正式五轮训练在明天接通保存后执行。若出现 NaN，先查输入与 loss 是否有限，再检查学习率和梯度；若 loss 不降，确认清梯度、反向与参数更新都确实发生。
+`--help` 应列出本日实现的参数。smoke 最多处理两个训练和两个验证批次。现有 MNIST 配置的 batch 为 128，两条 smoke 指标的 `n_samples` 均为 256。过拟合检查反复使用固定的 64 条样本。两者只打印检查结果，正式五轮训练在明天接通保存后执行。若出现 NaN，先查输入与 loss 是否有限，再检查学习率和梯度；若 loss 不降，确认清梯度、反向与参数更新都确实发生。
 
 - [ ] smoke 跑通，过拟合检查证明模型能记住固定小样本。
 - [ ] 训练与验证模式、设备迁移和按样本加权统计正确。
@@ -1574,11 +1574,11 @@ python -m pytest tests/test_cv_training.py -q
 
 ### 操作步骤
 
-#### 第一步：定义 best 和 last
+#### 第一步：用四轮验证结果确定 best 和 last
 
-best 按验证 accuracy 选择，持平时可约定保留更早一次；last 是最近完成的一轮。规则写入 README，不预设 best 一定在最后。
+在纸上列出四轮验证 accuracy `0.80, 0.85, 0.82, 0.85`。逐轮比较最高值，只在严格提高时更新 best，每轮都更新 last。算出 best 为第 2 轮、last 为第 4 轮。第三步用这组数核对真实保存逻辑。
 
-今天会修改三个位置：新建 `src/petvision/utils/checkpoint.py`，核对已有 `scripts/train_cv.py` 的 run_training，新建 `scripts/evaluate.py`；测试继续添加到 `tests/test_cv_training.py`。本周 checkpoint 用于重建模型和评估，第七周再补优化器与随机状态以支持等价续训。
+先完成 `src/petvision/utils/checkpoint.py` 的读写，再在 `scripts/train_cv.py::run_training` 中保存权重，在 `scripts/evaluate.py` 中重建并加载。代码接通后，用 `tests/test_cv_training.py` 中的两个 checkpoint 测试核对。本周的权重用于独立评估，第七周再练习恢复优化器与随机状态。
 
 若 Day 4 已运行过未配套权重的训练，先将该次 config.yaml、history.csv 和 training_curves.png 归档到 `experiments/mnist_mlp/week2/archive/day4_without_checkpoint/`，mnist_split.json 留在本周主目录复用。接通 checkpoint 后，新运行生成与权重配套的日志。归档情况和实际路径写入本周 README；后续重跑也先保留需要的配置、指标、曲线和权重。
 
@@ -1607,7 +1607,7 @@ def load_checkpoint(path):
 
 在 train_cv.py 顶层导入 `from petvision.utils.checkpoint import save_checkpoint` 和 hashlib。run_training 内、for 循环前设置 `best_accuracy = float("-inf")`，并计算 `split_sha256 = hashlib.sha256(Path(cfg["data"]["split_path"]).read_bytes()).hexdigest()`。数据函数已经读取或建立该文件；hash 用来识别实际索引，避免同名文件内容变化后误用。
 
-每轮 evaluate 返回后，在 Day 4 留出的 checkpoint 注释处建立下方字典；此处位于 run_training 的 for 内，cfg、model 来自函数参数，epoch、val_metrics 来自本轮循环：
+在 `run_training` 的 epoch 循环内，`evaluate` 返回且本轮 `row` 已加入 `history` 后构造下方字典。`cfg`、`model` 来自函数参数，`epoch`、`val_metrics` 来自本轮循环。
 
 ```python
 checkpoint = {
@@ -1632,6 +1632,8 @@ if val_metrics["accuracy"] > best_accuracy:
     save_checkpoint(checkpoint, output_dir / "best.pt")
 ```
 
+现在打开 `scripts/evaluate.py`。先在文件顶层定义 `parse_args(argv=None)`，由 `main()` 调用。按下方五项补齐导入、配置核对、数据加载和入口保护。
+
 加载流程：读字典→按配置新建模型→load_state_dict→迁移设备→eval→关闭梯度推理。加载一个字典并不会自动生成模型对象。在 evaluate.py 顶层导入 MLP、torch 和 `from petvision.utils.checkpoint import load_checkpoint`，确定 device 后，重建的关键操作为：
 
 ```python
@@ -1648,10 +1650,10 @@ model = model.to(device).eval()
 
 创建 `scripts/evaluate.py`，定义 `parse_args(argv=None)`，在 argparse.ArgumentParser 中添加 `--config、--checkpoint、--split`；`--config`、`--checkpoint` 为必填路径，`--split` 限定 val/test。文件顶层从 petvision 包导入 MLP、数据函数和 `training.cv_trainer.evaluate`，在 main 中核对 YAML 中模型配置与 checkpoint 一致，再用保存的划分创建 loader，按 split 选择 val_loader 或 test_loader，最后调用已有 evaluate，打印 loss、accuracy、n_samples。文件末尾加入口保护；它不创建优化器，也不调用训练循环。
 
-按下面顺序补齐文件，再运行加载检查：
+按下面顺序核对现有文件的 MNIST 路径，再运行加载检查。
 
 1. 顶层补齐 argparse、hashlib、Path、yaml、torch，以及上述包导入。parse_args 中 `--config` / `--checkpoint` 使用 `type=Path, required=True`；`--split` 使用 `choices=("val", "test"), default="val"`。
-2. main 读取 YAML 并用 load_checkpoint 读权重；检查 `cfg["model"] == checkpoint["model_config"]`，当前 model.name 必须为 mlp。对照保存的 config，核对 data.name、validation_size、normalize 和 training.seed；读取实际 split 文件并比较 split_sha256。发现不匹配明确报错，不重新生成另一份划分。data.root 可按实际缓存位置调整，batch_size 和评估设备可改变。
+2. main 读取 YAML 并用 load_checkpoint 读权重；检查 `cfg["model"] == checkpoint["model_config"]`，本例 `model.name` 为 `mlp`，当前脚本还支持第三周的 `cnn` 和 `resnet18`。对照保存的 config，核对 data.name、validation_size、normalize 和 training.seed；读取实际 split 文件并比较 split_sha256。发现不匹配明确报错，不重新生成另一份划分。data.root 可按实际缓存位置调整，batch_size 和评估设备可改变。
 3. 按 Day 4 解释 training.device，当前 dtype 仅接受 float32。先用 data.normalize 创建 eval_transform，再调用 build_mnist_loaders，传 data_dir=data.root、split_path、batch_size、seed、validation_size、num_workers，并令 train_transform=eval_transform、eval_transform=eval_transform。与训练入口使用相同的确定性 MNIST 变换。
 4. 用上面的加载片段建立模型，然后按下方代码选择 loader 和打印结果。这里 `evaluate` 继续使用已有按样本加权的统计实现。
 5. 文件末尾写 `if __name__ == "__main__": main()`。先运行 `python scripts/evaluate.py --help` 核对参数，再在训练产生权重后进行独立验证。
@@ -1686,7 +1688,7 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 
 按下面顺序整理这次保存加载的结果，不需要为写总结再训练一次：
 
-1. 打开正式 history.csv，找出验证 accuracy 最大的那一行；若有并列，按前面的规则取最早一行，记下 epoch、val_loss 和 val_accuracy。
+1. 打开本次 `experiment_dir/history.csv`。如果还没有正式结果，先执行下面的训练命令。找出验证 accuracy 最大的那一行；若有并列，按前面的规则取最早一行，记下 epoch、val_loss 和 val_accuracy。
 2. 读取 best.pt 与 last.pt 中的 epoch。best 应与第一步一致，last 应等于已完成的最后一轮；两者相同是允许的。
 3. 对 best 执行本日独立验证命令，确认 n_samples=5000，再将 loss / accuracy 与第一步选中的同一行比较。不要把训练 accuracy 拿来对照验证 accuracy。
 4. 从临时保存加载检查中取出 logits 最大绝对差，注明使用的设备、dtype 和容差；这项检查回答的是“同一权重能否恢复”，与验证准确率是否高是两个问题。
@@ -1700,7 +1702,7 @@ python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml
 python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
 ```
 
-先通过保存加载的小规模检查，再从新模型正式训练。训练应写出 `config.yaml`、五行 epoch 指标、训练曲线和 `best.pt/last.pt`；独立评估应覆盖 `5000` 条验证样本，并与 best 所在 epoch 的验证结果对应。若文件不存在，先查保存分支和 `output_dir`。
+先跑小规模检查。首次执行时再用中间那条命令训练，最后加载 best 验证。复查已有实验只需运行测试和最后一条命令。要重训时，复制 YAML，改用新的 `experiment_dir` 和 `output_dir`，后续评估也传这份配置和新目录下的 best。训练应写出 `config.yaml`、五行 epoch 指标、训练曲线和 `best.pt/last.pt`；独立评估应覆盖 `5000` 条验证样本，并与 best 所在 epoch 的验证结果对应。若文件不存在，先查保存分支和 `output_dir`。
 
 - [ ] best 按验证准确率选择，last 保存最后一轮，能解释两者何时相同。
 - [ ] 独立进程重建模型加载 best，完整验证集 5000 条的 loss / accuracy 与对应日志一致。
@@ -1721,38 +1723,19 @@ python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outpu
 
 本日输出包括 `experiments/mnist_mlp/week2/test_metrics.json`；重写时说明 `[B,1,28,28]→[B,784]→[B,10]`。
 
-#### 第一步：冻结配置再评估测试集
+#### 第一步：固定用于最终测试的配置与 best
 
-把最终 YAML、best 路径、验证指标和版本一一对应。测试只做前向，使用与验证相同的确定性预处理。
+从 Day 5 的运行目录取 `config.yaml`，从该配置的 `output_dir` 找到 `best.pt`。在周 README 记下配置路径、权重路径、对应 epoch 与验证指标，第三步用这一组文件运行测试。
 
 test_metrics.json 至少包含 split、n_samples、loss、accuracy、checkpoint 和配置标识。整体 accuracy 为总正确数/10000，不能只取最后一批。
 
-今天补全 `evaluate.py` 的测试输出：当 `--split test` 时，将这些字段写入配置指定的 `experiment_dir/test_metrics.json`，少量误分类保存到 `figures/mistakes_test.png`。目录在保存前创建；`--split val` 继续用于独立验证，不覆盖 test 指标。
-
-修改 `scripts/evaluate.py`：顶层导入 json；在 main() 已有 `metrics = evaluate(model, loader, criterion, device)` 调用之后添加 `if args.split == "test":`，在该分支将当前这次完整遍历得到的 metrics 加入下方结果字典并保存，不再另算一次汇总指标：
-
-```python
-result = {
-    "split": args.split,
-    **metrics,
-    "checkpoint": str(args.checkpoint),
-    "checkpoint_epoch": checkpoint["epoch"],
-    "config": str(args.config),
-    "split_sha256": checkpoint["split_sha256"],
-}
-result_path = Path(cfg["experiment_dir"]) / "test_metrics.json"
-result_path.parent.mkdir(parents=True, exist_ok=True)
-with result_path.open("w", encoding="utf-8") as file:
-    json.dump(result, file, ensure_ascii=False, indent=2)
-```
-
-#### 第二步：查看失败样例
+#### 第二步：在 evaluate.py 实现错分采样并接入绘图
 
 保存少量错误图片的真实类、预测类和分数，观察字迹、类别相似或预处理问题。若低于参考目标，先检查训练验证与加载流程，配置调整回到训练/验证进行。
 
 已有 evaluate 只返回汇总指标，不返回图片。保持它的接口，在 evaluate.py 顶层新增 `collect_mistakes(model, loader, device, limit=8)`：切 eval，在 no_grad 下再次遍历同一个 test_loader；用 `predicted = logits.argmax(dim=1)` 和 `predicted != labels` 找错分位置，每条保存 CPU 图片、真实类、预测类和展示用 softmax 分数。收满 limit 后返回列表；没有错分则返回空列表。完整指标已由前面的 evaluate 统计过 10000 条，这次只采集展示样例，可提前结束，不能用展示批次重新覆盖 metrics。
 
-在 main 的 test 分支调用该函数，再用 `plt.subplots(2,4,figsize=(10,5))` 绘图；先关闭所有坐标轴，再把收集到的样例依次填入，少于 8 张时留空。mean/std 从 cfg["data"]["normalize"] 读取，用 `image.new_tensor(values).view(-1,1,1)` 分别转为与 CPU 图片同类型的通道 Tensor，再计算 `image*std+mean`；不要直接让图片乘 YAML 列表。MNIST 去掉单通道维后 imshow(cmap="gray", vmin=0, vmax=1)；标题写真实类、预测类与分数。保存到 experiment_dir/figures/mistakes_test.png 后关闭画布。若列表为空，在结果中记录错误样例数为 0，不生成误导图片；重跑时检查旧图是否属于本轮。
+在 `main` 中，打印完整指标后调用 `mistakes = collect_mistakes(model, loader, device, limit=8)`。为下一步留出 test JSON 的保存位置。val 和 test 都在其后的公共绘图段绘图，用 `plt.subplots(2, 4, figsize=(12, 6))` 建图；先关闭所有坐标轴，再把收集到的样例依次填入，少于 8 张时留空。mean/std 从 cfg["data"]["normalize"] 读取，用 `image.new_tensor(values).view(-1,1,1)` 分别转为与 CPU 图片同类型的通道 Tensor，再计算 `image*std+mean`；不要直接让图片乘 YAML 列表。MNIST 去掉单通道维后 imshow(cmap="gray", vmin=0, vmax=1)；标题写真实类、预测类与分数。保存到 `experiment_dir / "figures" / f"mistakes_{args.split}.png"` 后关闭画布。若列表为空，在结果中记录错误样例数为 0，不生成误导图片；重跑时检查旧图是否属于本轮。
 
 这一步涉及的几行写法可以逐项理解：
 
@@ -1769,20 +1752,44 @@ with result_path.open("w", encoding="utf-8") as file:
 
 collect_mistakes 返回列表，每项的键为 image、true_label、predicted_label、score；image 为 CPU Tensor。当前 test 结果还记录 checkpoint_epoch、split_sha256 和 mistake_examples_count。原实验目录中的 figures/mistakes.png 是历史展示图，当前脚本不会再以该名称输出。
 
-#### 第三步：有限参考写出两个循环
+#### 第三步：接上 test JSON 并运行独立测试
 
-在 `tmp/` 下新建一份草稿，暂不看现有 cv_trainer.py。允许导入已经写好的 MLP 和数据函数，训练与验证的核心顺序自己写：
+在 `scripts/evaluate.py::main` 中，完整指标先由 `evaluate` 计算并打印。先调用上一步的 `collect_mistakes` 取得错图列表，再进入保存分支。列表长度和本次完整指标一起写进下方 JSON。
+
+在文件顶层导入 `json`。`main` 中加入 `if args.split == "test":` 分支，分支内写结果 JSON。下方片段中的 `mistakes` 来自上一步的采样调用，`metrics` 来自前一次完整评估。
+
+```python
+result = {
+    "split": args.split,
+    **metrics,
+    "checkpoint": str(args.checkpoint),
+    "checkpoint_epoch": checkpoint["epoch"],
+    "config": str(args.config),
+    "split_sha256": checkpoint["split_sha256"],
+    "mistake_examples_count": len(mistakes),
+}
+result_path = Path(cfg["experiment_dir"]) / "test_metrics.json"
+result_path.parent.mkdir(parents=True, exist_ok=True)
+with result_path.open("w", encoding="utf-8") as file:
+    json.dump(result, file, ensure_ascii=False, indent=2)
+```
+
+运行文末测试命令，查验完整指标和错分图。
+
+#### 第四步：有限参考写出两个循环
+
+使用 `tmp/cv_trainer_rewrite.py` 做重写，先合上 `src/petvision/training/cv_trainer.py`。已有草稿时先运行核对，练习重写可以另开一个临时文件。现有草稿用两份 `TensorDataset`，各含 8 张随机 `[1,28,28]` 图片和 0 到 9 的整数标签。允许复用 MLP 和数据构造，训练与验证的顺序自己写。
 
 1. 创建一个临时 MLP、交叉熵和优化器，取一批训练图片与标签，迁移到同一设备；先打印形状和 dtype，确认图片为 `[B,1,28,28]`、标签为 `[B]` 的 long。
 2. 在更新前用 detach().clone() 保存参数副本。仅保留原参数的引用会随更新一起变化，不能用于前后比较。
 3. 写训练部分：切 train → 清梯度 → 前向 → 计算 loss → backward → step。先检查 loss 有限，再逐项比较参数与副本，确认至少一个参与参数发生变化。
-4. 取一批验证数据，重新保存当前参数副本，也记录当前已有的梯度。写验证部分：切 eval → 在 no_grad 中前向 → 计算 loss 和预测；这部分不调用清梯度、backward 或 step。
-5. 确认验证 logits 为 `[B,10]`、loss 有限，所有参数和已有梯度均未因验证改变。比较时不要误用训练更新前的副本。
+4. 取一批验证数据，在训练更新之后重新保存参数副本。切到 eval，在 no_grad 中前向并计算 loss。
+5. 确认验证 logits 为 `[8,10]`、loss 有限、logits 的 requires_grad 为 False。将参数与验证前的副本逐项比较，应完全一致。
 6. 打开 cv_trainer.py，对照自己遗漏的步骤，并用自己的话说明各操作的职责，以及 55k、5k、10k 各用于什么决定。改完草稿后重新执行，确认自己的版本也能通过检查。
 
-这里各处理一批即可，不要求跑完整 epoch，也不写正式配置、权重或实验指标。
+运行 `python tmp/cv_trainer_rewrite.py`。终端会打印两批 logits 和 loss，还会分别报告训练后参数变化、验证时参数保持不变的检查结果。
 
-#### 第四步：补齐复现说明
+#### 第五步：补齐复现说明
 
 在周 README 写真实安装命令、显存、划分、配置、best epoch、测试结果和一个调试案例。保留未理解的点，下一周优先补齐；不增加每日记录文件。
 
@@ -1807,6 +1814,6 @@ python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outpu
 - [ ] 配置冻结后有独立测试结果；能解释 logits、交叉熵与模式切换。
 - [ ] 环境、运行命令、结果与实际调试案例集中在本周 README，安装方式及记录范围已注明。
 
-第三周继续使用 `train_one_epoch`、`evaluate` 和 checkpoint 工具，并给数据函数增加显式 transform 参数。保留本周划分、配置和模型结果。
+第三周复用 `train_one_epoch`、`evaluate` 和 checkpoint 工具，使用同一套显式 transform 接口加载 CIFAR-10。MNIST 的划分、配置和权重留作复现。
 
 通过后进入[第三周](week3.md)。

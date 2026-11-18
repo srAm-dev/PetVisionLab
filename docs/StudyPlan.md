@@ -8,7 +8,7 @@
 
 本轮完成小模型的实现、训练和实验报告，并体验预训练推理。完整 Encoder-Decoder、宠物迁移对照、模型微调和 App 放入后续拓展。首次跟做可先看[学习与执行入口](README.md)。
 
-版本：v1.32；更新日期：2026-11-18。
+版本 v1.33，更新于 2026-11-19。
 
 ## 目录
 
@@ -137,6 +137,8 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 | 第 8 周 | [预训练模型与总结](week8.md) | [第八周 README](../experiments/vlm_qa/week8/README.md) |
 
 ### 里程碑
+
+第一至三周的脚本、配置和实验记录已在仓库中，第四周可运行单头 Attention 到两层 Encoder 的检查。带 Mask 的官方对照和张量流复盘按第四周指南继续。第五至八周从对应周的实现步骤开始，等脚本、配置和输入准备好再执行命令。
 
 - M1（第 2 周）：能解释梯度更新，并独立完成 MNIST 的数据、训练、验证、保存和测试流程。
 - M2（第 3 周）：能训练 CNN / ResNet，处理基本形状与优化问题，完成两类单变量对照。
@@ -679,7 +681,7 @@ PetVision-Lab/
 
 ## 9. 核心模块的职责与接口
 
-以下是逐周实现时的接口约定与草图，具体加载、预处理、错误处理和设备选择在对应任务中完成。
+分类和 Encoder 已有源码，可从下表核对输入和返回值。ViT、Mini-GPT、tokenizer 与推理入口按第五至八周指南实现。
 
 ### 9.1 主线模型与训练接口
 
@@ -837,7 +839,7 @@ BN / 残差开关与 Patch=4/8 使用独立配置快照，记录差异；配置�
 
 第三周 on 组在首次训练前保存 step=0 的 initial.pt，off 组按[初始化对齐步骤](week3.md#initial-state)读取共有层初始状态并新建优化器。该初始化入口从零进度开始新的实验；第七周的 `--resume` 则恢复完整训练状态并继续累计步数，执行前提见[续训顺序](week7.md#bpe-resume-order)。
 
-以下命令在对应周实现入口后运行：
+这些命令都从项目根目录运行。首次训练使用新目录。复查已有结果时，使用对应的已保存配置与 best；需要重训则复制配置，更换 `experiment_dir` 和 `output_dir`。第五至七周的命令等当天实现和配置完成后再运行。
 
 ```bash
 # 第 1 周
@@ -845,8 +847,9 @@ python scripts/linear_regression_numpy.py
 # 第 2 周
 python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml
 python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
-# 第 3–5 周
-python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml
+# 第 3 周，检查现有 ResNet 训练入口
+python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml --smoke
+# 第 5 周，接通 ViT 分支并创建配置后
 python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml
 # 第 6 周
 python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
@@ -1093,11 +1096,10 @@ OOM 排查顺序：减小 micro-batch → 缩短序列 / 调整图像尺寸 → 
 
 按 4 小时明确任务 + 1 小时机动 起步：
 
-1. 1h 环境与项目：按第一周指南创建并激活最小 Conda 环境 petvision（Python 3.12、NumPy、Matplotlib），保存实际版本与解释器路径；已有环境先检查，无需重建。初始化本地 Git 与最小 README / 忽略规则，按需关联 GitHub。
-2. 1.5h Python：写函数、列表 / 字典、循环与简单模块导入练习，主动观察并修复一个异常。
-3. 1h NumPy：创建数组，练习索引、广播、矩阵乘法，打印并解释 shape。
-4. 0.5h 模型准备：生成线性关系的合成数据，写出预测与均方误差，解释接下来要解决的梯度问题。
-5. 1h 机动：修复环境问题、补未懂的语法，重做尚未掌握的练习。
+1. 用 1 小时按[第一周 Day 1](week1.md#day-1)检查 Conda 环境。确认 Python 3.12、NumPy、Matplotlib 可用，记录解释器路径和版本。
+2. 用约 1.5 小时完成 `scripts/python_basics.py` 的列表、循环、字典和 MSE 练习。运行脚本，核对给定三条样本的 MSE 约为 1/6。
+3. 用约 1.5 小时在 `scripts/numpy_basics.py` 核对矩阵预测。先写下 X、w 和预测的形状，再确认脚本打印的三个预测值为 0.5、2.5、4.5。
+4. 留 1 小时处理环境和语法问题。数组索引与广播的细查从 Day 2 开始，合成数据训练安排在 Day 5。
 
 第一份完整模型安排为 NumPy 线性回归；MNIST MLP 与 PyTorch GPU 环境放在第 2 周。第一周末在实验目录 README 中汇总结果，并检查有限参考重写能力。
 

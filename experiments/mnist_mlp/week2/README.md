@@ -53,7 +53,7 @@ python -m pytest tests/test_cv_training.py -q
 
 以下命令均从项目根目录执行，先激活对应 Conda 环境。当前已有 Day1-4 的实现，以及 Day5 的 checkpoint 保存加载和独立 evaluate 入口；相关检查已通过。含 best/last 的正式五轮训练已完成，独立加载验证也已通过；Day6 的完整测试、误分类输出和单批次练习也已完成。若要重新训练，先归档需要保留的当前结果与权重。
 
-当前训练入口将对象创建放在 main，三种模式分别交给 run_smoke、run_overfit、run_training；记录函数位于 utils/history.py。evaluate.py 的 val 模式打印指标并保存 figures/mistakes_val.png，test 模式另写 test_metrics.json 和 figures/mistakes_test.png。已有 figures/mistakes.png 保留为历史展示图，不是当前脚本的输出文件名；下方日期明确的历史记录与数值保持原样。
+复查已有权重时，执行表中的独立验证命令即可。需要重训时，复制 YAML 并更换 `experiment_dir` 和 `output_dir`。当前 `evaluate.py` 会打印该 split 的完整指标。有错分时，图保存为 `figures/mistakes_val.png` 或 `figures/mistakes_test.png`。只有 test 会写出 `test_metrics.json`。下方 10 月 27 日记录中的 `figures/mistakes.png` 是当时的输出。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |

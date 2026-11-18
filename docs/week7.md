@@ -8,11 +8,11 @@
 
 ## 开始前
 
-字符 Bigram/GPT 已完成验证对照、因果性检查和保存加载。保留第六周原文划分和字符词表。
+开始前，按第六周验收完成字符 Bigram/GPT 和生成入口。保存第六周的 `split_manifest.json`、`char_tokenizer.json` 和两组 best。本周先在字符 tokenizer 模块加入 BPE，Day 3 仍用字符 GPT 验证采样，Day 5 才训练 BPE GPT。
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week7/README.md)。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -363,9 +363,9 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 
 今天只用一个 CPU 小模型观察 20 步保存、恢复到累计 40 步的过程，配置与输出放在独立演示目录。它不依赖 `mini_gpt_bpe.yaml` 或 `outputs/mini_gpt_bpe/last.pt`；正式 BPE 训练在 Day 5 开始。
 
-#### 第一步：在训练入口加入 resume 参数和完整 checkpoint 分支
+#### 第一步：给 train_gpt.py 增加 --resume 参数
 
-修改 `scripts/train_gpt.py::parse_args`，新增 `--resume`（type=Path，默认 None）。修改本文件 main()：在验证完成、更新 best 与日志累计值后，按下一步字段表构造完整 checkpoint，再调用 `src/petvision/utils/checkpoint.py` 已有的 save_checkpoint；在 main() 的对象构造阶段增加 resume 分支，先调用 load_checkpoint 核对配置，再创建并恢复模型、optimizer 和随机状态，最后进入统一循环。utils/checkpoint.py 的 save_checkpoint / load_checkpoint 继续只负责字典读写及 CPU、weights_only=True 加载，不把模型选择或训练循环放进去。
+打开 `scripts/train_gpt.py`，在 `parse_args` 加入 `--resume`（`type=Path`，默认 None），用 `python scripts/train_gpt.py --help` 核对参数。然后在第二步扩展写入的状态，在第三步接入读取与恢复。已有 `save_checkpoint(checkpoint, path)` 和 `load_checkpoint(path)` 负责磁盘读写。
 
 选择完成第 K 次 optimizer.step 后保存，记录 step=K。恢复后第一次更新应是 K+1，不能重复 K，也不能从 K+2 开始。
 
@@ -375,7 +375,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO
 恢复：新建对象 → 加载状态 → 更新 21..40
 ```
 
-#### 第二步：保存并恢复模型、优化器、日志与随机状态
+#### 第二步：在验证点把训练状态写入 checkpoint
 
 模型参数决定当前预测；optimizer 的动量/矩估计决定下一步如何更新；scheduler 决定学习率；随机状态决定下一批采样和 dropout。tokenizer 与 split 标识决定 ID 和数据含义。
 
@@ -427,7 +427,7 @@ NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载
 
 本轮 RNG 字典的构造与恢复都放在 train_gpt.py 的 main 中，顶层补 import random、import numpy as np；train_generator 是第六周 main 中创建并持续采样的那个对象。保存前从表中 API 取得状态写入 checkpoint；恢复分支先令 checkpoint=load_checkpoint(args.resume)，再逐字段恢复。utils/checkpoint.py 仍只做字典读写，不在其中创建模型、优化器或新的训练 Generator。
 
-#### 第三步：接通恢复流程，观察一次小模型续训
+#### 第三步：在 main 中恢复状态并核对第 21 步
 
 先把恢复分支按下列顺序接通，再做下面的小模型续训观察：
 
@@ -446,7 +446,7 @@ NumPy 全局状态的第二项是 uint32 数组，保存时 `.tolist()`，加载
 
 在 outputs/resume_demo 下创建独立的 config.yaml，从第六周 MiniGPT 配置复制。将 model.embed_dim=32、model.context_length=16、model.depth=2、model.heads=4、model.ffn_hidden_dim=128、model.dropout=0、data.batch_size=4、training.device=cpu、training.dtype=float32；其余语料和 tokenizer 设置沿用原配置。experiment_dir 和 output_dir 都指向 outputs/resume_demo，不覆盖正式结果；training.steps、training.eval_interval 先设为 20。
 
-先运行训练入口到 20 步，读取 last 的 step 和 optimizer 更新计数；再只把累计目标 steps 改为 40，用同一个 last 恢复，确认从第 21 步继续、最终到 40，观察 loss 是否继续变化。保留两段日志，在代码中指出 optimizer 状态和 Generator 状态在哪里恢复，解释只加载模型权重会漏掉什么。
+先运行训练入口到 20 步，读取 last 的 step 和 optimizer 更新计数；再只把累计目标 steps 改为 40，用同一个 last 恢复，在恢复后第一次调用 optimizer.step 的位置打印 step，应为 21。到 40 步后读取 last 的 step，应为 40；在 `history.csv` 核对只有 20、40 两条验证行。保留两段日志，在代码中指出 optimizer 状态和 Generator 状态在哪里恢复，解释只加载模型权重会漏掉什么。
 
 不要求搭建连续训练对照、逐参数与 optimizer 内部张量比较、随机流探针或停止边界回归测试。若以后需要研究精确复现，再把这些作为独立拓展。
 
@@ -465,7 +465,7 @@ python scripts/train_gpt.py --config outputs/resume_demo/config.yaml --resume ou
 将两段命令、step 和 loss 变化写入本周 README；这项练习用于理解训练状态，不创建 test_resume.py。今天不运行尚未创建的正式 BPE 配置。
 
 - [ ] 模型、优化器、进度、随机状态和 tokenizer 均得到恢复。
-- [ ] 小模型从 20 步恢复到累计 40 步，日志从第 21 步继续。
+- [ ] 恢复后的第一次更新是第 21 步，最终 last 的 step 为 40，验证 CSV 中只有第 20、40 步两行。
 - [ ] 能解释为什么只加载模型参数不足以等价续训。
 
 <a id="day-5"></a>

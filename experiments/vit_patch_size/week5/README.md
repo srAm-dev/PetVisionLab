@@ -3,7 +3,7 @@
 学习指南：[第五周逐日任务](../../../docs/week5.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本周尚未记录实测结果。按第五周指南完成两种 Patch 的训练后，记录验证对照，再冻结六个视觉变体并汇总测试结果。
+先在第五周 Day 1 创建 `vit.py` 和教学测试。Day 2 接入现有训练、评估入口后再运行 ViT 的短检查，Day 4 接入新的指标与绘图，Day 5 才评估冻结的六个变体。
 
 <a id="environment"></a>
 
@@ -22,7 +22,7 @@ python -m pip check
 
 ## 实现后的运行命令
 
-以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
+从项目根目录运行。先按[第 5 周指南](../../../docs/week5.md#day-1)准备当天的入口、配置和输入，再执行该行命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
@@ -44,7 +44,7 @@ python -m pip check
 
 P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS 分类 token，所以 P=4/8 的序列长度为 65/17。C 是每个 token 的特征长度，不是 RGB 通道数；完整形状与参数解释见[本周符号表](../../../docs/week5.md#vit-shapes)，F1 统计见[Day4](../../../docs/week5.md#day-4)。
 
-小 ViT：C=128、depth=2、heads=4、FFN=512、dropout=0.1、AdamW lr=3e-4、weight_decay=0.01、20 epochs、batch=64、seed=42。两组 token 长度分别为 65/17。固定复用第三周 CIFAR 索引；各组 experiment_dir 使用 `experiments/vit_patch_size/week5/runs/patch4` 或 `patch8`，checkpoint 位于 `outputs/vit_patch4` / `outputs/vit_patch8`。若短运行测时后统一调整预算，保留实际配置。best 按验证 accuracy 选择，持平保留较早一次，last 为最后一轮。两组记录独立初始化还是复制公共层；复制时显式排除形状不同的 Patch/位置参数，不能直接套用第三周对所有共有键形状一致的加载规则。随机增强与 dropout 的实现和单种子局限见逐日指南。
+小 ViT：C=128、depth=2、heads=4、FFN=512、dropout=0.1、AdamW lr=3e-4、weight_decay=0.01、20 epochs、batch=64、seed=42。两组 token 长度分别为 65/17。固定复用第三周 CIFAR 索引；各组 experiment_dir 使用 `experiments/vit_patch_size/week5/runs/patch4` 或 `patch8`，checkpoint 位于 `outputs/vit_patch4` / `outputs/vit_patch8`。若短运行测时后统一调整预算，保留实际配置。best 按验证 accuracy 选择，持平保留较早一次，last 为最后一轮。首轮两组都用 seed=42 独立初始化，并记录这种设置。若另做公共层对齐实验，按指南排除形状不同的 Patch 与位置参数。随机增强与 dropout 的实现和单种子局限见逐日指南。
 
 模型组合见[Day 2](../../../docs/week5.md#encoder-reuse)：在 `src/petvision/models/cv/vit.py` 定义 ViTMLP 和 ViTBlock，后者调用第四周的 MultiHeadSelfAttention 与 LayerNorm，使用 pre-LN＋GELU。ViT.forward 按 Patch→CLS/位置相加→embedding dropout→独立 ViTBlock 堆叠→取第 0 个 token→head(LayerNorm＋Linear) 计算；位置只加一次，Attention 为双向。
 
@@ -61,12 +61,8 @@ P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS
 | `runs/patch4 / runs/patch8` | 各组 config、history、run_summary.json、val/test_metrics.json 和图表 |
 | `outputs/vit_patch4 / outputs/vit_patch8` | 项目根下：best/last checkpoint |
 
-运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
-
 ## 周总结
 
 - Patch 对照：待填写 P4/P8 的验证结果、token 数、参数量与实测耗时。
 - 视觉测试：待链接六个冻结变体的测试表，说明输入尺寸和预算差异。
 - 错误与理解：待填写一个误分类分析、ViT 重写检查和后续要巩固的部分。
-
-周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

@@ -3,7 +3,7 @@
 学习指南：[第六周逐日任务](../../../docs/week6.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本周尚未记录实测结果。按第六周指南完成同字符词表的 Bigram 和 Mini-GPT 后，在这里记录验证 loss、训练条件和生成样例。
+从 Day 1 创建文本切分和字符 tokenizer 开始。Day 2 验证单步更新，Day 4 接通正式训练与 checkpoint，Day 5 加入生成入口。各项数值在对应步骤运行后填写。
 
 <a id="environment"></a>
 
@@ -22,7 +22,7 @@ python -m pip check
 
 ## 实现后的运行命令
 
-以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
+从项目根目录运行。先按[第 6 周指南](../../../docs/week6.md#day-1)准备当天的入口、配置和输入，再执行该行命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
@@ -58,12 +58,8 @@ V 是含 UNK 的词表大小，C 是 token 特征长度，context 是每次允�
 | `samples.jsonl` | 真实生成文本、prompt、seed 与模型信息 |
 | `outputs/bigram_char / outputs/mini_gpt` | 项目根下：best/last 与配套模型信息 |
 
-运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
-
 ## 周总结
 
 - 同词表比较：待填写 Bigram/GPT 的验证 loss、预算与曲线来源。
 - 生成与加载：待链接固定 prompt/seed 的样例和加载一致性结果。
 - 理解与问题：待填写错位目标、causal Mask 的解释和遇到的错误。
-
-周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

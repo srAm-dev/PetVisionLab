@@ -8,11 +8,13 @@
 
 ## 开始前
 
+先完成 Day 1 的模型文件和教学检查，再创建 ViT 配置。当前 `train_cv.py` 和 `evaluate.py` 支持 MLP、CNN、ResNet18；Day 2 接入 ViT，Day 4 再接入 Macro-F1、混淆矩阵和测时。
+
 Attention、Mask、LayerNorm 检查通过；第三周四组配置、best 和同一份 CIFAR 划分可用。
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vit_patch_size/week5/README.md)。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -78,7 +80,7 @@ ViT（Vision Transformer）先把图片切成小块，再把每个小块转换�
 | 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
 | --- | --- | --- |
 | [Day 1](#day-1) | 在 `src/petvision/models/cv/vit.py` 完成 Patch 与 CLS/位置构造，再写 `tests/test_vit.py` | 32×32 图片得到 64/16 个 Patch，含 CLS 长度 65/17 |
-| [Day 2](#day-2) | 完成 ViTBlock/ViT，创建 P4 配置，扩展训练与评估入口 | CLS、位置参数有梯度；保存加载与 64 样本拟合通过 |
+| [Day 2](#day-2) | 完成 ViTBlock/ViT，创建 P4 配置，扩展训练与评估入口 | CLS、位置参数有梯度；两批 smoke 和 64 样本拟合通过 |
 | [Day 3](#day-3) | 创建 P8 配置，分别训练两种 Patch | 独立保存配置和 best/last；曲线、参数量与资源记录齐全 |
 | [Day 4](#day-4) | 创建 `evaluation/classification.py`，扩展 `scripts/evaluate.py` | Macro-F1 小例子正确；六个配置和 best 按验证结果冻结 |
 | [Day 5](#day-5) | 逐个评估冻结 best，保存 `visual_test_results.csv` | 每组完整测试 10000 条；指标、混淆矩阵与样例对应 |
@@ -145,7 +147,7 @@ ViT.__init__ 的完整签名为 `__init__(self, num_classes, image_size, patch_s
 
 今天的 ViT.forward 可以先明确抛出 NotImplementedError；下面的交互观察只调用已完成的 patch_embed 和两个参数，完整 forward 待 Day 2 所有成员创建后再写。
 
-#### 第三步：在 test_vit.py 检查 Patch 投影与 token 参数
+#### 第三步：在 test_vit.py 核对 Patch 顺序与投影
 
 创建 `tests/test_vit.py`，导入 torch 和 PatchEmbedding。本日只写 test_patch_order 和 test_patch_projection_reference：前者用下面的编号图理解 Patch 顺序，后者用一张三通道图片核对 Conv 与展开后 Linear 的等价关系。完整网络的形状留到 Day 2 一次观察。
 
@@ -274,9 +276,9 @@ return self.head(tokens[:, 0])
 
 网络只返回 `[B,10]` logits，loss、优化器和数据 loader 继续由训练入口负责。ViT 使用可学习位置参数，不经过第四周文本 Encoder 的 sqrt(C) 缩放或正弦位置入口。项目的 RGB 32×32、Patch=4/8 和 C=128 是小预算配置，教材的大图 / 灰度输入与模型宽度按项目配置替换；核心计算顺序按教材对应。
 
-#### 第二步：逐层检查尺寸
+#### 第二步：用一批图片核对两种 Patch 的张量形状
 
-P=4 时序列长 65，P=8 时长 17，ViTBlock 堆叠的入口和出口均保持 `[B,T,128]`。先取 `x[:,0]` 得到 `[B,128]`，再由 head 中的 LayerNorm 与 Linear 输出 `[B,10]`。
+在交互环境创建一批 `torch.randn(2, 3, 32, 32)`，分别建立 Patch 为 4、8 的 ViT，复用同一批图片。按下面的张量顺序在 `ViT.forward` 临时打印形状，或逐层调用并打印。P=4 时序列长 65，P=8 时长 17，ViTBlock 堆叠的入口和出口均保持 `[2,T,128]`。先取 `x[:,0]` 得到 `[B,128]`，再由 head 中的 LayerNorm 与 Linear 输出 `[B,10]`。
 
 先在交互环境用 P4、B=2 模型分段调用子模块，按下面顺序打印一次张量流。理解后将关键形状断言合并到第三步的 test_vit_forward_backward，不再单建阶段形状测试：
 
@@ -395,9 +397,9 @@ P8 attention 每头矩阵：17 × 17
 
 #### 第二步：创建 P8 配置，固定预算后分别训练
 
-首轮可固定各自 seed 独立初始化，并记录这一方式；相同 seed 不保证公共层的初值相同，因为 Patch 层消耗的随机数数量不同。若选择对齐公共层，只从 step=0 状态复制 ViTBlock 堆叠、整个 head 及同形状的 CLS，Patch 投影和位置嵌入独立初始化。数据划分、增强策略、采样种子和训练预算保持一致。
+首轮使用两组独立初始化，配置均写 seed=42。在周记录写下初始化方式。Patch 层消耗的随机数数量不同，共有层的初值可能不同。若选择对齐公共层，只从 step=0 状态复制 ViTBlock 堆叠、整个 head 及同形状的 CLS，Patch 投影和位置嵌入独立初始化。数据划分、增强策略、采样种子和训练预算保持一致。
 
-复制完整 P4 配置到 `configs/cv/vit_patch8_cifar10.yaml`，将 `model.patch_size` 改为 8，experiment_dir 改为 `experiments/vit_patch_size/week5/runs/patch8`，output_dir 改为 `outputs/vit_patch8`。若对齐公共层，在正式第一次前向之前保存 P4 的 initial.pt，并为 P8 明确实现允许复制的键名范围；逐项检查这些键的 shape 和复制后数值。第三周加载规则要求所有共有键形状一致，而本周 Patch 与位置参数同名但形状不同，不能直接套用。显式排除这两类参数并记录差异，其他意外不匹配仍报错；不能使用训练后的 best。
+复制完整 P4 配置到 `configs/cv/vit_patch8_cifar10.yaml`，将 `model.patch_size` 改为 8，experiment_dir 改为 `experiments/vit_patch_size/week5/runs/patch8`，output_dir 改为 `outputs/vit_patch8`。如把共有层对齐作为额外练习，先保存 P4 的 `initial.pt`，再实现 P8 的指定键复制，逐项核对形状和复制后的值。第三周加载规则要求所有共有键形状一致，而本周 Patch 与位置参数同名但形状不同，不能直接套用。显式排除这两类参数并记录差异，其他意外不匹配仍报错；不能使用训练后的 best。
 
 每组从新优化器开始，在独立 experiment_dir 保存 history 和配置，在独立 output_dir 保存 checkpoint。沿用第二周规则，best 按验证 accuracy 选择，持平保留较早一次，last 保存最后一轮。
 
@@ -484,7 +486,13 @@ metrics_from_confusion 用整数矩阵累计、用浮点除法计算 F1；总样
 1. metrics_from_confusion(matrix) 返回 `{"accuracy": accuracy, "macro_f1": macro_f1}`，两个值均为 Python float；accuracy 是对角线和除以总数，macro_f1 按全部行对应的类别求平均。
 2. evaluate_classification 开始调用 model.eval()，初始化 total_loss=0.0、correct=0、n_samples=0 和 CPU matrix。每批取 images、labels，迁移到 device，令 logits=model(images)、loss=criterion(logits,labels)、predicted=logits.argmax(dim=-1)，再按上文累计。criterion 继续使用 reduction="mean" 的交叉熵。
 3. 函数返回的字典固定包含 loss、accuracy、macro_f1、n_samples、confusion_matrix、params、image_size；confusion_matrix 的值是 matrix.tolist()，其余字段按上文计算。不要把每批的局部 matrix 当成全数据结果。
-4. main 中用 result 接收该字典。后续绘图需要 Tensor 时，用 matrix=torch.tensor(result["confusion_matrix"], dtype=torch.long) 还原；再加入测时和配置字段，最后统一写 JSON。
+4. main 中用 result 接收该字典。绘图前用 `matrix = torch.tensor(result["confusion_matrix"], dtype=torch.long)` 还原。现有的 split、checkpoint、checkpoint_epoch、config、split_sha256 和 mistake_examples_count 继续写入。下一步加入测时后统一写 JSON。
+
+在 `main()` 接入图表保存，验证和测试共用这段绘图代码。
+
+绘图也使用评估循环累计的同一张 matrix，classes 按基础 CIFAR10 dataset.classes 的原始顺序取得，不能临时按预测排序。在 evaluate.py 中，先创建 `fig, ax = plt.subplots()`，再用 `ax.imshow(matrix.numpy(), cmap="Blues")` 显示计数，添加 colorbar，横轴标预测类别、纵轴标真实类别。用 `ax.set_xticks(range(10), labels=classes, rotation=45, ha="right")` 和 `ax.set_yticks(range(10), labels=classes)` 标出实际类别，保存到当前 experiment_dir 的 `figures/confusion_test.png`，随后关闭图；验证图则用 confusion_val.png。imshow 的用法可查 [Matplotlib 官方接口](https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.imshow.html)。
+
+矩阵按真实类为行、预测类为列绘图，坐标轴写实际 classes；对角线之和等于正确数，矩阵总和等于本次 `n_samples`。CIFAR-10 验证为 5000，测试为 10000。修改 `scripts/evaluate.py::main()` 中 collect_mistakes 调用后的绘图分支：对 CIFAR 图片，按配置的三通道 mean/std 执行 `image*std+mean`，再用 permute(1,2,0) 转 HWC 显示；输出文件名使用 `f"mistakes_{args.split}.png"`，保存到当前 experiment_dir/figures，因此 test / val 分别生成 mistakes_test.png / mistakes_val.png。保留 MNIST 的灰度绘图分支。matrix 若已转为结果中的列表，画图前用 torch.tensor 恢复；获取 classes 时，Subset 的基础数据集是 loader.dataset.dataset，官方测试集则直接是 loader.dataset。
 
 <a id="inference-timing"></a>
 
@@ -517,7 +525,7 @@ print("batch mean ms/img:", ms_per_image)
 
 这是模型前向的批量平均值，验证指标仍由完整验证集单独计算。每条测时记录写 warmup=5、repeats=20、实际 batch、输入形状、dtype、device 和是否包含数据搬运；本片段不包含搬运。如记录峰值，CUDA allocated 包含已加载模型等当前分配，不能写成整张显卡的总使用量。
 
-将计时片段封装为 evaluate.py 顶层的 `benchmark_forward(model, images)`，返回包含 ms_per_image、warmup、repeats、batch_size、input_shape、dtype、device、include_transfer=False 的字典，input_shape 从 images.shape 取得。main 在完整评估后取所选 loader 的一批图片、迁移到设备，调用该函数，将返回值放入结果的 inference 字段，再写 metrics JSON。加载阶段的秒数另记 load_seconds，两个数字不能混用；六个模型都读取相同 batch 设置，并记录实际批大小。图片来自各自 loader，保留其训练时使用的分辨率。
+将计时片段封装为 evaluate.py 顶层的 `benchmark_forward(model, images)`，返回包含 ms_per_image、warmup、repeats、batch_size、input_shape、dtype、device、include_transfer=False 的字典，input_shape 从 images.shape 取得。main 在完整评估后取所选 loader 的一批图片、迁移到设备，调用该函数，将返回值放入结果的 inference 字段，再写 metrics JSON。加载阶段的秒数另记 load_seconds，两个数字不能混用；测时统一从所选 loader 的首批取前 16 张，使用 `images = images[:16].to(device)`，记录实际 batch。完整指标仍沿用各模型配置的 batch 遍历；图片保持各自的输入分辨率。
 
 main 的执行顺序固定为：读配置和确定 device → 记录加载计时起点 → load_checkpoint、重建模型、load_state_dict、model.to(device) → 同步 GPU 并得到 load_seconds → 建立所选 loader → 完整评估 → 从 loader 取一批 images 并迁移 → benchmark_forward → 写结果。result["inference"] 保存前向测时字典，result["load_seconds"] 保存加载秒数；数据下载、loader 遍历与两段计时都分开。
 
@@ -577,9 +585,7 @@ CNN 70%+ 是参考目标。若测试暴露实现错误，修复后注明原结�
 
 每个主要模型查看少量误分类，关注真实类、预测类和相似类别。把样例和混淆矩阵联系起来，但不以挑选的几张图代替全部统计。
 
-绘图也使用评估循环累计的同一张 matrix，classes 按基础 CIFAR10 dataset.classes 的原始顺序取得，不能临时按预测排序。在 evaluate.py 中，先创建 `fig, ax = plt.subplots()`，再用 `ax.imshow(matrix.numpy(), cmap="Blues")` 显示计数，添加 colorbar，横轴标预测类别、纵轴标真实类别。用 `ax.set_xticks(range(10), labels=classes, rotation=45, ha="right")` 和 `ax.set_yticks(range(10), labels=classes)` 标出实际类别，保存到当前 experiment_dir 的 `figures/confusion_test.png`，随后关闭图；验证图则用 confusion_val.png。imshow 的用法可查 [Matplotlib 官方接口](https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.imshow.html)。
-
-矩阵按真实类为行、预测类为列绘图，坐标轴写实际 classes；对角线之和应等于正确数，全矩阵和应为 10000。修改 `scripts/evaluate.py::main()` 中 collect_mistakes 调用后的绘图分支：每条 image 按配置的三通道 mean/std 执行 `image*std+mean`，再用 permute(1,2,0) 转 HWC 显示；输出文件名使用 `f"mistakes_{args.split}.png"`，保存到当前 experiment_dir/figures，因此 test / val 分别生成 mistakes_test.png / mistakes_val.png。总表每行链接该变体 experiment_dir 下的 test_metrics 和图表，避免不同 split 的图互相覆盖。matrix 若已转为结果中的列表，画图前用 torch.tensor 恢复；获取 classes 时，Subset 的基础数据集是 loader.dataset.dataset，官方测试集则直接是 loader.dataset。
+打开各运行目录的 `figures/confusion_test.png`、`figures/mistakes_test.png`。核对混淆矩阵总数与 `n_samples` 相同、对角线和除以总数等于 accuracy。挑一张错图，指出它所在的真实类行与预测类列，并在周 README 链接该组图和 `test_metrics.json`。没有错分的变体记为 0。
 
 BN、残差、Patch 各自比较控制条件内的差异；跨架构表同时报告输入分辨率、Resize、优化设置和计算预算。一次小数据实验不能证明某类模型在所有任务上更好。
 

@@ -3,7 +3,7 @@
 学习指南：[第四周逐日任务](../../../docs/week4.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-Day 1 的单头演示、Day 2 的多头 Attention 与官方参考对照、Day 3 的 Mask 接入和扰动测试，以及 Day 4 的 LayerNorm 检查已通过 CPU 检查，结果见下方记录。后续继续完成 Mask 官方参考对照并实现 Encoder；独立解释与重写仍需本人自查。
+单头演示、多头 Attention、Mask 行为、LayerNorm 和两层 Encoder 都可运行。下方记录保留各天的 CPU 检查结果。接下来补 Day 3 的带 Mask 官方对照，以及 Day 6 的张量流图和重写练习。
 
 <a id="environment"></a>
 
@@ -18,14 +18,14 @@ python -m pip check
 
 <a id="commands"></a>
 
-## 实现后的运行命令
+## 运行练习
 
-以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
+在项目根目录激活 `petvision`，按当天的入口运行。要看测试打印的张量形状和误差，在命令末尾加 `-s`。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/attention_basics.py` | 单头小矩阵演示 |
-| Day 2-3 | `python -m pytest tests/test_attention.py -q` | 多头、Mask、参考输出/梯度 |
+| Day 2-3 | `python -m pytest tests/test_attention.py -q` | 多头、Mask 行为、无 Mask 的参考输出与梯度 |
 | Day 4 | `python -m pytest tests/test_layernorm.py tests/test_encoder.py -q` | LayerNorm 对照与 Block 检查 |
 | Day 5 | `python -m pytest tests/test_encoder.py -q` | 位置编码、Block 与 Encoder |
 | Day 6 | `python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q` | 本周统一检查 |
@@ -87,7 +87,7 @@ Q/K/V 的 weight 和存在的 bias 按顺序拼接，复制到参考层的 in_pr
 
 结果对应本轮固定种子和上述 CPU 设置；测试运行时会逐项打印形状、最大误差和容差。仅重跑参考对照可执行 `python -m pytest tests/test_attention.py::test_attention_reference -q -s`。本次尚未接入 Mask，也未验证 GPU 数值对照。
 
-## Day 3 第一步：Mask 接入与手算核对（2026-11-10）
+## Day 3 第二、三步：Mask 接入与手算核对（2026-11-10）
 
 `MultiHeadSelfAttention.forward` 已在 scores 缩放之后、softmax 之前接入布尔 Mask，True 表示屏蔽：
 

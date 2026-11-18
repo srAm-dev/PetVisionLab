@@ -12,7 +12,7 @@
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/basics/week1/README.md)。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -239,7 +239,7 @@ python scripts/numpy_basics.py
 1. 取 X 的第一行、第一列、前两行；比较 `X[:, 0]` 与 `X[:, 0:1]` 的维度。
 2. 比较 `X.sum(axis=0)` 与 `X.sum(axis=1)`，解释沿哪条轴求和。
 3. 比较 `X @ w` 与 `X * w.T`：前者做矩阵乘法，后者做逐元素乘法与广播。
-4. 新建 `w_flat = w.reshape(-1)`，将 `(2,1)` 变为 `(2,)`；分别打印 `X @ w` 与 `X @ w_flat` 的数值和 shape。原 w 保持列向量，供下面的类与矩阵公式对照使用。
+4. 用现有的 `w1 = w.flatten()` 将 `(2,1)` 变为 `(2,)`；分别打印 `X @ w` 与 `X @ w1` 的数值和 shape。原 w 保持列向量，供下面的类与矩阵公式对照使用。
 5. 把 Day 1 的 MSE 改写成 NumPy 版本，与普通 Python 版本对照。
 
 这里 axis 是轴的编号，从 0 开始。二维 X 的 axis=0 对应样本所在的行方向，`sum(axis=0)` 把各行相加，留下每列的和；axis=1 对应列方向，`sum(axis=1)` 把每行内部各列相加，留下每行的和。整数索引 `X[:,0]` 去掉列这一维，切片 `X[:,0:1]` 保留它。
@@ -267,7 +267,7 @@ python scripts/numpy_basics.py
 
 完成 linear_model.py 后，再修改调用它的 numpy_basics.py：
 
-在 `scripts/numpy_basics.py` 顶层写 `from linear_model import LinearModel`，在演示部分用已有的 X、w 和 b=0.5 创建 `model = LinearModel(w, b)`；分别计算 model.predict(X) 与 `X @ w + b`，核对两者 shape 都为 `(3,1)`，最大绝对差小于 `1e-10`。两个脚本放在同一个 `scripts/` 目录中。
+在 `scripts/numpy_basics.py` 的入口保护内导入 `LinearModel`，末尾用已有的 X、w 和 b=0.5 创建 `model = LinearModel(w, b)`。运行该文件，核对打印的类预测与最初的列向量预测均为 `[[0.5],[2.5],[4.5]]`。要做逐元素检查，可在草稿里用 `np.testing.assert_allclose(model.predict(X), X @ w + b, rtol=0, atol=1e-10)`。
 
 ### 运行与自查
 
@@ -477,7 +477,7 @@ def gradients(X, y, w, b):
 
 使用 Day 1 的 X、标签 `[[1.0], [2.0], [3.0]]`、零初始化 w 与 b，学习率取 0.01。计算更新前的 loss，求出 dw / db，执行一次更新，再重新计算预测和 loss。
 
-三个函数在 gradient_basics.py 顶层定义，示例数据与更新放在文件末尾的入口保护内。gradients 先令 y_pred=predict(X,w,b)、E=y_pred-y、N=X.shape[0]，再按公式返回 dw、db；它只计算梯度，不修改 w、b。当前文件在入口保护中还演示了后续 100 次更新，第一步的手算只比较最前面那次更新。
+三个函数在 gradient_basics.py 顶层定义，示例数据与更新放在文件末尾的入口保护内。gradients 先令 y_pred=predict(X,w,b)、E=y_pred-y、N=X.shape[0]，再按公式返回 dw、db；它只计算梯度，不修改 w、b。脚本随后还会打印 100 次更新。手算值对应最前面的“更新后的损失”。
 
 本例初始 MSE 为 `14/3`，`dw=[[-44/3],[-56/3]]`、`db=-4`；更新后 w 约为 `[[0.1466666667],[0.1866666667]]`、b 为 `0.04`，重新计算的 MSE 约为 `0.6721185185`。按「更新前 loss → 梯度 → 新参数 → 更新后 loss」打印；若新参数正确而 loss 未变，检查是否仍在使用更新前的预测。
 
@@ -505,12 +505,7 @@ python scripts/gradient_basics.py
 | [Matplotlib：折线图（中文译文）](https://matplotlib.net.cn/stable/gallery/lines_bars_and_markers/simple_plot.html) | subplots、plot、坐标轴标签与网格 |
 | [pathlib（官方中文）](https://docs.python.org/zh-cn/3.12/library/pathlib.html) | Path、路径拼接与 mkdir |
 
-### 第一步：创建文件与目录
-
-- 创建 `scripts/linear_regression_numpy.py`。
-- 创建 `experiments/basics/week1/figures/`，用于保存小型实验图表。
-
-### 第二步：固定数据与训练条件
+### 第一步：在 linear_regression_numpy.py 实现 generate_data
 
 本题使用一个可以核查真实参数的合成任务：
 
@@ -527,7 +522,7 @@ X：标准正态分布，shape=(200,2)
 损失：MSE，计算使用浮点数
 ```
 
-可以用下面的数据生成代码起步，预测、梯度、更新循环由你完成：
+在 `scripts/linear_regression_numpy.py` 顶层定义 `generate_data(seed=42, n_samples=200)`。下方的固定值用于看懂默认调用。写进函数时，用 `seed` 初始化 Generator，用 `n_samples` 替换两处样本数，最后返回 `X, y, true_w, true_b`。
 
 ```python
 import numpy as np
@@ -544,16 +539,16 @@ y = X @ true_w + true_b + noise
 
 本题只有一层线性模型，使用零初始化便于手算。第二周起，多层网络的同层隐藏神经元若全部使用相同的零权重，会难以打破对称性；届时保留 `nn.Linear` 的随机初始化，不把本题的全零权重设置照搬过去。
 
-### 第三步：组织训练脚本
+### 第二步：实现 train 并在 main 中调用
 
 在训练脚本中整理这些函数：
 
 | 函数 | 职责 |
 | --- | --- |
 | `generate_data(seed=42, n_samples=200)` | 返回 X、y、真实 w、真实 b |
-| `predict(X, w, b)` | 返回预测 |
-| `mse(y_true, y_pred)` | 返回标量损失 |
-| `gradients(X, y, w, b)` | 返回 dw、db |
+| `predict(X, w, b)` | 从 `gradient_basics.py` 导入，返回预测 |
+| `mse(y_true, y_pred)` | 从同一模块导入，返回标量损失 |
+| `gradients(X, y, w, b)` | 从同一模块导入，返回 dw、db |
 | `train(X, y, learning_rate=0.05, steps=500)` | 每次调用从零初始化，返回最终 w、b、losses |
 | `main()` | 调用各步骤、打印结果、保存图表 |
 
@@ -563,7 +558,7 @@ y = X @ true_w + true_b + noise
 
 当前 linear_regression_numpy.py 从同目录 gradient_basics.py 导入 predict、mse、gradients，自己定义 generate_data、train、main；不要在两处维护不同公式。main 先用 X,y,true_w,true_b=generate_data() 接收四项返回值，再令 w,b,losses=train(X,y,learning_rate=0.05,steps=500)。train 内创建零参数和 losses 列表，每次更新后追加新 loss，返回顺序固定为 w、b、losses；绘图放在 main 的训练调用之后。
 
-### 第四步：保存结果
+### 第三步：在 main 中保存训练曲线
 
 用 Matplotlib 绘制步数与训练 loss，给坐标轴和标题命名，保存到：
 
@@ -580,7 +575,7 @@ import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots()
 ax.plot(range(len(losses)), losses)
-ax.set(xlabel="Update steps", ylabel="Training MSE", title="NumPy linear regression")
+ax.set(xlabel="iterations", ylabel="loss", title="Loss over iterations")
 ax.grid()
 ```
 
@@ -623,9 +618,7 @@ python scripts/linear_regression_numpy.py
 
 ### 第一步：在 scripts/gradient_check.py 逐参数比较解析梯度与数值梯度
 
-从同目录的 `linear_regression_numpy.py` 导入 generate_data、predict、mse、gradients。使用固定的 5 条样本、非零 w 与 b，数据采用 float64，逐个检查两个权重和一个偏置。
-
-当前 gradient_check.py 将逐参数检查封装为 check_gradients(X,y,w,b,epsilon=1e-6)，返回由 parameter、analytical_gradient、numerical_gradient、absolute_error 组成的字典列表。main 调用 generate_data 时用 X,y,_,_=generate_data(seed=42,n_samples=5) 接收四项，再创建检查点 w、b，调用该函数并汇总误差；返回列表不是一个可直接与阈值比较的标量。
+在 `scripts/gradient_check.py` 顶层从同目录的 `linear_regression_numpy.py` 导入 `generate_data`、`predict`、`mse`、`gradients`。先写 `check_gradients(X, y, w, b, epsilon=1e-6)`，为两个权重与一个偏置各返回一个字典，键为 `parameter`、`analytical_gradient`、`numerical_gradient`、`absolute_error`。再在 `main()` 生成数据、创建检查位置、调用函数，从返回列表求三个绝对误差的最大值。
 
 调用 Day 5 的 `generate_data(seed=42, n_samples=5)`，生成固定的 5 条 X、y，参数固定为 `w=[[0.3],[-0.7]]`、`b=0.2`。先复制参数，扰动 `w[0,0]` 时只改这个元素；分别算加/减 epsilon 的 loss 后恢复，再检查另一个权重和 b。打印参数名、解析梯度、数值梯度与绝对差，最后汇总三项最大误差。
 
@@ -741,7 +734,7 @@ python scripts/linear_regression_rewrite.py
 - [ ] 可以运行 NumPy 线性回归，并从零初始化出发学习到接近真实的参数。
 - [ ] 可以解释 X、w、b、y、预测、dw 的形状，以及广播可能造成的静默错误。
 - [ ] 可以手推 MSE 梯度，使用数值梯度核对实现。
-- [ ] 可以在有限参考下重写“预测 → 损失 → 梯度 → 更新”。
+- [ ] 能运行重写脚本，并对照基准脚本核对最终参数与 MSE。
 - [ ] 保留环境记录、真实曲线和学习率对照，并在实验目录 README 中写出简短周总结。
 
 未通过的基础项先用机动时间补齐，仍未完成则顺延。通过后按照 [StudyPlan.md](StudyPlan.md#stage-1) 进入第二周 PyTorch 与 MNIST。

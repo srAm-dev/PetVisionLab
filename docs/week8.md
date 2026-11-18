@@ -8,11 +8,11 @@
 
 ## 开始前
 
-前七周的基础检查和实验材料已整理，能解释自回归生成及 checkpoint。本周使用预训练权重做推理。
+开始前准备第三周的 `cifar10_split.json` 和已下载的 CIFAR-10 原图。第五周的测试结果、第六至七周的语言模型结果用于 Day 5 汇总。本周从 Day 1 创建 CLIP 配置和脚本。
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vlm_qa/week8/README.md)。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -162,7 +162,7 @@ print(revision)
 
 1. 读取第三周 cifar10_split.json 的 val_indices，再读取原始 CIFAR10 的 targets 和 classes；先确认类名顺序与配置完全一致。
 2. 对类别 0..9 分别建立候选索引列表，列表中的每个索引必须既属于 val_indices，又具有当前类别标签。
-3. 创建一个 seed=42 的独立 Generator，依次在各类别候选中无放回选 20 个索引；每类候选不足 20 个时直接报错，不重复取样凑数。
+3. 创建 `torch.Generator(device="cpu").manual_seed(42)`。按类号递增处理候选列表，每类用 `torch.randperm(len(candidates), generator=generator)[:20]` 得到列表内的位置，再查出对应的全局索引。每类候选不足 20 张时报错。
 4. 合并十个列表，检查总数 200、无重复、每类 20 个，再把实际全局索引和来源标识保存到 subset_path。
 5. 文件已存在时，直接读取并重复上述完整性检查，不重新抽样。用其中第一个全局索引打开图片，核对人工看到的类别与 targets 对应。
 6. 按 classes 顺序将固定模板分别填入十个类名，打印这十句话。模型分数矩阵的第 k 列就对应这里第 k 句话，后面不改变顺序。
@@ -674,10 +674,10 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --image data
 
 images_manifest.csv 每图一行，记录 image_id、local_path、source、sha256。local_path 统一相对于项目根目录，例如 datasets/raw/vqa/img001.jpg；在云端也放到同样的相对位置。图片自行选择可人工查看的样本并记录实际来源，CSV 只保存元数据，不包含图片内容。questions.jsonl 每题一行，通过 image_id 找图，通过 qid 唯一标识问题。
 
-下面是记录格式示例，reference 需要看实际图片后提前填写：
+先在图片清单加表头 `image_id,local_path,source,sha256`。问题清单每行一个 JSON 对象。看过实际图片后填 `reference` 和 `criterion`，其中 `criterion` 写可接受答案与部分正确条件。
 
 ```json
-{"qid":"img001_q1","image_id":"img001","question":"What color is the cup?","reference":"按实际图片填写","question_type":"color"}
+{"qid":"img001_q1","image_id":"img001","question":"What color is the cup?","reference":"填写图片中杯子的实际颜色","criterion":"准确说出颜色为 correct，颜色含糊但方向接近为 partial","question_type":"color"}
 ```
 
 至少 20 个唯一 image_id，每个至少两题。题目整体覆盖类别、颜色、数量、位置和信息不足；不同问法也要有可人工核查的标准。
@@ -725,9 +725,9 @@ judgments.csv 为每个 qid 标 correct/partial/wrong 及错误类型和理由�
 
 建议列为 `run_id,qid,judgment,error_type,reason`，run_id 对应本轮选定的原始输出；错误类型可包括类别、属性、计数、空间关系、无依据回答与推理失败。读取/推理失败也保留一行，按本次整体任务统计为 wrong，并用错误类型区分。整体正确比例为 correct/全部题数，partial 数量另列，不在事后临时决定给多少分。
 
-#### 第四步：核对覆盖率后再统计
+#### 第四步：用三份文件核对题目覆盖并统计结果
 
-问题清单的 qid 唯一；先用选定 run_id 筛选输出与判定，再检查这一轮的 qid 集合应一致且没有重复。报告总题数、成功生成数、失败数、正确数和部分正确数；分母清楚，结论限定在本次样本。
+在草稿中读 `questions.jsonl`、`vlm_outputs.jsonl` 和 `judgments.csv`。后两份按同一个 `run_id` 筛选。分别检查三份记录的 qid 唯一，再比较三份 qid 集合相等。按输出的 `status` 统计成功数和失败数，按判定的 `judgment` 统计 correct、partial、wrong。将总题数、两类计数和严格正确比例 `correct / 总题数` 写入本周 README。
 
 用一个手算例子检查统计：40 题中成功生成 38、失败 2，人工判定 correct=30、partial=5、wrong=5（含 2 条推理失败），严格正确比例为 `30/40=0.75`，部分正确另报 5 条；不能改用 38 作分母。统计前分别检查三份记录的 qid 唯一性，再比较集合相等，避免重复记录被集合去重掩盖。
 

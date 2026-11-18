@@ -3,7 +3,7 @@
 学习指南：[第七周逐日任务](../../../docs/week7.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本周尚未记录实测结果。完成第七周的 BPE、采样和续训检查后，记录编码比较、续训的步数与 loss 观察，以及三个模型各自的测试集结果。
+先从第六周取出训练原文、划分清单、字符词表和 best。Day 1–2 在原有 tokenizer 模块加入 BPE。Day 4 用独立的小配置核对续训，Day 5 再正式训练 BPE GPT。
 
 <a id="environment"></a>
 
@@ -22,7 +22,7 @@ python -m pip check
 
 ## 实现后的运行命令
 
-以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
+从项目根目录运行。先按[第 7 周指南](../../../docs/week7.md#day-1)准备当天的入口、配置和输入，再执行该行命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ python -m pip check
 | Day 3 | `python -m pytest tests/test_sampling.py -q` | 一个温度与 top-k 概率例子 |
 | Day 3 | `python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --top-k 20 --output experiments/mini_gpt/week7/samples.jsonl` | 较集中采样 |
 | Day 3 | `python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 1.0 --output experiments/mini_gpt/week7/samples.jsonl` | 不启用 top-k 的对照 |
-| Day 4 | `python scripts/train_gpt.py --config outputs/resume_demo/config.yaml`；将 steps 从 20 改为 40 后加 `--resume outputs/resume_demo/last.pt` | 观察从第 21 步继续更新，配置创建方法见指南 |
+| Day 4 | `python scripts/train_gpt.py --config outputs/resume_demo/config.yaml`；将 steps 从 20 改为 40 后加 `--resume outputs/resume_demo/last.pt` | 确认第一笔恢复更新为 21、last 为 40、history 有 20 和 40 两行 |
 | Day 5 | `python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml` | 创建配置后，从零训练 BPE GPT |
 | Day 5，确实中断且已有未完成的 last 时 | `python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --resume outputs/mini_gpt_bpe/last.pt` | 以相同配置继续到 training.steps，不额外训练一轮 |
 | Day 5 | `python scripts/compare_tokenizers.py` | 相同 val 原文的编码长度和耗时 |
@@ -63,12 +63,8 @@ ByteBPETokenizer.decode 默认 errors="replace"；`tests/test_tokenizer.py::test
 | 各模型 `experiment_dir/test_metrics.json` | Day 6：字符 Bigram、字符 GPT、BPE GPT 各自独立的最终评估结果 |
 | `outputs/mini_gpt_bpe/` | 项目根下：模型、优化器、随机状态与 tokenizer 标识 |
 
-运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
-
 ## 周总结
 
 - BPE 检查：待填写 Unicode 往返、保存加载及同原文编码比较。
 - 续训观察：待填写 20 步保存与恢复到 40 步的命令、step、loss，以及 optimizer 和随机状态的作用。
 - 最终评估：待链接三个模型各自的测试结果、采样失败例子和后续问题。
-
-周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

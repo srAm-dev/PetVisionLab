@@ -3,7 +3,7 @@
 学习指南：[第八周逐日任务](../../../docs/week8.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-本周尚未记录实测结果。先按第八周指南跑通最小推理，再记录 CLIP 子集结果、LLM 输出、VLM 的完整问答与人工判定。
+Day 1 从第三周的固定 CIFAR 验证索引中抽取 CLIP 子集。Day 2–3 在云端各跑一个最小输入，确认模型与处理器配套。单图流程通过后，Day 4 再按固定图片和题目清单跑完整问答。
 
 <a id="environment"></a>
 
@@ -24,7 +24,7 @@ model_manifest.json 记录每个模型 ID、完整 commit SHA、模型类、proc
 
 ## 实现后的运行命令
 
-以下是实现后的运行入口，在项目根目录、对应 Conda 环境中执行。首次学习按指南逐步创建脚本和配置，再运行相应命令。
+从项目根目录运行。先按[第 8 周指南](../../../docs/week8.md#day-1)准备当天的入口、配置和输入，再执行该行命令。
 
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
@@ -51,17 +51,13 @@ CLIP 创建和图文输入见[Day 1](../../../docs/week8.md#clip-inputs)，LLM �
 | `figures/clip_mistakes.png` | Day 1：有错分时保存最多 8 张原图及真实 / 预测类 |
 | `model_manifest.json / environments/{local,cloud}/` | 模型版本、分别保存的两端环境及安装信息 |
 | `llm_outputs.jsonl` | 五个固定 messages 的原始输出和配置 |
-| `images_manifest.csv / questions.jsonl` | 20+ 图片与预先写好的 40+ 题标准 |
+| `images_manifest.csv`、`questions.jsonl` | 至少 20 张图，每图两题，生成前写好 reference 和 criterion |
 | `vlm_outputs.jsonl / judgments.csv` | 全部原始回答、状态与人工判定 |
 | `tensor_flow.md` | 实际视觉模块、连接、token 与解码形状 |
 | `docs/final_report.md` | 项目根下：八周报告、证据链接与后续清单 |
-
-运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
 
 ## 周总结
 
 - 推理条件：待填写各模型 revision、依赖、精度、耗时与显存。
 - 问答结果：待链接至少 20 图/40 题的原始输出、人工判定及失败分析。
 - 八周回顾：待链接最终报告，列出能独立解释的内容和下一轮待补项。
-
-周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。

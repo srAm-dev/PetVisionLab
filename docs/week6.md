@@ -8,11 +8,13 @@
 
 ## 开始前
 
+从 Day 1 创建 `src/petvision/data/text.py` 开始。本周的语言数据、模型、入口和配置由各天陆续添加。直接复用第四周的 `MultiHeadSelfAttention`、`LayerNorm` 和第二周的 checkpoint 工具。
+
 第四周 causal Mask 已通过测试；能独立写训练、验证和 checkpoint 流程。保留第五周的视觉结果。
 
 按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week6/README.md)。
 
-更新日期：2026-11-18。
+更新于 2026-11-19。
 
 ## 本周文件
 
@@ -310,7 +312,7 @@ loss 输入 target     [B*T]
 
 两个函数统一返回 `{"loss": float值, "n_target_tokens": int值}`，键名固定；train_step 的数量为 y.numel()，evaluate_lm 为完整分窗的累计目标数。lm_trainer.py 顶层导入 torch、`torch.nn.functional as F` 和 iter_eval_windows；训练 loss 使用 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))`，验证使用相同展平方式但 reduction="sum"。evaluate_lm 开始先保存 `was_training = model.training`，在 try 中执行 eval/no_grad，在 finally 中 `model.train(was_training)`，确保退出时恢复原模式。
 
-train_step 中的 logits 先由 model(x) 得到；计算 loss 前执行 optimizer.zero_grad()，之后依次 loss.backward()、optimizer.step()，返回 loss.item() 与 y.numel()。evaluate_lm 在循环前设置 total_nll=0.0、total_target_tokens=0；每次从 iter_eval_windows 取得 x/y，分别 unsqueeze(0) 并迁移设备，再前向和累计 loss.item()。最后用累计 NLL 除以累计目标数，不能复用最后一窗的 loss 作为整份验证结果。
+train_step 中的 logits 先由 model(x) 得到；计算 loss 前执行 optimizer.zero_grad()，之后依次 loss.backward()、optimizer.step()，返回 loss.item() 与 y.numel()。evaluate_lm 在循环前设置 total_nll=0.0、total_target_tokens=0；每次从 iter_eval_windows 取得 x/y，分别 unsqueeze(0) 并迁移设备，再前向。若交叉熵使用 `reduction="sum"`，每窗直接累加 `loss.item()`；若使用默认的 `mean`，则先乘这一窗的 `y.numel()`。最后用累计 NLL 除以累计目标数，不能复用最后一窗的 loss 作为整份验证结果。
 
 #### 第四步：用错位例子和一次更新理解语言模型目标
 
@@ -553,6 +555,8 @@ forward 中用 self.context_length 检查 T；上面循环结束后，实际返�
 
 在交互环境做一次短序列拟合，不新增 pytest 函数。直接创建 33 个教学 ID：`torch.tensor([i % 8 for i in range(33)], dtype=torch.long)`，以前 32 个为 x、后 32 个为 y，各加 batch 维得到 `[1,32]`；不读取正式语料文件。新建 vocab_size=8、context_length=32、C=32、heads=4、depth=2、FFN=128、dropout=0 的临时 GPT 和 AdamW，固定这组输入约更新 100 次。每隔约 20 次打印 loss，观察最终是否更低且有限；若不下降，回看目标和更新步骤。不写正式 history 或 checkpoint。
 
+#### 第五步：写 MiniGPT 配置并接入 train_gpt.py
+
 从昨天的 Bigram YAML 复制出 `configs/llm/mini_gpt.yaml`，保留完整 data 和 training，将 model 替换为：
 
 ```yaml
@@ -607,7 +611,13 @@ python -m pytest tests/test_language_model.py -q
 
 ### 操作步骤
 
-#### 第一步：接通训练循环，分开管理训练采样与完整验证
+#### 第一步：在 train_gpt.py 定义日志和绘图函数
+
+在 `scripts/train_gpt.py` 顶层导入 `csv` 和 `matplotlib.pyplot as plt`。新增 `append_lm_history(row, path)`，将 path 转为 Path 并创建父目录；打开前检查文件是否不存在或为空，再以 a 模式、encoding="utf-8"、newline="" 打开，用 csv.DictWriter 在新文件 / 空文件写一次表头，每次调用只 writerow(row) 一条；列名改为 step、train_loss、val_loss、val_target_tokens，表头只在新文件 / 空文件写一次。调用方后面每次只传一条 row。
+
+每个模型训练结束后读取自己 experiment_dir/history.csv，用 step 为横轴、train_loss / val_loss 为纵轴，保存 `experiment_dir/figures/loss_curves.png`。不要复用要求 epoch / accuracy 的视觉 plot_history；在 train_gpt.py 顶层写 `plot_lm_history(history, experiment_dir)`，函数内用 plt.subplots 创建图，横轴取各行 step，分别 plot 两列 loss 并添加图例；先创建 experiment_dir/figures，savefig 后关闭该 figure。
+
+#### 第二步：在 main 中接通训练、验证和 checkpoint
 
 修改已有 `scripts/train_gpt.py`，接通累计 step 循环、定期验证、日志和保存；按需要复用或扩展 `src/petvision/utils/checkpoint.py` 的磁盘读写函数。`src/petvision/training/lm_trainer.py` 继续负责单步更新和完整验证，不能把这些函数另写进模型文件。
 
@@ -615,9 +625,7 @@ python -m pytest tests/test_language_model.py -q
 
 train_step 每次更新前切 train；evaluate_lm 临时切 eval 并关闭梯度，退出时恢复调用前的模式，避免首次验证后 dropout 一直关闭。两组各自从新模型、优化器和 Generator 起步。
 
-#### 第二步：按相同验证窗口训练 Bigram 和 GPT，保存逐步日志
-
-Bigram/GPT 共享 tokenizer JSON、split manifest、验证窗口规则和 token loss 定义。每组独立创建模型、优化器和采样状态，记录参数量和实际训练预算。
+两组共用字符 tokenizer、split manifest 和验证窗口规则。每组记录自己的参数量和实际步数。
 
 ```text
 训练日志：step、train_loss、val_loss、val_target_tokens
@@ -649,7 +657,7 @@ for step in range(1, target_steps + 1):
             "val_loss": val_metrics["loss"],
             "val_target_tokens": val_metrics["n_target_tokens"],
         }
-        # 此处追加本条 row，并按第三步判断 best / 保存 last。
+        # 此处追加 row、更新 best 并保存 last。
         interval_nll = 0.0
         interval_targets = 0
 ```
@@ -658,25 +666,19 @@ for step in range(1, target_steps + 1):
 
 若统计训练处理量，输入 token 数按实际 batch 累加 `x.numel()`；原文字节数按每个输入 ID 对应字符的 UTF-8 bytes 长度累加，重复采样也重复计数。训练集字符都在训练词表内；下周 BPE 同样累加各 token 的 bytes 长度。静态语料文件大小与训练中累计处理量分别记录。
 
-#### 第三步：按验证 loss 选择 best
-
 验证 loss 下降时保存 best，last 保存最近一次检查点。本轮在每个验证时点和最终步写 last，中断时以文件内 step 为准，最近保存之后尚未落盘的更新需要重跑。本周 checkpoint 至少包含重建所需的结构和词表标识；下周再补完整恢复训练状态。
 
-修改 `scripts/train_gpt.py::main()` 的定期验证分支，顶层从 `petvision.utils.checkpoint` 导入 save_checkpoint / load_checkpoint；main() 在 step 循环之前将 best_val_loss 设为正无穷大；定期验证返回 val_metrics 后添加 `if val_metrics["loss"] < best_val_loss` 分支，在其中更新 best_val_loss 并写 best.pt，持平保留更早一次。记录 model_state、config、model_config、vocab_size、context_length、tokenizer_path、tokenizer_hash、split_hash、step、val_loss 和 val_target_tokens；hash 来自实际文件，不能只保存路径后省略核对。main() 在训练循环之前用 yaml.safe_dump(cfg,file,allow_unicode=True,sort_keys=False) 写 experiment_dir/config.yaml；history 由下方 append_lm_history 逐条追加。计时在循环前开始、循环后结束，CUDA 分支前后 synchronize 并统计 peak_allocated_mib；结束后写 run_summary.json，字段含 params、completed_steps、train_seconds、peak_allocated_mib、device、dtype、累计 input_tokens / input_bytes 和 timing_scope。
+修改 `scripts/train_gpt.py::main()` 的定期验证分支，顶层从 `petvision.utils.checkpoint` 导入 save_checkpoint / load_checkpoint；main() 在 step 循环之前将 best_val_loss 设为正无穷大；定期验证返回 val_metrics 后添加 `if val_metrics["loss"] < best_val_loss` 分支，在其中更新 best_val_loss 并写 best.pt，持平保留更早一次。记录 model_state、config、model_config、vocab_size、context_length、tokenizer_path、tokenizer_hash、split_hash、step、val_loss 和 val_target_tokens；hash 来自实际文件，不能只保存路径后省略核对。main() 在训练循环之前用 yaml.safe_dump(cfg,file,allow_unicode=True,sort_keys=False) 写 experiment_dir/config.yaml；history 由第一步的 append_lm_history 逐条追加。计时在循环前开始、循环后结束，CUDA 分支前后 synchronize 并统计 peak_allocated_mib；结束后写 run_summary.json，字段含 params、completed_steps、train_seconds、peak_allocated_mib、device、dtype、累计 input_tokens / input_bytes 和 timing_scope。
 
 checkpoint 同时保存模型配置、实际 V、context_length、tokenizer 路径与 hash、split manifest 的 hash，以及本次 step 和验证 loss。加载时核对这些信息，再按结构重建并读取 state_dict。用新建模型重新计算固定验证集，比较保存前后的 loss 与目标 token 数，同时核对数值与计数。
 
 save_checkpoint 的已有接口是 save_checkpoint(checkpoint, path)，第一个参数为字典，不是 model 对象；load_checkpoint(path) 返回同样结构的字典。定期验证分支中先准备 model_state=model.state_dict()、model_config=cfg["model"].copy()，再把上文其余字段放入 checkpoint。best 和 last 分别调用 save_checkpoint(checkpoint, output_dir/"best.pt")、save_checkpoint(checkpoint, output_dir/"last.pt")；output_dir 在 main 读配置后由 Path(cfg["output_dir"]) 创建。
 
-实现顺序为：先在文件顶层写完 append_lm_history、plot_lm_history，再在 main 建立 experiment_dir/output_dir 和 history_path=experiment_dir/"history.csv"，之后接入上一步循环。循环中创建 row 后，先 append_lm_history(row, history_path)，再判断 best、写 last，最后清零区间累计值。循环结束后用 csv.DictReader 读取 history_path，再调用 plot_lm_history；不要让函数或 history 变量第一次出现在调用处。
+在 `main()` 读完配置、建好模型和优化器后，建立 `experiment_dir`、`output_dir` 和 `history_path`，写入本次配置。首次运行使用空日志和新的权重目录。每到验证点，按“评估、追加 row、比较 best、保存 last、清零区间统计”的顺序处理。训练结束后用 `csv.DictReader` 读回历史记录，将 step 转为整数、loss 转为浮点数，再调用第一步的绘图函数。
 
-在 `scripts/train_gpt.py` 顶层新增 `append_lm_history(row,path)`：将 path 转为 Path 并创建父目录；打开前检查文件是否不存在或为空，再以 a 模式、encoding="utf-8"、newline="" 打开，用 csv.DictWriter 在新文件 / 空文件写一次表头，每次调用只 writerow(row) 一条；列名改为 step、train_loss、val_loss、val_target_tokens，表头只在新文件 / 空文件写一次。正式分支创建各自 experiment_dir / output_dir，保存 config.yaml，在上面 row 创建后立即调用追加函数；每次仅传这一条 row。新运行使用空日志，已有同名结果先归档；第七周的 resume 才继续现有日志。
+#### 第三步：运行 Bigram 和 GPT，核对日志与保存结果
 
-每个模型训练结束后读取自己 experiment_dir/history.csv，用 step 为横轴、train_loss / val_loss 为纵轴，保存 `experiment_dir/figures/loss_curves.png`。不要复用要求 epoch / accuracy 的视觉 plot_history；在 train_gpt.py 顶层写 `plot_lm_history(history, experiment_dir)`，函数内用 plt.subplots 创建图，横轴取各行 step，分别 plot 两列 loss 并添加图例；先创建 experiment_dir/figures，savefig 后关闭该 figure。
-
-两组都完成后，在草稿或交互环境读取各自 history，再保存合并对照图 `experiments/mini_gpt/week6/figures/loss_curves.png`。单模型训练入口不硬编码另一模型的结果路径，这样先训练 Bigram 时不会因 GPT 日志尚不存在而失败，第七周 BPE 也可直接复用同一入口。
-
-本步直接用已训练的 best 重建模型，运行一次固定验证窗口，核对返回的 loss、目标数和记录对应；不另建 checkpoint 往返测试。正式结果取 best 对应的验证时点，不拿 last 的输出与 best 混比。
+执行本日下方的两条训练命令。先确认两组使用同一字符词表和验证原文，再检查各自的 `history.csv`、`best.pt`、`last.pt` 和 `run_summary.json`。按保存的配置与词表重建每组 best，调用 `evaluate_lm` 核对验证 loss 和目标数。两组都完成后，用草稿读取两个 history，绘制对照图并保存为 `experiments/mini_gpt/week6/figures/loss_curves.png`。
 
 #### 第四步：读曲线并定位异常
 
@@ -694,7 +696,7 @@ python scripts/train_gpt.py --config configs/llm/bigram_char.yaml
 python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 ```
 
-先通过包含保存加载的检查，再分别从新状态运行两组正式实验。每 200 步验证，2000 步预算下应有 10 个验证时点，训练结束时保留两个 best/last 和各自 history。验证频率改变后若下一批训练采样也改变，检查验证是否错误地消耗了训练 Generator。
+先运行 Day 2–3 的窗口、形状与因果检查。两组分别从新状态启动，训练产出 best 后，再重建模型核对验证 loss 与目标数。每 200 步验证，2000 步预算下应有 10 个验证时点，训练结束时保留两个 best/last 和各自 history。验证频率改变后若下一批训练采样也改变，检查验证是否错误地消耗了训练 Generator。
 
 - [ ] Bigram/GPT 验证 loss 在同一 tokenizer 和目标统计口径下可比较。
 - [ ] 模型从新状态训练，best 与 last 不混淆。
@@ -715,7 +717,7 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 
 #### 第一步：创建 generate.py，从 checkpoint 重建模型与 tokenizer
 
-创建 `scripts/generate.py`，顶层导入 argparse、json、Path、torch、CharTokenizer、BigramLanguageModel 和 MiniGPT。在 main 中解析 checkpoint、prompt、max-new-tokens、seed、output 五个参数，按本步从 checkpoint 重建对象，再调用第二步生成循环和第三步的 JSONL 保存逻辑；文件末尾添加入口保护。只导入脚本不会加载权重或自动生成文本。
+创建 `scripts/generate.py`，顶层导入 argparse、json、Path、torch、CharTokenizer、BigramLanguageModel 和 MiniGPT。本步先完成参数解析和对象加载。在 `main()` 打印实际模型类型、V、context_length 和 device，核对它们来自保存的权重和配套词表。第二步在这之后写生成循环，第三步再追加 JSONL。
 
 参数解析时 max-new-tokens 与 seed 用 type=int，checkpoint 和 output 用 Path，prompt 为字符串；max-new-tokens 要为非负数。
 
