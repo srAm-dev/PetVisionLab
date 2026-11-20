@@ -8,13 +8,11 @@
 
 ## 开始前
 
-先完成 Day 1 的模型文件和教学检查，再创建 ViT 配置。当前 `train_cv.py` 和 `evaluate.py` 支持 MLP、CNN、ResNet18；Day 2 接入 ViT，Day 4 再接入 Macro-F1、混淆矩阵和测时。
+从第四周的 `MultiHeadSelfAttention` 和 `LayerNorm` 接着学。Day 1 新建 `src/petvision/models/cv/vit.py`，先用一张 32×32 图核对 Patch 数。Day 2 把 ViT 接进现有的 `train_cv.py` 和 `evaluate.py`。目前这两个入口支持 MLP、CNN 和 ResNet18。[Patch 练习](#day-1)
 
-Attention、Mask、LayerNorm 检查通过；第三周四组配置、best 和同一份 CIFAR 划分可用。
+Day 3 训练两种 Patch 时沿用第三周的 `cifar10_split.json`。第三周四个模型的 best 到 Day 4 冻结清单时才需要。按交接表逐一找到训练时的 `config.yaml`、`val_metrics.json` 和本地 `outputs/<变体>/best.pt`，核对权重的 SHA-256。新克隆的仓库要从原运行目录取回受 Git 忽略的权重。缺一组也可以先做 Patch 练习，等权重补齐再做六组比较。[第三周交接表与校验值](../experiments/cnn_vs_resnet/week3/README.md#week5-handoff) · [本周实验记录](../experiments/vit_patch_size/week5/README.md)
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vit_patch_size/week5/README.md)。
-
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -23,12 +21,12 @@ Attention、Mask、LayerNorm 检查通过；第三周四组配置、best 和同�
 ```text
 PetVisionLab/
 ├── src/petvision/models/cv/vit.py           # Day 1–2：Patch、CLS、ViT
-├── src/petvision/evaluation/classification.py # Day 4：F1、混淆矩阵、计时
+├── src/petvision/evaluation/classification.py # Day 4：由混淆矩阵计算 F1 和准确率
 ├── configs/cv/
 │   ├── vit_cifar10.yaml                   # Day 2：Patch=4
 │   └── vit_patch8_cifar10.yaml             # Day 3：Patch=8
 ├── scripts/train_cv.py                     # Day 2–3：新增 ViT 选择，运行两组实验
-├── scripts/evaluate.py                     # Day 4–5：统一指标
+├── scripts/evaluate.py                     # Day 2 接入 ViT，Day 4–5 汇总指标与前向耗时
 ├── tests/test_vit.py                       # Day 1–2：Patch、位置与反向
 ├── experiments/vit_patch_size/week5/
 │   ├── README.md                         # 已提供：运行入口与最终报告
@@ -37,7 +35,7 @@ PetVisionLab/
 │   ├── runs/{patch4,patch8}/              # 配置、history、run_summary 与各组评估结果
 │   └── figures/                          # 跨模型对照曲线；单模型图在各自 experiment_dir/figures
 └── outputs/{vit_patch4,vit_patch8}/
-    └── {best,last}.pt                     # 实际训练生成
+    └── {initial,best,last}.pt             # CIFAR 正式训练自动保存
 ```
 
 ## 环境检查
@@ -342,15 +340,9 @@ output_dir: outputs/vit_patch4
 
 `model.image_size` 用于建立 Patch 和位置参数，必须等于实际送入 ViT 的图像高宽；`data.image_size` 记录数据集原图尺寸。本周 ViT 不额外 Resize，因此构建时核对两者都为 32。heads、FFN 宽度与 dropout 都要传入新建的 Block，不能继续使用第四周演示时写死的 C=32。
 
-修改已有 `scripts/train_cv.py` 和 `scripts/evaluate.py`，顶层从 `petvision.models.cv.vit` 导入 ViT，在已有模型选择处添加 vit 分支，按下方 model 字段创建该类。两处构造参数保持一致，独立评估继续按 checkpoint 保存的 model_config 重建，具体职责见[第三周入口整理步骤](week3.md#cv-entry-refactor)。
-
-模型选择添加 vit，配置明确 image_size、patch_size、embed_dim、depth、heads、dropout；split_path 原样复用第三周文件。通过短运行后再冻结预算。
-
-在 train_cv.py 的模型选择分支中，令 model_cfg=cfg["model"]，使用 ViT(num_classes=model_cfg["num_classes"], image_size=model_cfg["image_size"], patch_size=model_cfg["patch_size"], embed_dim=model_cfg["embed_dim"], depth=model_cfg["depth"], heads=model_cfg["heads"], ffn_hidden_dim=model_cfg["ffn_hidden_dim"], dropout=model_cfg["dropout"]) 创建模型，再迁移到 device。evaluate.py 使用同样字段，但取值来自核对后的 saved_model_cfg；不要把 name 字段作为 ViT 的构造参数。
-
-测一轮训练前在 CUDA 分支调用 `torch.cuda.synchronize()`、`torch.cuda.reset_peak_memory_stats()`，用 `time.perf_counter()` 记开始/结束，结束前再次同步；峰值取 `torch.cuda.max_memory_allocated()/1024**2`，注明 MiB 和测量范围。CPU 分支跳过 CUDA 接口，记录设备即可。
-
-正式 ViT 运行继续由 `scripts/train_cv.py::main()` 调用已有 `run_training`，不新建另一套训练循环；run_training 每轮调用 append_history，结束后写 run_summary.json 并调用 plot_history，每组的 experiment_dir 保存 history.csv、run_summary.json 和 config.yaml。测时前重置峰值，计时范围覆盖训练 / 验证 / 逐轮保存；短检查的数字只用于确定预算，不写成正式两组训练时间。
+1. 在 `scripts/train_cv.py` 的模型选择处添加 `vit` 分支，导入刚实现的 `ViT`。把 `cfg["model"]` 的 `num_classes`、`image_size`、`patch_size`、`embed_dim`、`depth`、`heads`、`ffn_hidden_dim`、`dropout` 传给构造函数，再把模型移到 device。`name` 用来选择分支。
+2. 在 `scripts/evaluate.py` 的模型选择处添加 `vit`。该入口先核对请求配置和 checkpoint，再从 `checkpoint["model_config"]` 取同一组字段重建模型，加载 `model_state`。[现有评估入口](../scripts/evaluate.py)
+3. 使用下面的 `--smoke` 和 `--overfit-samples 64` 检查。正式训练会走现有的 `run_training`。它按 `data.name == "cifar10"` 逐轮写 history，记录训练、验证及保存所用的总时间，并在 GPU 上记录峰值显存。Day 3 直接读这份 `run_summary.json`。[现有分类训练入口](../scripts/train_cv.py)
 
 ### 运行与自查
 
@@ -360,7 +352,7 @@ python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --smoke
 python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --overfit-samples 64
 ```
 
-确认输出为 `[B,10]`，再检查固定 64 条训练图的 loss 能否下降。若 CLS 没有梯度，检查它是否注册为 Parameter、是否参与 concat、分类头是否取 `tokens[:,0]`；无法学习时也要检查是否误用了 causal mask。今天完成短检查与测时，正式训练在 Day 3 执行。
+先在测试里确认输出形状为 `[B,10]`，再看固定 64 张训练图上的 loss 是否下降。若 CLS 没有梯度，依次检查它是否注册为 Parameter、是否拼进序列、分类头是否取 `tokens[:,0]`。拟合困难时，再看是否误用了 causal Mask。今天的两条训练命令只做短检查。Day 3 正式训练结束后，从各组的 `run_summary.json` 读取耗时。
 
 - [ ] 前向与反向正常，CLS 和位置参数参与学习。
 - [ ] ViTBlock 与教材 pre-LN、GELU 和 dropout 位置一致，Attention / LayerNorm 已复用，可学习位置与 head 归一化各执行一次。
@@ -405,6 +397,13 @@ P8 attention 每头矩阵：17 × 17
 
 数据顺序使用独立 DataLoader Generator；两组 token 长度不同，dropout 会消耗不同数量的随机数，相同全局 seed 不保证逐步 dropout 或增强结果相同。记录相同策略与种子即可；只有独立控制增强随机流或保存增强决策后，才能声称每张图的随机增强完全一致。单种子对照的结论限定在本次设置。
 
+配置确认后依次执行两次正式训练，等两个运行目录都有 `config.yaml`、`history.csv` 和 `run_summary.json` 再开始第三步。
+
+```bash
+python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml
+python scripts/train_cv.py --config configs/cv/vit_patch8_cifar10.yaml
+```
+
 #### 第三步：读取两组曲线、最佳验证行和实测耗时
 
 1. 读回两个 history.csv，检查 epoch 连续、没有重复，两组都达到冻结的预算。先转换数值列，再绘图，避免 CSV 字符串被当作类别坐标。
@@ -417,12 +416,7 @@ P8 attention 每头矩阵：17 × 17
 
 ### 运行与自查
 
-```bash
-python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml
-python scripts/train_cv.py --config configs/cv/vit_patch8_cifar10.yaml
-```
-
-依次运行两组，从各自新模型和新优化器开始。分别检查 `runs/patch4`、`runs/patch8` 的配置和 history，以及 `outputs/vit_patch4`、`outputs/vit_patch8` 的 best/last。显存不足时，在正式对照前统一调整两组预算，并记录实际值。
+对照 `runs/patch4`、`runs/patch8` 的最佳验证行，确认 `outputs/vit_patch4`、`outputs/vit_patch8` 各自保存了对应的 best 和最后一轮的 last。
 
 - [ ] 两组完成相同预算，结果与配置一一对应。
 - [ ] token 数、参数量和耗时差异有真实记录。
@@ -468,7 +462,9 @@ Macro-F1 ≈ 0.733333
 
 创建 `src/petvision/evaluation/` 和空的 `__init__.py`，再创建 `src/petvision/evaluation/classification.py`，实现 `metrics_from_confusion(matrix)`：输入整份数据的整数混淆矩阵，按第一步的公式返回 accuracy 和 macro_f1。矩阵的类别数由 matrix.shape[0] 确定；它不负责加载数据或模型。在 classification.py 文件末尾的 `if __name__ == "__main__":` 检查分支中，传入两类矩阵 `[[2,1],[0,1]]`，断言 accuracy=0.75、macro_f1≈11/15；再补全零第三行 / 列，断言 macro_f1≈22/45。使用 `python -m petvision.evaluation.classification` 运行该分支。
 
-在 evaluate.py 顶层导入这个函数。今天将 main 中原先仅调用 evaluate 获取汇总指标的部分，改为本脚本顶层的 `evaluate_classification(model, loader, criterion, device, num_classes)`；让它在同一次完整遍历中统计 loss、正确数、样本数和混淆矩阵，再返回包含这些结果的字典。训练器里的 evaluate 保持原接口。加载冻结模型和所选 loader、切 eval 后，在新函数循环外建立 `matrix = torch.zeros((num_classes,num_classes), dtype=torch.long)`；类别数来自 cfg.model.num_classes，CIFAR 为 10。循环内关闭梯度，取得 logits 和 predicted，再把标签和预测转到 CPU。按下方方式把当前批次累计到同一张矩阵：
+现有 `scripts/evaluate.py` 在验证时打印 loss、accuracy 和样本数，有错分时保存 `mistakes_val.png`。目前它只在 test 分支写指标 JSON。第三周的 `val_metrics.json` 是当时独立核验 best 的记录。本步给评估入口补上按 split 保存指标的能力，ViT 的验证表就有了数据来源。
+
+在脚本顶层导入 `metrics_from_confusion`。新增 `evaluate_classification(model, loader, criterion, device, num_classes)` 供本脚本的 `main` 调用，分类训练继续用 `cv_trainer.evaluate`。给新函数传入要评估的模型和 loader，切换到 eval，在循环外创建 CPU 整数矩阵 `matrix = torch.zeros((num_classes,num_classes), dtype=torch.long)`。类别数取自模型配置，CIFAR 为 10。在无梯度的前向中取得 logits 和 predicted，把每批结果累计到同一张矩阵。
 
 ```python
 for true_id, pred_id in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
@@ -529,11 +525,18 @@ print("batch mean ms/img:", ms_per_image)
 
 main 的执行顺序固定为：读配置和确定 device → 记录加载计时起点 → load_checkpoint、重建模型、load_state_dict、model.to(device) → 同步 GPU 并得到 load_seconds → 建立所选 loader → 完整评估 → 从 loader 取一批 images 并迁移 → benchmark_forward → 写结果。result["inference"] 保存前向测时字典，result["load_seconds"] 保存加载秒数；数据下载、loader 遍历与两段计时都分开。
 
-#### 第四步：冻结六个变体
+#### 第四步　验证两个 ViT，再冻结六个变体
+
+完成上述保存逻辑后，用训练时保存的快照分别加载两个 best。下面两条命令生成本步要读的两份 `val_metrics.json`。
+
+```bash
+python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch4/config.yaml --checkpoint outputs/vit_patch4/best.pt --split val
+python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch8/config.yaml --checkpoint outputs/vit_patch8/best.pt --split val
+```
 
 先把两个 ViT 的真实验证结果写入 `experiments/vit_patch_size/week5/patch_results.csv`，每行含 variant、split=val、image_size、token_count、best_epoch、val_loss、val_accuracy、macro_f1、params、epochs、batch、训练秒数、峰值显存（CUDA 可用时）、推理测量条件、config、checkpoint 和指标来源路径。在 Python 草稿或交互环境读取各运行目录的 val_metrics.json、run_summary.json 和配置，为 P4/P8 分别建立一行字典；创建父目录，以 w 模式、UTF-8、newline="" 打开结果文件，用 csv.DictWriter 写表头和两行记录。读回后检查恰好两行、variant 与来源路径对应，不能填入示例值。
 
-再读取第三周的 `experiments/cnn_vs_resnet/week3/results.csv`，核对其中四组配置和 best；若第三周尚未计算 macro_f1，可用已冻结 best 和同一验证集补算，仍不访问测试集。
+第三周的四组直接引用交接表中的验证准确率、best epoch 和训练配置快照。六组的 Macro-F1 在 Day 5 用测试集统一计算。如果还想给旧组补验证集 Macro-F1，复制快照并把 `experiment_dir` 指向第五周新目录，留下原验证记录中的权重校验值。[第三周交接表](../experiments/cnn_vs_resnet/week3/README.md#week5-handoff)
 
 核对四个第三周模型与两个 ViT 的 config/best 路径，将 variant、image_size、config、checkpoint、验证指标和 best epoch 列为本周 README 的冻结清单；image_size 取各组已保存的实际模型输入尺寸，ResNet 的 96 不能被原图配置中的 32 覆盖。每一行直接指向实际运行的文件；冻结后按这张清单逐一测试。此时选择依据仍是验证集，准备 Day 5 统一测试。
 
@@ -541,14 +544,7 @@ main 的执行顺序固定为：读配置和确定 device → 记录加载计时
 
 ### 运行与自查
 
-先用本节两类例子核对指标，再评估两个 ViT 的验证集：
-
-```bash
-python scripts/evaluate.py --config configs/cv/vit_cifar10.yaml --checkpoint outputs/vit_patch4/best.pt --split val
-python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpoint outputs/vit_patch8/best.pt --split val
-```
-
-每组应覆盖 `5000` 条样本，混淆矩阵元素总和也应为 5000。把实际指标与测时条件整理进 `patch_results.csv`，结合第三周验证结果冻结六份配置；今天不查看测试集指标。
+读回两个 ViT 的验证 JSON，样本数和混淆矩阵元素总和都应为 5000。检查 `patch_results.csv` 有两行数据，冻结清单有六行，每行都能找到对应组的配置和 best。
 
 - [ ] F1 和混淆矩阵经小例子核对，不能把 batch accuracy 直接无权平均。
 - [ ] 测量条件清楚，跨架构差异与预算限制有记录。
@@ -573,7 +569,7 @@ CNN 70%+ 是参考目标。若测试暴露实现错误，修复后注明原结�
 
 按下方六个测试命令运行，每次记录配置标识、checkpoint、split=test、样本数和指标。CIFAR-10 官方测试集有 10000 条，完整评估不得遗漏尾批。
 
-若某个 checkpoint 丢失，明确标记该行未评估，先按原配置补齐训练；不要用另一个变体的权重填入它的行。
+若本机缺少权重，先按交接表从原运行目录取回并校验。确实无法取回时，将该行记为待补。决定重训时，使用原训练设置和新目录，按新运行的验证结果冻结 best，再登记和评估这次运行。
 
 #### 第二步：读取六份 test_metrics，保存统一测试表
 
@@ -592,12 +588,12 @@ BN、残差、Patch 各自比较控制条件内的差异；跨架构表同时报
 ### 运行与自查
 
 ```bash
-python scripts/evaluate.py --config configs/cv/cnn_cifar10.yaml --checkpoint outputs/cnn_bn_on/best.pt --split test
-python scripts/evaluate.py --config configs/cv/cnn_no_bn_cifar10.yaml --checkpoint outputs/cnn_bn_off/best.pt --split test
-python scripts/evaluate.py --config configs/cv/resnet_cifar10.yaml --checkpoint outputs/resnet_on/best.pt --split test
-python scripts/evaluate.py --config configs/cv/resnet_no_residual_cifar10.yaml --checkpoint outputs/resnet_off/best.pt --split test
-python scripts/evaluate.py --config configs/cv/vit_cifar10.yaml --checkpoint outputs/vit_patch4/best.pt --split test
-python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpoint outputs/vit_patch8/best.pt --split test
+python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/cnn_bn_on/config.yaml --checkpoint outputs/cnn_bn_on/best.pt --split test
+python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/cnn_bn_off/config.yaml --checkpoint outputs/cnn_bn_off/best.pt --split test
+python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/resnet_on/config.yaml --checkpoint outputs/resnet_on/best.pt --split test
+python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/resnet_off/config.yaml --checkpoint outputs/resnet_off/best.pt --split test
+python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch4/config.yaml --checkpoint outputs/vit_patch4/best.pt --split test
+python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch8/config.yaml --checkpoint outputs/vit_patch8/best.pt --split test
 ```
 
 每行都应为 `split=test`、`n_samples=10000`，混淆矩阵总数也应一致。汇总到 `experiments/vit_patch_size/week5/visual_test_results.csv`，保存主要模型的混淆矩阵与错误图。

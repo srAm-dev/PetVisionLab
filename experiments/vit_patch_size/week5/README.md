@@ -3,7 +3,7 @@
 学习指南：[第五周逐日任务](../../../docs/week5.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-先在第五周 Day 1 创建 `vit.py` 和教学测试。Day 2 接入现有训练、评估入口后再运行 ViT 的短检查，Day 4 接入新的指标与绘图，Day 5 才评估冻结的六个变体。
+Day 1 先写 `vit.py` 和 Patch 检查，Day 2 接入分类入口。Day 3 训练完成后，从两个运行目录取配置快照和 best。Day 4 实现按 split 写指标的评估分支，生成两份 ViT 验证 JSON，再和第三周四组模型一起冻结。Day 5 才执行六条测试命令。[第三周交接表](../../cnn_vs_resnet/week3/README.md#week5-handoff)
 
 <a id="environment"></a>
 
@@ -31,14 +31,14 @@ python -m pip check
 | Day 2 | `python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml --overfit-samples 64` | 小样本拟合 |
 | Day 3 | `python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml` | Patch=4 |
 | Day 3 | `python scripts/train_cv.py --config configs/cv/vit_patch8_cifar10.yaml` | Patch=8 |
-| Day 4 | `python scripts/evaluate.py --config configs/cv/vit_cifar10.yaml --checkpoint outputs/vit_patch4/best.pt --split val` | Patch=4 验证与统一指标 |
-| Day 4 | `python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpoint outputs/vit_patch8/best.pt --split val` | Patch=8 验证与统一指标 |
-| Day 5 | `python scripts/evaluate.py --config configs/cv/cnn_cifar10.yaml --checkpoint outputs/cnn_bn_on/best.pt --split test` | CNN BN on 测试 |
-| Day 5 | `python scripts/evaluate.py --config configs/cv/cnn_no_bn_cifar10.yaml --checkpoint outputs/cnn_bn_off/best.pt --split test` | CNN BN off 测试 |
-| Day 5 | `python scripts/evaluate.py --config configs/cv/resnet_cifar10.yaml --checkpoint outputs/resnet_on/best.pt --split test` | 残差 on 测试 |
-| Day 5 | `python scripts/evaluate.py --config configs/cv/resnet_no_residual_cifar10.yaml --checkpoint outputs/resnet_off/best.pt --split test` | 残差 off 测试 |
-| Day 5 | `python scripts/evaluate.py --config configs/cv/vit_cifar10.yaml --checkpoint outputs/vit_patch4/best.pt --split test` | Patch=4 测试 |
-| Day 5 | `python scripts/evaluate.py --config configs/cv/vit_patch8_cifar10.yaml --checkpoint outputs/vit_patch8/best.pt --split test` | Patch=8 测试 |
+| Day 4 | `python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch4/config.yaml --checkpoint outputs/vit_patch4/best.pt --split val` | Patch=4 验证与统一指标 |
+| Day 4 | `python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch8/config.yaml --checkpoint outputs/vit_patch8/best.pt --split val` | Patch=8 验证与统一指标 |
+| Day 5 | `python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/cnn_bn_on/config.yaml --checkpoint outputs/cnn_bn_on/best.pt --split test` | CNN BN on 测试 |
+| Day 5 | `python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/cnn_bn_off/config.yaml --checkpoint outputs/cnn_bn_off/best.pt --split test` | CNN BN off 测试 |
+| Day 5 | `python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/resnet_on/config.yaml --checkpoint outputs/resnet_on/best.pt --split test` | 残差 on 测试 |
+| Day 5 | `python scripts/evaluate.py --config experiments/cnn_vs_resnet/week3/runs/resnet_off/config.yaml --checkpoint outputs/resnet_off/best.pt --split test` | 残差 off 测试 |
+| Day 5 | `python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch4/config.yaml --checkpoint outputs/vit_patch4/best.pt --split test` | Patch=4 测试 |
+| Day 5 | `python scripts/evaluate.py --config experiments/vit_patch_size/week5/runs/patch8/config.yaml --checkpoint outputs/vit_patch8/best.pt --split test` | Patch=8 测试 |
 
 ## 计划配置与待保存结果
 
@@ -59,7 +59,7 @@ P 是 Patch 边长；32×32 图片切出 N=(32/P)² 个 Patch，再加一个 CLS
 | `figures/patch_comparison.png` | 两种 Patch 的训练/验证曲线 |
 | 各组 `experiment_dir/figures/confusion_{val,test}.png`、`mistakes_{val,test}.png` | 各变体混淆矩阵与真实误分类，按实际运行目录索引 |
 | `runs/patch4 / runs/patch8` | 各组 config、history、run_summary.json、val/test_metrics.json 和图表 |
-| `outputs/vit_patch4 / outputs/vit_patch8` | 项目根下：best/last checkpoint |
+| `outputs/vit_patch4 / outputs/vit_patch8` | 各自的 initial、best 和 last checkpoint |
 
 ## 周总结
 

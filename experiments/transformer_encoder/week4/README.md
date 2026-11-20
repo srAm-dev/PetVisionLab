@@ -3,13 +3,13 @@
 学习指南：[第四周逐日任务](../../../docs/week4.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-单头演示、多头 Attention、Mask 行为、LayerNorm 和两层 Encoder 都可运行。下方记录保留各天的 CPU 检查结果。接下来补 Day 3 的带 Mask 官方对照，以及 Day 6 的张量流图和重写练习。
+第四周 Day 5 已完成。接下来做 Day 6 的统一检查、张量流图和重写练习。Day 3 留下的带 Mask 官方数值对照安排在周末整理时补上。[Day 5 检查结果](#day-5-checks) · [Day 6 操作步骤](../../../docs/week4.md#day-6)
 
 <a id="environment"></a>
 
 ## 环境准备
 
-沿用 `petvision` 和第二周的 torch / pytest，不新增大模型依赖。CPU float64 做小尺寸数值对照，GPU FP32 确认设备兼容；完整操作和 Mask 语义见[第四周指南](../../../docs/week4.md)。版本变化时记录 torch 版本和参考 API。
+沿用 `petvision` 和第二周的 torch / pytest。参考对照用 CPU float64，有可用 GPU 时可另做 FP32 设备兼容检查。实际使用的设备随运行记录。
 
 ```bash
 conda activate petvision
@@ -163,6 +163,8 @@ causal 测试将输入位置 2、3 的特征加 10，比较前两个位置的输
 用 CPU float32、C=4、max_length=128、dropout=0 和全零输入 `[1,3,4]` 运行一个小例子：位置 0 得到 `[0,1,0,1]`，位置 1 约为 `[0.841471,0.540302,0.010000,0.999950]`，与手算公式在 1e-7 容差内一致。输入各元素加 1 后，输出也各加 1，形状保持不变。
 
 pe 的形状为 `[1,128,4]`，出现在 named_buffers 和 state_dict 中，不出现在 named_parameters 中；将模块转为 float64 时，pe 随之转换。此次用直接运行的小例子核对，正式教学测试留到第三步。
+
+<a id="day-5-checks"></a>
 
 ## Day 5 第三步：位置编码、两层 Encoder 与因果隔离（2026-11-16）
 

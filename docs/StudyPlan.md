@@ -2,13 +2,13 @@
 
 从 Python、NumPy 和必要的数学开始，逐步实现视觉模型、Transformer 和小型语言模型，最后运行预训练 LLM / VLM。适合需要补充 Python 实践和深度学习理论、希望亲手理解计算过程的学习者。
 
-每周投入约 30 小时，其中 24 小时用于明确任务，6 小时用于补基础、调试和复盘；八周约 240 小时。进度按检查结果推进，可以顺延。
+每周预计投入 30 小时，其中 24 小时安排具体任务，6 小时留给补基础、调试和复盘。八周约 240 小时。当天的检查没通过，就把后面的任务顺延。
 
-本地使用 RTX 4060 笔记本和 Conda 环境 `petvision`，第一周以 Python 3.12、NumPy、Matplotlib 起步；第八周计划在云端 48GB GPU 上运行 LLM / VLM，型号、可用显存和依赖届时实测。
+第一周在本地 Conda 环境 `petvision` 中用 Python 3.12、NumPy 和 Matplotlib 做练习。视觉模型和 Mini-GPT 的训练预算按本地 RTX 4060 笔记本估算。第八周计划使用云端 48GB GPU，运行时记录型号、可用显存和依赖。
 
-本轮完成小模型的实现、训练和实验报告，并体验预训练推理。完整 Encoder-Decoder、宠物迁移对照、模型微调和 App 放入后续拓展。首次跟做可先看[学习与执行入口](README.md)。
+本轮完成小模型的实现、训练和实验报告，并体验预训练推理。完整 Encoder-Decoder、宠物迁移对照、模型微调和 App 放入后续拓展。第一次学习可以从 Python 练习开始。仓库已完成第四周 Day 5，接下来在 Day 6 画出两层 Encoder 的张量形状，重写多头 Attention。[第一周 Day 1](week1.md#day-1) · [第四周 Day 6](week4.md#day-6)
 
-版本 v1.33，更新于 2026-11-19。
+版本 v1.34，更新于 2026-11-20。
 
 ## 目录
 
@@ -46,17 +46,11 @@
 
 ### 阅读与代码约定
 
-跟做时先找到当天指定的文件和函数，准备例子，完成计算，再运行检查。每一步写清修改对象、输入、操作顺序和完成标准。需要新数据或预训练权重时，先完成来源、加载和配置，再执行后续计算。
+打开当天指定的函数，先给一组小输入写下预期数值或形状。已有实现可以直接运行，算错的地方沿着张量逐步查。需要重写时只看公式和函数签名，把草稿放在 `tmp/`，用同一组输入核对。
 
-同一组件先完成实现文件，再编写测试文件；配置先于读取它的入口，被调用模块先于调用者。一个实现段写完导入、构造、参数和计算方法后再切换文件，测试数据与断言留在后面的测试段。若测试的是训练或推理入口，先接通该入口再测试。
+遇到新模块，先在指定文件写出构造和前向计算。层和参数在 `__init__` 中创建，`forward` 接收输入并返回结果，多层模型用 `ModuleList` 注册各层。再准备配置和输入数据，接通调用它的脚本。指南中的 `...` 或 `pass` 需要补成实际计算，函数体里的变量取自参数或该函数内的赋值。
 
-类的实现步骤应写明 __init__/forward 的完整签名，以及 forward 依赖的 self 成员如何创建。函数片段应写明放在模块顶层、类方法还是 main 内，输入和返回值使用稳定名称；脚本局部变量不隐式传进模型或辅助函数。多层结构直接说明 ModuleList 的创建方式和逐层调用，不要求先写一版单层再改成多层。
-
-手算步骤给出要算的数值或形状；实现步骤给出函数职责和返回值；检查步骤给出固定条件、比较项和容差。术语、接口差异和输出格式随相关操作说明。阅读一个未使用的接口、打印已有结果或重复一句结论，不单独计作实现任务。
-
-正式实现放入指定文件；手算、草稿和随机小张量用于理解与检查。运行命令前先完成相应函数和入口。`...`、`pass` 和“自行补齐”表示待实现；依赖上文变量的片段放入指定函数。已有完整实现时，复习片段用于核对过程，修改时保留已完成的功能。
-
-每天的自查同时检查代码输出与解释能力。从第 4 周 Day 5 起，新增测试只围绕当天要理解的计算：先预测一个小例子的结果，再核对形状、数值或信息流。每个概念保留一个代表输入，完整模型做一次前向与反向即可。异常输入穷举、批次与长度的组合覆盖、逐参数梯度参考对照、保存加载和入口分支回归测试不列为必做。已有测试保留；正式训练、验证集与测试集评估仍按各周实验执行。有限参考重写允许看公式和接口清单，写完后实际调用，说明输出与预期是否一致。更多路径和记录约定见[执行说明](README.md#working-rules)。
+第四周前半段要通过数值对照弄清 Attention 和 LayerNorm 的梯度。从 Day 5 起，每个新概念选一个代表输入，完整模型走一次前向和反向。训练、重载、续训和最终评估仍须走各周的实际入口。用例组合和额外的逐参数对照留作选做。[执行说明](README.md#working-rules)
 
 形状字母按当前任务解释：B 是批次大小，H/W 是图像或特征图高宽，T 是序列长度，C 是当前特征维度，V 是词表大小。P 在卷积中表示 padding，在 ViT 中表示 Patch 边长；N 在线性回归中是样本数，在 ViT 中是每图 Patch 数，在语言验证中是 token 总数。数学式中的 `^` 表示乘方，Python 使用 `**`；`1e-3` 表示 0.001。
 
@@ -83,7 +77,7 @@
 
 每周安排六个学习日，每天 4 小时任务、1 小时机动，另留一天休息。训练等待时可以阅读或整理结果，重叠时间只计一次，GPU 耗时单独记录。
 
-机动时间优先处理语法、数学和调试问题；仍未通过基础检查，就先补齐再进入下一周。后续优先画清计算顺序、跑通小输入，再整理实验观察。先确认输入输出，再通过最小前反向检查，最后完成正式实验；扩展阅读和排版放在后面。结果未支持假设时，检查实现与预算后如实分析。
+一段时间只解决一个能核对的问题。比如第四周先确认一个 query 能读哪些 key，再比较对应权重。第三、五周的正式训练可以跨学习日，等待时先算模型形状、读已有基线，等两组结果齐了再解释差异。若小样本还拟合不了，用机动时间查目标、梯度和参数更新，后面的训练顺延。
 
 ### 1.3 八周成果与后续成果
 
@@ -93,7 +87,7 @@
 | 八周主线 | 视觉分类实验 | MNIST MLP；CIFAR-10 CNN、ResNet18、ViT；三类对照与统一结果表 |
 | 八周主线 | Transformer 核心模块 | 手写 Attention、LayerNorm、FFN、位置编码、Encoder 及关键测试 |
 | 八周主线 | 语言建模实验 | Bigram、字符级 Mini-GPT、简化 BPE、采样和中断续训 |
-| 八周主线 | 预训练模型体验 | CLIP 分类或检索、小型 LLM 推理、至少 20 张图片 × 每张 2 个问题的 VLM 记录 |
+| 八周主线 | 预训练模型体验 | CLIP 零样本分类、小型 LLM 推理、至少 20 张图片且每张至少 2 个问题的 VLM 记录 |
 | 八周之后拓展 | 更完整的学习与应用 | Encoder-Decoder、宠物迁移对照、LLM / VLM 微调、Gradio 系统 |
 
 CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独立的语言建模实验；视觉问答使用真正接收图片与文本的 VLM。分类标签传给纯文本 LLM 的流程不能作为视觉理解能力的证据。
@@ -102,43 +96,32 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 
 ## 2. 八周总览与里程碑
 
-下表每周的明确任务预算均为 24 小时，再加 6 小时机动时间，合计 30 小时。训练等待期间可以阅读和整理结果，实验记录中另记 GPU 运行耗时，避免把同一段学习时间重复计入预算。
+每周有 24 小时安排具体任务，另留 6 小时机动。训练等待时可以读教材或整理结果，GPU 运行时间单独记录。
 
-| 周次 | 主题 | 24 小时明确任务分配 | 本周验收成果 |
-| --- | --- | --- | --- |
-| 1 | Python、NumPy、必要数学 | Python / NumPy 8h + 数学 8h + 线性回归 8h | 可运行的 NumPy 线性回归，解释一次参数更新 |
-| 2 | PyTorch 与训练流程 | Tensor / autograd 6h + 数据 / MLP 6h + 训练 / 调试 8h + 记录 4h | MNIST MLP、数据划分、曲线、checkpoint 与独立测试 |
-| 3 | CNN 与 ResNet | CNN 6h + ResNet 8h + 对照实验 8h + 报告 2h | CIFAR-10 基线、BN 消融、残差开关对照 |
-| 4 | Attention 与 Encoder | Attention 8h + Encoder 8h + 小张量练习 4h + 张量流与解释 4h | 手写核心模块，形状 / Mask / 梯度测试通过 |
-| 5 | ViT | ViT 8h + 训练 / Patch 消融 10h + 分析 6h | Patch=4/8 对照、CNN / ResNet / ViT 分类报告 |
-| 6 | 字符级 Mini-GPT | 数据 / Bigram 6h + GPT 10h + 训练 6h + 样例 2h | 同 tokenizer 的基线比较，模型可加载生成 |
-| 7 | BPE 与 GPT 工程 | BPE 8h + 采样 / 续训 6h + 实验 6h + 报告 4h | 编解码边界检查、可恢复训练、语言模型报告 |
-| 8 | CLIP、LLM / VLM 与总结 | CLIP 4h + LLM 4h + VLM 8h + 总结 8h | 推理脚本、结构图、至少 40 条图像问答、最终报告 |
-
-### 逐日执行入口
-
-各周按 6 个学习日安排，每天 4 小时明确任务 + 1 小时机动；具体资料、安装、文件、操作、命令与验收均按学习日写在指南中。对应实验目录的 README 保存实际环境、复现索引与结果。说明文档已提供，源码、配置、数据与结果按学习日逐步创建。
-
+<a id="逐日执行入口"></a>
+<a id="各周计划与进度记录入口"></a>
 <a id="current-progress"></a>
 
-### 各周计划与进度记录入口
+| 周次 | 逐日指南 | 24 小时任务分配 | 本周验收与实验记录 |
+| --- | --- | --- | --- |
+| 1 | [Python、NumPy、必要数学](week1.md) | Python / NumPy 8h + 数学 8h + 线性回归 8h | [NumPy 回归、梯度检查与学习率对照](../experiments/basics/week1/README.md) |
+| 2 | [PyTorch 与训练流程](week2.md) | Tensor / autograd 6h + 数据 / MLP 6h + 训练 / 调试 8h + 记录 4h | [MNIST 划分、训练曲线、best 与独立测试](../experiments/mnist_mlp/week2/README.md) |
+| 3 | [CNN 与 ResNet](week3.md) | CNN 6h + ResNet 8h + 对照实验 8h + 报告 2h | [BN 与残差两对实验的验证结果](../experiments/cnn_vs_resnet/week3/README.md) |
+| 4 | [Attention 与 Encoder](week4.md) | Attention 8h + Encoder 8h + 小张量练习 4h + 张量流与解释 4h | [数值对照、Mask 扰动与两层 Encoder 检查](../experiments/transformer_encoder/week4/README.md) |
+| 5 | [ViT](week5.md) | ViT 8h + 训练 / Patch 消融 10h + 分析 6h | [Patch=4/8 对照与六个视觉变体的测试](../experiments/vit_patch_size/week5/README.md) |
+| 6 | [字符级 Mini-GPT](week6.md) | 数据 / Bigram 6h + GPT 10h + 训练 6h + 样例 2h | [同词表验证对照与加载后生成](../experiments/mini_gpt/week6/README.md) |
+| 7 | [BPE、采样与续训](week7.md) | BPE 8h + 采样 / 续训 6h + 实验 6h + 报告 4h | [BPE 往返、恢复训练与语言模型测试](../experiments/mini_gpt/week7/README.md) |
+| 8 | [CLIP、LLM / VLM 与总结](week8.md) | CLIP 4h + LLM 4h + VLM 8h + 总结 8h | [推理记录、结构图、至少 40 条图像问答与最终报告](../experiments/vlm_qa/week8/README.md) |
 
-下表左列链接学习计划，右列链接对应周的实际进度、环境、运行结果和周总结。每次完成练习后更新对应 README；总计划保留里程碑和验收要求，不重复维护完成状态或实测指标。
+### 哪些成果要留给后面
 
-| 周次 | 逐日学习指南 | 环境、运行与周总结 |
-| --- | --- | --- |
-| 第 1 周 | [Python、NumPy 与数学](week1.md) | [第一周 README](../experiments/basics/week1/README.md) |
-| 第 2 周 | [PyTorch 与完整训练](week2.md) | [第二周 README](../experiments/mnist_mlp/week2/README.md) |
-| 第 3 周 | [CNN、ResNet 与对照](week3.md) | [第三周 README](../experiments/cnn_vs_resnet/week3/README.md) |
-| 第 4 周 | [Attention 与 Encoder](week4.md) | [第四周 README](../experiments/transformer_encoder/week4/README.md) |
-| 第 5 周 | [ViT 与视觉比较](week5.md) | [第五周 README](../experiments/vit_patch_size/week5/README.md) |
-| 第 6 周 | [字符级 Mini-GPT](week6.md) | [第六周 README](../experiments/mini_gpt/week6/README.md) |
-| 第 7 周 | [BPE、采样与续训](week7.md) | [第七周 README](../experiments/mini_gpt/week7/README.md) |
-| 第 8 周 | [预训练模型与总结](week8.md) | [第八周 README](../experiments/vlm_qa/week8/README.md) |
+第二周把手推梯度换成自动求导，随后写成的分类训练循环供第三、五周复用。第三周用验证集选出四个 CIFAR-10 模型，把固定划分、训练配置和 best 留给第五周。第四周可以先用小张量学 Attention，这一步只需要前面练过的反向传播和残差相加。[各周步骤与实验记录](README.md#每周从哪里接手)
+
+第五、六周各自组合第四周的 Attention 与 LayerNorm。ViT 让所有图像 Patch 互相可见，GPT 用因果 Mask 屏蔽未来位置。第六周另建文本窗口和按 token 计数的训练、验证循环。第七周复用这份原文划分和字符基线，在新词表上从头训练 BPE GPT。[ViTBlock](week5.md#encoder-reuse) · [语言模型的验证窗口](week6.md#eval-windows) · [BPE 训练顺序](week7.md#bpe-resume-order)
+
+第八周的 CLIP 读取第三周验证索引对应的原图，LLM/VLM 各自加载预训练权重。写最终报告时再取出第五周的视觉测试表，以及第七周按词表分别统计的语言模型测试结果。[第八周 Day 5](week8.md#day-5)
 
 ### 里程碑
-
-第一至三周的脚本、配置和实验记录已在仓库中，第四周可运行单头 Attention 到两层 Encoder 的检查。带 Mask 的官方对照和张量流复盘按第四周指南继续。第五至八周从对应周的实现步骤开始，等脚本、配置和输入准备好再执行命令。
 
 - M1（第 2 周）：能解释梯度更新，并独立完成 MNIST 的数据、训练、验证、保存和测试流程。
 - M2（第 3 周）：能训练 CNN / ResNet，处理基本形状与优化问题，完成两类单变量对照。
@@ -203,10 +186,10 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 
 #### 编程作业
 
-1. 用 PyTorch 重新实现第一周的线性回归，对照手写梯度和 `autograd`。
+1. 在 `scripts/torch_basics.py` 用 PyTorch 计算第一周线性回归的 MSE，调用 `backward()`。分别在零参数和指定的非零参数处，将损失、`dw` 和 `db` 与 NumPy 结果逐项核对。
 2. 对 MNIST 实现三层 MLP，将官方训练集固定划分为训练集 / 验证集，保留官方测试集。
 3. 先关闭随机增强，在固定的小批数据上做过拟合检查：确认 loss 能明显下降，模型能拟合这些样本。
-4. 按[第二周 Day 4 第四步](week2.md#mnist-configurable-interfaces)将 MLP 的尺寸和数据函数的划分 / 预处理设置参数化，保留旧默认调用。验证自定义参数有效后，再写 YAML、解析字段并创建实际训练对象；配置文件不会自动改变模型或数据。
+4. 用默认尺寸和一组自定义尺寸分别构造 MLP。调用 `build_mnist_loaders` 时显式传入 `train_transform` 和 `eval_transform`，再核对 YAML 中的归一化设置、验证集大小和批量大小是否传到了对应对象。[第二周 Day 4 接口练习](week2.md#mnist-configurable-interfaces)
 5. 通过配置入口的 smoke / 小样本检查后，Day 5 接通 checkpoint，再正式训练并记录训练 / 验证 loss 和 accuracy，按验证结果保存最佳权重。
 6. 从 checkpoint 重新创建模型、加载权重并推理；配置确定后再做独立测试。
 
@@ -220,7 +203,7 @@ CNN、ResNet、ViT 在相同数据集上进行分类比较；Mini-GPT 用于独�
 
 #### 验收标准
 
-- [ ] 默认 MLP 和数据接口仍可调用，修改参数的独立检查通过；配置中的字段由训练入口实际使用。
+- [ ] 默认 MLP 和自定义尺寸的 MLP 均返回预期的 logits。两个 transform 由调用者传入，实际划分和批次大小与配置一致。
 - [ ] 分类训练与评估命令可独立运行。
 - [ ] 小批数据过拟合检查通过，能解释一个实际遇到的训练错误。
 - [ ] 保存加载前后的验证结果一致，允许硬件带来的数值波动。
@@ -355,7 +338,7 @@ Oxford-IIIT Pet 的多模型迁移对照、预训练 ViT / ResNet 对照和 timm
 1. 选择 Tiny Shakespeare 等小型文本，先固定训练 / 验证 / 测试原文划分，再构造样本，避免重叠窗口跨越划分边界。
 2. 从字符级 Bigram Baseline 写到 Mini-GPT，复用 Attention 与 LayerNorm，在 mini_gpt.py 定义 GPTBlock；使用 pre-LN、GELU、Causal Mask、可学习位置和最终 LayerNorm，并共享 token embedding / 无 bias 输出头权重。
 3. 本地先用小配置跑通：2 层、hidden=128、4 heads、context=128、batch=16；根据实测显存与耗时再调整。
-4. 实现训练、验证、保存加载和基础自回归 `generate()`。
+4. 接通训练、验证和 checkpoint 保存。用 `scripts/generate.py` 加载 best，从固定 prompt 开始，每次采样一个新 token 并追加到序列。
 5. Bigram 与字符级 GPT 使用相同 tokenizer、词表、数据划分和验证口径。
 
 #### 验收标准
@@ -384,7 +367,7 @@ BPE 训练与编解码、Context Window、Temperature、Top-k、模型状态与�
 
 1. 手写教学版字节级 BPE：训练时同频按当前序列中先遇到的 pair 选择，encode 按保存的 merge rank；decode 先拼 bytes，默认 errors="replace"，严格往返显式传 errors="strict"。只在训练文本上学习规则，并保存词表与 merge 顺序。
 2. 检查空字符串、空白、换行、中文、emoji 和混合文本的编解码往返。
-3. 按 nanoGPT 给生成加入 Temperature 和 Top-k：k 按词表大小截断，只屏蔽低于第 k 高分阈值的项，阈值处并列项全部保留；固定 prompt、种子比较两组设置。
+3. 给生成加入 Temperature 和 Top-k。用同一字符 GPT、prompt 和种子生成三次，先只改温度，再固定温度打开 top-k。k 超过词表大小时取词表大小，阈值处的并列项都保留。[采样对照](week7.md#day-3)
 4. 保存并恢复模型、优化器、训练进度、随机状态及所用 tokenizer；有 scheduler 时一并恢复。保留历史最佳验证值和日志统计累计值，确保恢复后不覆盖更优 best 或重复记录。
 5. 在 BPE 设置下完成一次小预算训练，记录编码长度、耗时和生成样例；更多 Context Length 对照列入拓展。
 
@@ -411,7 +394,7 @@ BPE 训练与编解码、Context Window、Temperature、Top-k、模型状态与�
 
 ### 第 8 周｜学习目标与算力分工
 
-- CLIP：双编码器、图文 embedding、相似度、零样本分类和检索，可在本地运行。
+- 在本地用 CLIP 的图像和文本编码器计算相似度，完成零样本分类。图文检索作为选做练习。
 - 小型 LLM：在云端完成加载、Chat Template、生成和解码，了解预训练模型与自己的 Mini-GPT 的关系。
 - VLM：在云端运行真正接收图像与文本的模型，理解 Vision Encoder → Projector → Language Model 的信息流。
 - 整理八周代码、实验结果、复现命令和未完成事项。
@@ -424,16 +407,16 @@ BPE 训练与编解码、Context Window、Temperature、Top-k、模型状态与�
 
 ### 编程作业
 
-1. 运行预训练 CLIP，完成零样本分类或文本检索图片，记录类别 / 查询、图片来源及输出。
+1. 用第三周的 CIFAR-10 验证索引每类选 20 张原图，以固定类别提示词做 CLIP 零样本分类。保存这 200 个索引和逐图预测。文本检索图片可在此基础上选做。
 2. 云端运行一个小型 LLM，保存模型 ID、revision、环境、prompt、Chat Template 和生成参数。
 3. 云端运行一个 VLM，查看所选实现的主要模块，画出图像、视觉 token、投影和生成之间的数据流，标注关键形状。
-4. 选取 至少 20 张图片，每张至少 2 个问题，共至少 40 条问答。在运行前准备可人工核查的参考答案或判定标准，覆盖类别、颜色、数量、位置及无法从图片判定的问题。
+4. 选取至少 20 张图片，每张至少 2 个问题，共至少 40 条问答。批量推理前写好可人工核查的参考答案和判定标准，覆盖类别、颜色、数量、位置及无法从图片判定的问题。
 5. 保存全部问题、模型原始输出、人工判定和错误类型，分析典型成功与失败样例；记录推理耗时和峰值显存。
 6. 维护项目介绍与文档导航，将本周模型环境、推理参数、运行命令与评估结论整理到本周实验目录的 README，逐项核查本轮验收清单。
 
 ### 验收标准
 
-- [ ] CLIP 完成一个可重跑的分类或检索任务，能解释相似度的含义。
+- [ ] CLIP 的每个预测都能通过验证索引找回原图，能解释相似度如何决定预测类别。
 - [ ] LLM 与 VLM 各有可重跑的推理脚本，模型、依赖与权重版本有记录。
 - [ ] VLM 确实使用图片输入，能说明所选模型中图像信息进入语言模型的位置。
 - [ ] 至少 20 张图片、40 条问答都有原始结果与人工判定，完整保留失败结果。
@@ -839,25 +822,31 @@ BN / 残差开关与 Patch=4/8 使用独立配置快照，记录差异；配置�
 
 第三周 on 组在首次训练前保存 step=0 的 initial.pt，off 组按[初始化对齐步骤](week3.md#initial-state)读取共有层初始状态并新建优化器。该初始化入口从零进度开始新的实验；第七周的 `--resume` 则恢复完整训练状态并继续累计步数，执行前提见[续训顺序](week7.md#bpe-resume-order)。
 
-这些命令都从项目根目录运行。首次训练使用新目录。复查已有结果时，使用对应的已保存配置与 best；需要重训则复制配置，更换 `experiment_dir` 和 `output_dir`。第五至七周的命令等当天实现和配置完成后再运行。
+以下四组命令可以在当前仓库的 `petvision` 环境运行。从项目根目录执行，按周核对已有实现。
 
 ```bash
-# 第 1 周
-python scripts/linear_regression_numpy.py
-# 第 2 周
-python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml
-python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
-# 第 3 周，检查现有 ResNet 训练入口
-python scripts/train_cv.py --config configs/cv/resnet_cifar10.yaml --smoke
+# 第 1 周，核对手写梯度
+python scripts/gradient_check.py
+# 第 2 周，用现有配置检查两个训练批次和两个验证批次
+python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke
+# 第 3 周，用小输入核对残差块和 ResNet 各阶段
+python -m pytest tests/test_resnet.py -q
+# 第 4 周，核对现有 Attention、LayerNorm 与 Encoder
+python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q
+```
+
+第五至七周先按逐日指南完成入口和配置，再开始相应的训练。每次新训练使用独立的 `experiment_dir` 和 `output_dir`。复查一次已完成的实验时，读回该次运行的配置快照和 best。
+
+```bash
 # 第 5 周，接通 ViT 分支并创建配置后
 python scripts/train_cv.py --config configs/cv/vit_cifar10.yaml
 # 第 6 周
 python scripts/train_gpt.py --config configs/llm/mini_gpt.yaml
 # 第 7 周，首次从零训练 BPE GPT
 python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml
-# 仅该次运行确实中断、且 last 尚未达到累计目标时恢复
-python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --resume outputs/mini_gpt_bpe/last.pt
 ```
+
+若这次 BPE 训练中断，先读 `last.pt` 里的 step。它还小于配置中的累计目标时，用 `python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --resume outputs/mini_gpt_bpe/last.pt` 从下一步续训。
 
 第 8 周的依赖准备、配置示例、推理命令与排错写在逐日指南中；实际模型版本、复现命令和结果记录在本周实验目录的 README。本地与云端分别保存环境快照。后续拓展 App 同样由学习指南提供安装和操作步骤，由对应周 README 保存实际复现索引，目标启动命令为 `python apps/gradio_app.py`。本 Markdown 提供规划与接口约定，代码在对应周次实现。
 
@@ -911,7 +900,7 @@ datasets/processed/
 5. 第 6-7 周：目标错位、Bigram/GPT 一次更新、因果隔离、BPE 合并与往返、温度和 top-k 概率。续训通过一段 CLI 演示观察，不新增恢复状态回归测试。
 6. 第 8 周：LLM / VLM 推理入口、真实图像输入与结果完整保存。
 
-官方整网参数与梯度映射、参数边界穷举、checkpoint 往返、精确续训状态对照、入口分支回归测试，以及 Projector / App 测试均属拓展，不阻塞学习进度。
+保存后重建是第二周和第六周的学习任务，第七周还要亲自从 last 恢复一次。需要研究逐参数复现时，再比较连续训练与中断恢复的完整状态。官方整网参数映射、参数边界穷举、额外的 checkpoint 和入口回归测试、Projector / App 测试留作拓展。
 
 <a id="acceptance"></a>
 
@@ -942,7 +931,7 @@ datasets/processed/
 
 预训练模型体验
 
-- [ ] CLIP 完成零样本分类或图文检索。
+- [ ] CLIP 的固定验证子集有 200 条零样本分类预测，能由逐图结果重新算出准确率。
 - [ ] 云端 LLM 与 VLM 各有可重跑推理脚本和模型 / 环境记录。
 - [ ] VLM 输入真实图片，至少 20 张图片、每张 2 个问题，共至少 40 条完整记录。
 - [ ] 问答有参考答案或判定标准、全部原始输出、人工判定及错误分析。
@@ -1063,7 +1052,7 @@ OOM 排查顺序：减小 micro-batch → 缩短序列 / 调整图像尺寸 → 
 | 评估 | [困惑度与 tokenizer（中文译文）](https://hugging-face.cn/docs/transformers/perplexity) | W7：明确 loss / PPL 比较口径 |
 | LLM | [Hugging Face LLM 中文课程](https://huggingface.co/learn/llm-course/zh-CN/chapter1/1) | W8：预训练模型、推理与 Chat Template |
 | 入门推理模型 | [SmolLM2-360M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) / [SmolVLM-256M-Instruct](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) | W8：先按模型卡跑通最小推理，再固定兼容依赖与实际 revision |
-| CLIP | [论文](https://arxiv.org/abs/2103.00020) / [官方实现](https://github.com/openai/CLIP) | W8：分类或检索 |
+| CLIP | [论文](https://arxiv.org/abs/2103.00020) / [官方实现](https://github.com/openai/CLIP) | W8 做零样本分类，检索选做 |
 | VLM | [SmolVLM 模型卡](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct) / [Idefics3 官方接口](https://huggingface.co/docs/transformers/model_doc/idefics3) | W8：按实际 model_type、兼容 API 与固定 revision 加载；nanoVLM / Smol Course 用于概念拓展 |
 
 ### 13.3 八周之后的拓展资料

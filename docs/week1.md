@@ -10,9 +10,9 @@
 
 先确认终端能进入项目根目录、Conda 已安装。编程和数学从基础练起，本周使用 CPU。
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/basics/week1/README.md)。
+如果是在复习，打开 `scripts/gradient_basics.py`，先在纸上写出 `dw` 和 `db`，再运行 `python scripts/gradient_check.py`。两个权重和一个偏置的最大误差应小于 `1e-5`。推导卡住就回到 Day 4，梯度对得上就看已有的学习率对照，解释为什么同样 500 步会得到不同的 loss。[梯度推导](#day-4) · [三组学习率结果](../experiments/basics/week1/results.csv) · [本周实验记录](../experiments/basics/week1/README.md)
 
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -737,4 +737,4 @@ python scripts/linear_regression_rewrite.py
 - [ ] 能运行重写脚本，并对照基准脚本核对最终参数与 MSE。
 - [ ] 保留环境记录、真实曲线和学习率对照，并在实验目录 README 中写出简短周总结。
 
-未通过的基础项先用机动时间补齐，仍未完成则顺延。通过后按照 [StudyPlan.md](StudyPlan.md#stage-1) 进入第二周 PyTorch 与 MNIST。
+把 `predict`、MSE 和两条梯度公式带到第二周。按 Day 1 配好 PyTorch 后，用同一组输入把 NumPy 的 `dw`、`db` 与 PyTorch 的 `w.grad`、`b.grad` 对照，再开始 MNIST 分类。[第二周 Day 1](week2.md#day-1) · [同一批数据的梯度对照](week2.md#torch-numpy-check)

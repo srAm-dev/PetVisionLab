@@ -8,13 +8,11 @@
 
 ## 开始前
 
-从 Day 1 创建 `src/petvision/data/text.py` 开始。本周的语言数据、模型、入口和配置由各天陆续添加。直接复用第四周的 `MultiHeadSelfAttention`、`LayerNorm` 和第二周的 checkpoint 工具。
+第五周训练图像分类器时，每张图对应一个类别。本周每个文本位置都要预测下一个 token。先用 ID 序列 `[0,1,2,3]` 写出三个输入和各自的目标，再到 Day 1 新建 `src/petvision/data/text.py`，把原文切成训练、验证和测试三段。[窗口手算](#day-2)
 
-第四周 causal Mask 已通过测试；能独立写训练、验证和 checkpoint 流程。保留第五周的视觉结果。
+Day 3 复用第四周的 `MultiHeadSelfAttention` 和 `LayerNorm`，组装自己的 GPTBlock。先用 `python -m pytest tests/test_encoder.py::test_encoder_causal_mask -q -s` 回看因果屏蔽，再用同样的后缀扰动检查 GPT 的前缀 logits。Day 4 沿用第二周的 checkpoint 字典读写工具。第五周的视觉结果留给第八周报告。[因果检查源码](../tests/test_encoder.py) · [checkpoint 工具](../src/petvision/utils/checkpoint.py) · [本周实验记录](../experiments/mini_gpt/week6/README.md)
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week6/README.md)。
-
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -310,9 +308,10 @@ loss 输入 target     [B*T]
 
 在 lm_trainer.py 实现 `train_step(model, x, y, optimizer)`：切 train、清梯度、前向、将 logits / y 展平计算交叉熵、backward、step，返回本批平均 loss 和目标数。`evaluate_lm(model, token_ids, context_length, device)` 切 eval/no_grad，完整累加所有窗口的 NLL 与目标数，返回 loss 和 n_target_tokens，再恢复原模式。两个函数的输入来自不同 split，不能在内部重新随机划分。
 
-两个函数统一返回 `{"loss": float值, "n_target_tokens": int值}`，键名固定；train_step 的数量为 y.numel()，evaluate_lm 为完整分窗的累计目标数。lm_trainer.py 顶层导入 torch、`torch.nn.functional as F` 和 iter_eval_windows；训练 loss 使用 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))`，验证使用相同展平方式但 reduction="sum"。evaluate_lm 开始先保存 `was_training = model.training`，在 try 中执行 eval/no_grad，在 finally 中 `model.train(was_training)`，确保退出时恢复原模式。
+`lm_trainer.py` 顶层导入 torch、`torch.nn.functional as F` 和 `iter_eval_windows`。两个函数都返回字典，训练入口按相同的键读取。
 
-train_step 中的 logits 先由 model(x) 得到；计算 loss 前执行 optimizer.zero_grad()，之后依次 loss.backward()、optimizer.step()，返回 loss.item() 与 y.numel()。evaluate_lm 在循环前设置 total_nll=0.0、total_target_tokens=0；每次从 iter_eval_windows 取得 x/y，分别 unsqueeze(0) 并迁移设备，再前向。若交叉熵使用 `reduction="sum"`，每窗直接累加 `loss.item()`；若使用默认的 `mean`，则先乘这一窗的 `y.numel()`。最后用累计 NLL 除以累计目标数，不能复用最后一窗的 loss 作为整份验证结果。
+- `train_step` 切换到 train，清梯度，用 `model(x)` 得到 `[B,T,V]` logits。以 `F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))` 求本批平均 loss，反传后更新一次，返回 `{"loss": loss.item(), "n_target_tokens": y.numel()}`。
+- `evaluate_lm` 先保存 `was_training = model.training`。在 `eval()` 和 `no_grad()` 下逐窗给 x、y 加 batch 维，并移到模型设备。交叉熵使用 `reduction="sum"`，每窗累加 NLL 和实际的 `y.numel()`。返回 `{"loss": total_nll / total_target_tokens, "n_target_tokens": total_target_tokens}`，用 `finally` 调用 `model.train(was_training)`。上面的 8 个 ID 应统计 7 个目标。
 
 #### 第四步：用错位例子和一次更新理解语言模型目标
 
@@ -664,7 +663,7 @@ for step in range(1, target_steps + 1):
 
 末步条件保证 steps 不是 eval_interval 的整数倍时，也验证和保存最后一段。例如 steps=450、eval_interval=200，记录应为 200、400、450 三行，最后一行 train_loss 仅统计最近 50 步。第七周增加 resume 后循环起点再改为 completed_steps+1，并恢复尚未完成区间的累计值。
 
-若统计训练处理量，输入 token 数按实际 batch 累加 `x.numel()`；原文字节数按每个输入 ID 对应字符的 UTF-8 bytes 长度累加，重复采样也重复计数。训练集字符都在训练词表内；下周 BPE 同样累加各 token 的 bytes 长度。静态语料文件大小与训练中累计处理量分别记录。
+在第一次更新前令 `input_tokens = input_bytes = 0`。每次取到 x，就给 `input_tokens` 加上 `x.numel()`，给 `input_bytes` 加上这批输入 ID 对应字符的 UTF-8 字节数。训练集字符都在训练词表内，同一个字符被再次采样就再次计数。两项累计值写入本次 `run_summary.json`，第七周比较字符与 BPE 实际读过的文本量时会用到。
 
 验证 loss 下降时保存 best，last 保存最近一次检查点。本轮在每个验证时点和最终步写 last，中断时以文件内 step 为准，最近保存之后尚未落盘的更新需要重跑。本周 checkpoint 至少包含重建所需的结构和词表标识；下周再补完整恢复训练状态。
 
@@ -840,7 +839,7 @@ model、tokenizer_hash、val_loss、steps、params 和时间都对应实际运�
 
 例如某个正确目标的预测概率为 0.5，它贡献的 NLL 为 `-ln(0.5)≈0.6931`。先把全部有效目标的 NLL 相加并除以目标数，得到平均 loss，再算 `PPL=exp(loss)`；不是分别计算各窗口 PPL 后取平均。若平均 loss 恰为 ln(2)，PPL 就为 2。不同 tokenizer 的预测单位不同，不能直接把字符 PPL 与 BPE PPL 的大小解释为谁更好。
 
-把 loss 差异、生成例子与架构联系起来：Bigram 只依赖当前 token，GPT 使用因果前缀。也说明小数据、单种子与有限预算的限制。
+今天比较两条验证 loss 曲线，记下各自 best 的 step、loss 和有效目标数。Bigram 只依赖当前位置，GPT 可以使用因果前缀。先用这个差别解释曲线，再在 Day 5 写好生成入口后检查文本样例。
 
 相同 tokenizer 和验证窗口保证两组指标可直接比较；相同 steps、batch 和 context 约束训练输入量，但两组参数量、计算量和收敛速度仍不同。这是一次基线比较，不能从一次输赢证明某种架构普遍更好。若 GPT 表现较差，先展示因果性、小批过拟合、完整验证和保存加载的检查结果，再结合曲线讨论欠拟合或过拟合；额外实验另存配置与结果，不覆盖首轮记录。
 

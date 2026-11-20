@@ -4,15 +4,15 @@
 
 对应[总计划第 4 周](StudyPlan.md#week-4)。安排为 6 个学习日，每天 4 小时任务和 1 小时机动，共 30 小时；第 7 天休息。Day 1 可从任意星期开始，卡住时先补当前步骤，再顺延后面的任务。
 
-环境：沿用 Conda `petvision`；先在 CPU float64 小张量上做数值对照，再做本地 GPU FP32 检查。本周不要求大规模训练。
+数值对照在 Conda 环境 `petvision` 中用 CPU float64 小张量完成。有可用 GPU 时，可以另用 FP32 检查模型和 Mask 一起迁移设备后的前向计算。
 
 ## 开始前
 
 能写 `nn.Module` 的前向和反向检查，解释 BasicBlock 两条路径的形状。
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/transformer_encoder/week4/README.md)。
+第四周 Day 5 已完成。继续学习时直接到 Day 6，用已经通过检查的两层 Encoder 画张量流，并重写多头计算。第一次学 Attention，可以从 Day 1 的零 query 手算开始。[Day 6](#day-6) · [Day 5 实验记录](../experiments/transformer_encoder/week4/README.md#day-5-checks) · [Day 1](#day-1)
 
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -441,15 +441,16 @@ python -m pytest tests/test_attention.py -q -s \
 
 causal 打印前两个位置的输出误差；padding 分别打印两条序列有效位置的误差；合并 Mask 打印屏蔽位置的最大权重、行和误差与有限梯度检查结果；全屏蔽测试分别验证单独 attn_mask、单独 padding，以及仅在合并后出现全屏蔽的情况。四类检查共六项，实际结果记入[第四周实验记录](../experiments/transformer_encoder/week4/README.md)。
 
-#### 第四步：补做带 Mask 的官方参考对照
+<a id="masked-reference"></a>
 
-现有 `tests/test_attention.py::test_attention_reference` 只覆盖八组无 Mask 输入。要完成本步，在这个函数的参数化上加入 Mask，沿用 Day 2 的参数复制和梯度映射。参考层继续使用 nn.MultiheadAttention，两边布尔 True 都表示屏蔽，传同一份 Mask 即可。
+#### 第四步　补做带 Mask 的官方参考对照
 
-1. 保留 bias=False/True、B=1/2、T=1/8 的八组检查，在现有参数化上增加 Mask 类型参数，取无 Mask、causal、padding、两者合并四种情况。C=32、heads=4 不变，共 32 组。
-2. causal 使用 T×T 严格上三角布尔表。padding 对第一条序列屏蔽最后一个 key，其余序列保留全部 key；T=1 时不屏蔽，保证每个 query 都能读取首个 key。合并情况同时传入这两张表。
-3. 创建两份数值相同的独立输入，复制全部投影参数，统一 CPU float64、dropout=0 和 eval。自写层与参考层均传入 attn_mask、key_padding_mask；参考层仍设置 need_weights=True、average_attn_weights=False。
-4. 比较 output 和每头 weights 的形状与数值。对两个输出使用同一份 probe 反向，再比较输入梯度及 Q/K/V、out_proj 的参数梯度；沿用 Day 2 的逐项映射，最大绝对差小于 1e-6。
-5. 打印每组 Mask 类型、比较项、shape、最大误差和容差，实际结果记入本周 README。全屏蔽输入继续由第三步的 ValueError 测试检查，不放入正常数值对照。
+先运行 `python -m pytest tests/test_attention.py::test_attention_reference -q`。现有八组用例比较无 Mask 时两种实现的数值。前一步的扰动测试能发现未来信息泄漏，这一步检查屏蔽后算出的具体数值。
+
+1. 在 `test_attention_reference` 的参数表里把每行写成 `(bias, B, T, mask_kind)`。原有八组均用无 Mask。再加三行，固定 `bias=False, B=2, T=8`，分别传 causal、padding 和两者合并。沿用 `C=32, heads=4`。
+2. 构造布尔表。causal 用 `[8,8]` 的严格上三角。padding 用 `[2,8]`，只把第一条序列的最后一个 key 标为 True。未用的表传 `None`。取第一条序列的首、末两个 query，分别写下三种条件下它们能读的 key，再看对应的两行权重。
+3. 复用 Day 2 的参数复制和两份独立叶子输入。自写层和 `nn.MultiheadAttention` 都传相同的 `attn_mask`、`key_padding_mask`，用 CPU float64、`eval()` 和零 dropout。自写层传 `return_weights=True`，官方层传 `need_weights=True, average_attn_weights=False`。
+4. 逐项比较输出、每头权重、同一 probe 反向得到的输入梯度和各投影参数梯度。每项最大绝对误差都应小于 `1e-6`。在周记录写下三种 Mask 的实测误差。已有全屏蔽行测试负责检查 `ValueError`。想研究批次、长度和 bias 对数值的影响时，再把四种 Mask 设置扩展到原来的八组输入。
 
 SDPA 接口差异作为选读：它的布尔 True 表示允许关注，直接调用时将合并后的屏蔽表取反；`dropout_p` 由调用者显式传入，评估时设置为 0，模型切 eval 不会自动覆盖这个参数。具体语义见 [PyTorch 官方 SDPA 文档](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html)。
 
@@ -459,7 +460,7 @@ SDPA 接口差异作为选读：它的布尔 True 表示允许关注，直接调
 python -m pytest tests/test_attention.py -q
 ```
 
-这条命令可直接核对现有 causal、padding、合并、全屏蔽和无 Mask 对照。完成第四步后，用 `python -m pytest tests/test_attention.py::test_attention_reference -q -s` 确认四种 Mask 设置都实际运行。若未来扰动后前缀输出改变，先确认 dropout 已关闭，再查上三角方向和 Mask 是否作用在 softmax 前；若出现 NaN，检查是否存在整行 key 被屏蔽。
+这条命令能直接核对现有的 Mask 行为和无 Mask 数值对照。完成第四步后，运行 `python -m pytest tests/test_attention.py::test_attention_reference -q -s`，应看到原有八组和新增三组的结果。前缀随未来输入变化时，先看 dropout、上三角方向和屏蔽位置。出现 NaN 时，查对应 query 是否还有可读的 key。
 
 - [ ] 屏蔽发生在 softmax 前，Mask 形状与布尔含义有明确约定。
 - [ ] 未来隔离与 padding key 扰动测试通过。
@@ -741,7 +742,7 @@ python -m pytest tests/test_encoder.py -q -s \
 
 复用草稿中的 T=3 小例子，分别不传 Mask 和传严格上三角 Mask，打印一个 query 的注意力权重，指出它能读取哪些位置；不用扩展已有测试的参数组合。ViTBlock 使用双向 Attention，GPTBlock 使用同一个多头核心和 causal mask；各自的 pre-LN 与激活、dropout 顺序按后续章节组织。
 
-本周完整 Encoder-Decoder、Cross-Attention 训练与序列复制任务仍在拓展范围；当前验收聚焦已实现模块与解释。
+按仓库当前进度，完成上面的图和重写练习后，周总结还有一项待补。Day 3 已检查 Mask 能隔离扰动，带 Mask 的输出、每头权重和梯度还要与 PyTorch 逐项比较。用 causal、padding 和两者合并各做一次，把实测误差记在本周 README。已做过这项对照时，直接引用当次结果。[Day 3 的对照步骤](#masked-reference)
 
 ### 运行与自查
 

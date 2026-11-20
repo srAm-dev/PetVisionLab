@@ -10,9 +10,9 @@
 
 MNIST 的训练、验证和保存加载已跑通；能说明 `train()`、`eval()` 与关闭梯度的区别。
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/cnn_vs_resnet/week3/README.md)。
+复习时先选一个下采样块，在纸上算出主分支和旁路相加前的形状，再运行 `python -m pytest tests/test_resnet.py::test_resnet_stage_shapes -q -s` 看整网各阶段。用已有的四行验证结果做两次比较，先看同一个 CNN 打开和关闭 BN，再看同一个 ResNet 打开和关闭残差。跨模型比较时，找出输入尺寸和训练预算还有哪些差异。[四组验证结果](../experiments/cnn_vs_resnet/week3/results.csv) · [实验记录与配置快照](../experiments/cnn_vs_resnet/week3/README.md#week5-handoff)
 
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -69,7 +69,7 @@ CNN 起步为三层 3×3 Conv，通道 32/64/128，前两层后各做 2×2 Pool�
 
 BN 两组内部都使用 32×32，残差两组内部都使用 96×96。第五周的 ViT 使用 32×32；跨架构表的 `image_size` 填实际模型输入边长，CNN、ViT 填 32，ResNet 填 96。
 
-下文的 batch=64、20 epochs 是首次学习的起始示例。复现已有实验时，读取[本周记录](../experiments/cnn_vs_resnet/week3/README.md)所链接的运行配置快照；正式命令使用当前 YAML 中的值。运行前核对 batch、epochs 和输出目录，保留需要的旧结果。同一对实验调整预算时，两组一起调整。
+下文的 batch=64、20 epochs 是首次学习的起始示例。存档的四组都训练了 100 轮，两组 CNN 的 batch 为 2048，两组 ResNet 为 512。复验按 `runs/<变体>/config.yaml` 还原当次设置。要重新训练，复制配置并更换其中的 `experiment_dir` 和 `output_dir`。若重跑整对消融，把 off 组的 `training.init_checkpoint` 指向这次 on 组产生的 `initial.pt`。[第五周要用的四份快照与权重](../experiments/cnn_vs_resnet/week3/README.md#week5-handoff)
 
 <a id="cnn-terms"></a>
 本周缩写先按下面理解，具体实现放在各天的步骤中：

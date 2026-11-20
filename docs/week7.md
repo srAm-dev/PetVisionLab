@@ -8,11 +8,11 @@
 
 ## 开始前
 
-开始前，按第六周验收完成字符 Bigram/GPT 和生成入口。保存第六周的 `split_manifest.json`、`char_tokenizer.json` 和两组 best。本周先在字符 tokenizer 模块加入 BPE，Day 3 仍用字符 GPT 验证采样，Day 5 才训练 BPE GPT。
+从第六周取 `split_manifest.json` 和三份原文，核对 train 的文件 hash 后，用训练原文前 100,000 个字符学习 BPE。第六周的 `char_tokenizer.json` 和字符 GPT 的 best 用于 Day 3 比较采样，两个字符模型的 best 都要留到 Day 6 做最终评估。[第六周交接](week6.md#day-6)
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mini_gpt/week7/README.md)。
+Day 4 在独立目录用小型字符 GPT 练习恢复训练。Day 5 按 BPE 的实际词表大小新建 GPT，从零训练。第六周的 checkpoint 已含生成所需的结构和权重，支持续训的优化器与随机状态从本周 Day 4 起保存。[本周实验记录](../experiments/mini_gpt/week7/README.md)
 
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -276,7 +276,7 @@ python scripts/train_tokenizer.py --vocab-size 512 --max-train-chars 100000
 
 ### 操作步骤
 
-先以同一个字符 GPT 和固定 prompt/seed 比较两组采样参数；BPE 生成在 Day 5 再接入，届时保留原始 token IDs 和解码状态。
+用同一个字符 GPT、prompt 和 seed，分别观察温度与 top-k 对采样的影响。BPE 生成安排在 Day 5。
 
 #### 第一步：手算温度缩放、top-k 过滤和 softmax 概率
 
@@ -323,25 +323,28 @@ def sample_next_token(last_logits, temperature=1.0, top_k=None):
 
 temperature 与 top_k 的合法性校验保留在函数里，不新增参数报错矩阵。固定 seed 的行为直接在下一步生成样例中观察，不另写采样复现测试。
 
-#### 第四步：固定参数生成两组样例，再核对相同设置的 IDs
+#### 第四步　每次改一个采样参数
 
-先运行下方两条生成命令，将 checkpoint、tokenizer、prompt、context、生成长度、temperature、top-k、seed 和环境写入对应记录。然后选定其中一组，在新进程用完全相同参数再运行，读回两条记录并比较新增 token ID 列表，要求逐项相同。模型保持 eval；采样随机性由 seed 控制。
+用同一份字符 GPT best，从 `ROMEO:` 开始生成 200 个 token。三次都用 seed 42 并切到 eval，依次采用下面的设置。
 
-按本周约定生成两组，不挑最好的一段替换完整输出。记录重复、连贯性和格式变化；同 seed 在不同采样分布下可能得到不同文本，这本身是实验现象。
+| 温度 | top-k | 比较哪两次 |
+| --- | --- | --- |
+| 1.0 | 关闭 | 基线，沿用第六周的采样分布 |
+| 0.7 | 关闭 | 和第一行比较，只有温度变化 |
+| 0.7 | 20 | 和第二行比较，温度相同，候选词经过过滤 |
 
-两次运行 `scripts/generate.py` 都传入 `--output experiments/mini_gpt/week7/samples.jsonl`，由第六周的追加写入逻辑保存；record 增加实际 temperature 和 top_k 字段。第一组与第二组保留各自完整记录，不覆盖第六周的样例文件。
-
-两组同时改变了 temperature 和 top-k，因此只说明这两种采样组合的观察结果；若之后想单独归因于温度或 top-k，再增加一次只改变其中一项的对照，放到拓展时间。
+在每条记录中保存 checkpoint、tokenizer、prompt、context、生成长度、温度、top-k、seed、环境和完整的 `new_ids`。对照上一小步算出的概率，挑一处实际文本描述重复或格式差异。任选一行，在相同环境的新进程再运行一次，两次的新增 ID 应逐项相同。
 
 ### 运行与自查
 
 ```bash
 python -m pytest tests/test_sampling.py -q
-python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --top-k 20 --output experiments/mini_gpt/week7/samples.jsonl
 python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 1.0 --output experiments/mini_gpt/week7/samples.jsonl
+python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --output experiments/mini_gpt/week7/samples.jsonl
+python scripts/generate.py --checkpoint outputs/mini_gpt/best.pt --prompt 'ROMEO:' --max-new-tokens 200 --seed 42 --temperature 0.7 --top-k 20 --output experiments/mini_gpt/week7/samples.jsonl
 ```
 
-先核对四个 logits 例子的概率，再生成两条完整样例。`--output` 沿用第六周新增的输出参数，这次保存到 week7，避免混入 week6 基线；每条记录同时保存本次采样设置与原始 token IDs。
+读回本周的 `samples.jsonl`，先按温度和 top-k 找到这三条记录，再检查其中一组复跑得到的 ID。
 
 - [ ] 温度和 top-k 的计算顺序正确，模型保持 eval 且关闭梯度。
 - [ ] 同 checkpoint、prompt、参数与 seed 可复现。
@@ -410,7 +413,9 @@ completed_steps = checkpoint["step"]
 
 恢复历史 best_val_loss 后再判断新结果是否改善，不能重置为无穷大后覆盖更好的 best；沿用同一输出目录并保留原 best 文件。history 只追加恢复点之后的新验证行，若日志已有比 checkpoint.step 更晚的记录，先归档冲突记录，不能混入本轮。
 
-配置核对也在恢复分支实际执行：模型结构、tokenizer / split hash、batch、context、优化器类型与超参数、验证间隔必须与保存时一致；允许提高 training.steps 这一累计目标，不能靠修改 YAML 学习率却被 optimizer_state 静默覆盖。当前等价续训检查使用同一 device / dtype。best.pt 的 step 及指标应与 last 中保存的 best_step / best_val_loss 对应；从更早备份恢复且目录里已有后续 best 时，应连同冲突日志归档后处理，不能把“未来的 best”混进这条恢复路径。
+恢复前核对模型结构、tokenizer 和划分的 hash、batch、context、优化器类型与超参数、验证间隔。它们都与保存时一致，`training.steps` 可以调高到新的累计目标。若 YAML 的学习率与保存值不同，在加载优化器前报错。这次续训演示前后都用 CPU 和 float32。
+
+读回 `best.pt`，把其中的 step 和验证 loss 与 last 保存的 `best_step`、`best_val_loss` 对上。若从更早的备份恢复，把目录中晚于恢复点的 best 和日志一并归档，再从该点对应的文件继续。
 
 把随机状态字段对应到真实 API：
 
@@ -633,7 +638,7 @@ python scripts/generate.py --checkpoint outputs/mini_gpt_bpe/best.pt --prompt 'R
 
 1. 字符基线：读回字符 Bigram / GPT 的 test_metrics，核对 tokenizer hash 和有效目标数相同，再并列报告 loss；BPE 结果单列，写自己的目标数与词表标识。
 2. BPE：引用严格往返检查的命令与结果，再读取 tokenizer_comparison.csv，核对两行使用同一原文后，报告 token 数和编码耗时差异。
-3. 采样：从 samples.jsonl 选取本次指定的两组记录，保留完整设置和原始输出，描述重复、连贯性等观察；两项采样参数同时变化时，不将差异只归因于其中一项。
+3. 从 `samples.jsonl` 取 Day 3 的三种设置。先比较关闭 top-k 时两种温度的输出，再比较温度 0.7 时启用和关闭 top-k 的输出。每项观察标明对应样例。
 4. 续训：填写 CPU 小模型的配置、两段命令、step 与 loss 变化，说明 optimizer 与随机状态的恢复位置。正式 BPE 从未中断也可以如实记录，不能虚构一次正式恢复经历。
 
 逐项加上实际配置或结果链接；缺一项就标记待补，不把代码文件存在等同于已经运行通过。
@@ -662,9 +667,9 @@ python scripts/train_gpt.py --config configs/llm/mini_gpt_bpe.yaml --evaluate-on
 
 - [ ] 教学 BPE 训练/保存/编解码完成，Unicode 与空白往返通过。
 - [ ] Temperature/Top-k 行为正确，固定条件生成可复现。
-- [ ] 完整中断续训与连续训练小规模对照通过。
+- [ ] 小型字符 GPT 在第 20 步保存，恢复后的第一次更新是第 21 步。最终 last 为第 40 步，history 只有第 20、40 步两行验证记录。
 - [ ] 字符/BPE 指标分开，编码长度、耗时、原始输出与失败分析齐全。
 
-保留 tokenizer 文件、续训误差、三组测试结果和失败样例，供第八周总结。更多上下文长度与语料实验另行安排。
+第八周报告会用到配套的 tokenizer 文件、两段续训命令和步数、三个模型各自的测试结果，以及一条实际的生成失败样例。更多上下文长度与语料实验另行安排。
 
 通过后进入[第八周](week8.md)。

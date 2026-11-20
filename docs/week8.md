@@ -8,11 +8,11 @@
 
 ## 开始前
 
-开始前准备第三周的 `cifar10_split.json` 和已下载的 CIFAR-10 原图。第五周的测试结果、第六至七周的语言模型结果用于 Day 5 汇总。本周从 Day 1 创建 CLIP 配置和脚本。
+Day 1 在本地读第三周划分文件里的 `val_indices`，用全局索引从 CIFAR-10 官方训练集取 RGB 原图，交给 CLIP 自带的 processor。今天要新建 `configs/cv/clip_zeroshot.yaml` 和 `scripts/run_clip.py`。第五周的六组视觉测试结果到 Day 5 写报告时才用。[固定划分](../experiments/cnn_vs_resnet/week3/cifar10_split.json) · [CLIP 输入步骤](#clip-inputs)
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/vlm_qa/week8/README.md)。
+云端 LLM 和 VLM 各自加载配套权重。从第六、七周带过来的是生成时的检查方法，比如区分 prompt ID 和新生成的 ID。等云端环境或权重时，可以在本地先选评估图、写问题和判定标准，Day 4 核对清单后再统一推理。[问答清单格式](#vqa-manifests) · [本周实验记录](../experiments/vlm_qa/week8/README.md)
 
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -62,10 +62,9 @@ PetVisionLab/
 
 CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 张，以固定英文类别模板做零样本分类，使用模型自己的 processor。结果单列为预训练零样本条件。LLM/VLM 首次用 batch=1、greedy（do_sample=False）、max_new_tokens=128、固定 prompt 与精度；GPU 支持时可用 BF16，否则明确记录 FP32/FP16。VQA 在推理前写好至少 20 张图、每图 2 个问题与判定标准，覆盖类别、颜色、数量、位置和信息不足；每个问题独立上下文，不让前一题答案进入下一题。所选 SmolVLM 模型卡标注主要语言为英语，本轮优先用英文问题与判定标准；如增加中文题，单独报告语言条件和结果，避免把语言能力差异全部归因为视觉理解。
 
-## 六天安排
-
 <a id="inference-terms"></a>
-本周先区分下列对象和记录，后面的脚本会分别创建或保存它们：
+
+### 推理时用到的术语
 
 | 名称 | 本项目中的含义 |
 | --- | --- |
@@ -78,6 +77,8 @@ CLIP 默认对第三周 CIFAR 验证集按种子 42 每类选 20 张，共 200 �
 | greedy / do_sample=False | 每一步选得分最高的下一个 token，不做随机采样；不代表输出一定正确 |
 | max_new_tokens | 最多新增多少个 token，不含输入 prompt；遇到结束 token 时可能提前停止 |
 | image_id / qid / run_id | 图片编号 / 问题编号 / 一整轮推理的编号；同一轮的所有题共享 run_id，重跑才换一个 |
+
+## 六天安排
 
 | 学习日 | 修改哪些文件、按什么顺序做 | 做完应看到什么 |
 | --- | --- | --- |
@@ -668,9 +669,11 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --image data
 
 ### 操作步骤
 
-#### 第一步：先建立两个可对应的清单
+<a id="vqa-manifests"></a>
 
-在 `experiments/vlm_qa/week8/` 下创建 `images_manifest.csv` 和 `questions.jsonl`；真实图片放在项目根的 `datasets/raw/vqa/`，所需目录先创建。清单可以在编辑器填写，批量读取与完整性校验接入 `scripts/infer_vlm.py` 的批量分支。
+#### 第一步　核对图片、问题和预先写好的判定标准
+
+在 `experiments/vlm_qa/week8/` 下准备 `images_manifest.csv` 和 `questions.jsonl`，真实图片放在项目根的 `datasets/raw/vqa/`。如果已经在本地填好草稿，把两份清单和原图按相同目录放到云端，继续核对路径和图片 hash。批量读取与校验写在 `scripts/infer_vlm.py` 的批量分支。
 
 images_manifest.csv 每图一行，记录 image_id、local_path、source、sha256。local_path 统一相对于项目根目录，例如 datasets/raw/vqa/img001.jpg；在云端也放到同样的相对位置。图片自行选择可人工查看的样本并记录实际来源，CSV 只保存元数据，不包含图片内容。questions.jsonl 每题一行，通过 image_id 找图，通过 qid 唯一标识问题。
 
@@ -715,6 +718,12 @@ images_manifest.csv 每图一行，记录 image_id、local_path、source、sha25
 
 在 `scripts/infer_vlm.py` 顶层导入 `from uuid import uuid4`；main() 在批量循环之前执行一次 `run_id = uuid4().hex`，循环内所有成功 / 失败记录都使用这一个值。传给 infer_one 的 question 只取问题文本；reference / criterion 留给人工判定，不拼入模型输入。记录同时保留问题文本、图片 hash、实际模型 revision、生成参数、新增 IDs 和资源字段，使回答能对应到本次输入。成功状态写 ok，失败状态写 error；本步骤的 try/except 处理实际抛出的错误，尚未实现的强制超时不要写成已有能力。
 
+批量分支接好后，在云端运行一次。记下这次的 `run_id`，核对 `vlm_outputs.jsonl` 中每个 qid 各有一条成功或失败记录，再开始判定。
+
+```bash
+python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions experiments/vlm_qa/week8/questions.jsonl
+```
+
 #### 第三步：按预先标准人工判定
 
 创建 `experiments/vlm_qa/week8/judgments.csv`，写入下面的表头与所选 run_id 的全部人工判定。评分由你查看真实图片、预先标准和原始回答后填写，不让生成模型直接给自身输出评分。
@@ -733,13 +742,7 @@ judgments.csv 为每个 qid 标 correct/partial/wrong 及错误类型和理由�
 
 ### 运行与自查
 
-确认图片、题目和判定标准均已固定后，在云端执行：
-
-```bash
-python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions experiments/vlm_qa/week8/questions.jsonl
-```
-
-核对唯一图片数至少 20、每图至少两题，questions、outputs、judgments 的 qid 集合完全一致。重新运行某题时保留运行标识与原结果，并明确本轮统计选择哪次输出；不通过重复追加同一个 qid 增加题数。结果下载回本地时保留配置、model manifest 与 cloud 环境快照。
+读回刚评完的那一轮，核对唯一图片至少 20 张、每图至少两题，questions、outputs、judgments 的 qid 集合完全一致。将这轮原始回答与判定一起带回本地，并保存配置、model manifest 和云端环境快照。
 
 - [ ] 图像、问题、原始回答与人工判定均能通过 ID 对应。
 - [ ] 至少 20 张图片、40 条完整记录，包含失败结果。
@@ -775,11 +778,11 @@ python scripts/infer_vlm.py --config configs/vlm/vlm_inference.yaml --questions 
 
 #### 第二步：为报告结论链接实际指标、模型来源和失败样例
 
-准确率链接对应测试表和 checkpoint 标识；语言 loss 写 tokenizer、split 和有效 token 口径；VLM 指标链接原始输出与人工判定。
+视觉部分引用第五周的 `visual_test_results.csv` 和三类对照曲线，注明输入尺寸、预算和 checkpoint。CLIP 用的是第三周验证集的 200 张原图，和六个从零训练模型的完整测试集成绩分开列。[第五周实验记录](../experiments/vit_patch_size/week5/README.md)
 
-只有少量样例时表述为本次观察，不扩大为所有数据、模型或任务上的结论。
+语言部分从第六周找同词表的验证曲线，从第七周找三个模型各自的 `test_metrics.json`。给 loss 标出 tokenizer、split 和目标数，字符 Bigram 与字符 GPT 可以并列比较。BPE 单列，并用同一原文的编码长度解释两个词表的区别。[字符基线](../experiments/mini_gpt/week6/README.md) · [语言模型最终评估](../experiments/mini_gpt/week7/README.md)
 
-逐项核对「结论 → 本次设置 → 真实证据 → 局限」：例如视觉结论链接六变体测试表与三类对照曲线；语言结论附 tokenizer_hash、split 和目标数；VLM 结论附当前 run_id 的全部输出、判定及上述统计分母。结论尚无证据时列为待补，报告中的示例数字不替代实际运行值。
+问答部分引用同一 `run_id` 的原始输出和人工判定，以清单中的全部题目为分母。挑一条成功和一条失败记录解释判断依据，结论限定在这批图片和问题上。若某一类记录为空，写出实际数量。
 
 主线 CNN/ResNet/ViT/Mini-GPT 是自己从零训练；CLIP/LLM/VLM 使用预训练权重推理；微调属于后续路线。报告中记录各自初始化和权重来源。
 

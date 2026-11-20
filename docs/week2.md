@@ -10,11 +10,11 @@
 
 能手推第一周的 MSE 梯度，解释 `(N,d) @ (d,1)`，并运行 NumPy 线性回归。
 
-按当天的阅读范围、操作步骤和检查顺序学习。通用的路径、代码片段和记录约定见[执行说明](README.md#working-rules)；实际进度、命令和结果写在[本周实验记录](../experiments/mnist_mlp/week2/README.md)。
+已有 MNIST 结果时，先运行 `python scripts/torch_basics.py` 核对手写梯度，再运行 `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml --smoke`。配置的 batch 为 128，两批训练和两批验证各应统计 256 条样本。接着读历史曲线，找出 best 所在的轮次，核对最终测试记录中的 `checkpoint_epoch` 和 `n_samples`。重写训练循环从 Day 6 的单批练习接手。[训练曲线数据](../experiments/mnist_mlp/week2/history.csv) · [测试结果](../experiments/mnist_mlp/week2/test_metrics.json) · [Day 6](#day-6)
 
-本页的数据调用已按当前代码统一：build_mnist_loaders 必须接收 train_transform、eval_transform，mean/std 交给调用者创建的 Normalize。第三周的[接口步骤](week3.md#unified-loader-interface)用于解释这次组织方式；复习时不再退回四参数版本。当前训练模式已提取到 run_smoke、run_overfit、run_training，记录函数在 utils/history.py；本页按学习日解释它们，保留已完成的模型、数据分支和 checkpoint 功能。
+`build_mnist_loaders` 要求调用者传入 `train_transform` 和 `eval_transform`，归一化的 mean/std 用于构造这两个变换。`train_cv.py` 根据命令调用 `run_smoke`、`run_overfit` 或 `run_training`，保存曲线和历史记录的函数在 `utils/history.py`。[本周实验记录](../experiments/mnist_mlp/week2/README.md)
 
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 本周文件
 
@@ -1557,7 +1557,7 @@ python -m pytest tests/test_cv_training.py -q
 
 - [ ] smoke 跑通，过拟合检查证明模型能记住固定小样本。
 - [ ] 训练与验证模式、设备迁移和按样本加权统计正确。
-- [ ] 模型和数据接口已参数化，默认调用仍兼容，改变参数的小检查通过。
+- [ ] `MLP()` 和自定义尺寸的 MLP 都能前向。调用数据函数时显式传入两种 transform，验证集大小和批量大小取自配置。
 - [ ] YAML 字段已传给实际对象，入口按配置创建模型 / 数据 / 优化器；smoke/overfit 不覆盖正式结果。
 - [ ] 日志与曲线输出函数已接好，正式训练安排在 Day 5 保存流程完成后。
 
@@ -1696,13 +1696,19 @@ print({"split": args.split, "epoch": checkpoint["epoch"], **metrics})
 
 ### 运行与自查
 
+先用临时目录检查保存和加载。
+
 ```bash
 python -m pytest tests/test_cv_training.py -q
-python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml
-python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
 ```
 
-先跑小规模检查。首次执行时再用中间那条命令训练，最后加载 best 验证。复查已有实验只需运行测试和最后一条命令。要重训时，复制 YAML，改用新的 `experiment_dir` 和 `output_dir`，后续评估也传这份配置和新目录下的 best。训练应写出 `config.yaml`、五行 epoch 指标、训练曲线和 `best.pt/last.pt`；独立评估应覆盖 `5000` 条验证样本，并与 best 所在 epoch 的验证结果对应。若文件不存在，先查保存分支和 `output_dir`。
+仓库里已保存这次训练的五行指标和配置。本地有对应的 `best.pt` 时，直接用快照做独立验证。输出应覆盖 5,000 张验证图，能对上 best 所在轮的 loss 和 accuracy。[训练记录](../experiments/mnist_mlp/week2/history.csv)
+
+```bash
+python scripts/evaluate.py --config experiments/mnist_mlp/week2/config.yaml --checkpoint outputs/mnist_mlp/best.pt --split val
+```
+
+第一次从空目录训练时，运行 `python scripts/train_cv.py --config configs/cv/mlp_mnist.yaml`，等 `config.yaml`、五行指标、曲线和 `best.pt/last.pt` 写完，再做上面的独立验证。如果已有实验记录，另复制一份 YAML，改用新的 `experiment_dir` 和 `output_dir`。后续验证和测试都指向新运行的配置快照与 best。
 
 - [ ] best 按验证准确率选择，last 保存最后一轮，能解释两者何时相同。
 - [ ] 独立进程重建模型加载 best，完整验证集 5000 条的 loss / accuracy 与对应日志一致。
@@ -1797,8 +1803,12 @@ with result_path.open("w", encoding="utf-8") as file:
 
 ### 运行与自查
 
+复查已有实验时，打开测试记录，看它用的是哪一轮 best、覆盖了多少张图，再看错分样例。仓库这次的结果是 10,000 张测试图、准确率 96.62%。[测试记录](../experiments/mnist_mlp/week2/test_metrics.json) · [错分图与实验说明](../experiments/mnist_mlp/week2/README.md)
+
+首次评估自己训练并冻结的模型时，把命令中的配置快照和权重路径换成该次运行的路径，再执行一次。
+
 ```bash
-python scripts/evaluate.py --config configs/cv/mlp_mnist.yaml --checkpoint outputs/mnist_mlp/best.pt --split test
+python scripts/evaluate.py --config experiments/mnist_mlp/week2/config.yaml --checkpoint outputs/mnist_mlp/best.pt --split test
 ```
 
 核对终端输出和 `test_metrics.json` 都写明 `split=test`、`n_samples=10000`，检查误分类图中的真实类与预测类。将这轮实际配置和结果写入周总结；测试准确率以 `97%+` 为参考，流程与解释同样要通过验收。
