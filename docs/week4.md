@@ -10,7 +10,7 @@
 
 能写 `nn.Module` 的前向和反向检查，解释 BasicBlock 两条路径的形状。
 
-第四周 Day 5 已完成。继续学习时直接到 Day 6，用已经通过检查的两层 Encoder 画张量流，并重写多头计算。第一次学 Attention，可以从 Day 1 的零 query 手算开始。[Day 6](#day-6) · [Day 5 实验记录](../experiments/transformer_encoder/week4/README.md#day-5-checks) · [Day 1](#day-1)
+第四周 Day 6 已完成。复习时可先用零 query 手算，再运行独立草稿，最后沿张量流图解释两个 Block。按当前进度继续学习，可以从第五周的图像 Patch 开始。[Day 1](#day-1) · [Day 6 运行结果](../experiments/transformer_encoder/week4/README.md#day-6-results) · [第五周 Day 1](week5.md#day-1)
 
 更新于 2026-11-20。
 
@@ -27,6 +27,7 @@ PetVisionLab/
 │   ├── positional_encoding.py            # Day 5：正弦位置编码
 │   └── blocks.py                         # Day 4–5：FFN、AddNorm、EncoderBlock、Encoder
 ├── scripts/attention_basics.py            # Day 1：小矩阵手算对照
+├── tmp/attention_rewrite.py               # Day 6：按公式重写多头计算
 ├── tests/
 │   ├── test_attention.py                 # Day 2–3：Mask 与参考 Attention
 │   ├── test_layernorm.py                 # Day 4：输出与梯度
@@ -327,7 +328,7 @@ python -m pytest tests/test_attention.py -q \
   -k "test_attention_shapes_and_gradients or test_attention_invalid_heads or test_attention_reference"
 ```
 
-这条命令只选多头形状、非法 heads 和无 Mask 的参考测试。加 `-s` 可看到形状和最大绝对误差。当前 CPU float64 对照的阈值为 `1e-6`。
+这条命令检查多头形状、非法 heads 和参考数值。Day 2 的参考对照有八组无 Mask 用例，在当前仓库运行还会包括 Day 6 补齐的三组带 Mask 用例。加 `-s` 可以看到形状和最大绝对误差。CPU float64 对照的阈值为 `1e-6`。
 
 - [ ] 能解释 reshape 与 transpose 各改变了什么。
 - [ ] 权重映射完整，参考输出和梯度均有数值证据。
@@ -445,9 +446,9 @@ causal 打印前两个位置的输出误差；padding 分别打印两条序列�
 
 #### 第四步　补做带 Mask 的官方参考对照
 
-先运行 `python -m pytest tests/test_attention.py::test_attention_reference -q`。现有八组用例比较无 Mask 时两种实现的数值。前一步的扰动测试能发现未来信息泄漏，这一步检查屏蔽后算出的具体数值。
+先运行 `python -m pytest tests/test_attention.py::test_attention_reference -q`。八组用例比较无 Mask 时两种实现的数值，另三组比较屏蔽后的数值。前一步的扰动测试能发现未来信息泄漏，这一步核对具体的输出、权重和梯度。
 
-1. 在 `test_attention_reference` 的参数表里把每行写成 `(bias, B, T, mask_kind)`。原有八组均用无 Mask。再加三行，固定 `bias=False, B=2, T=8`，分别传 causal、padding 和两者合并。沿用 `C=32, heads=4`。
+1. 打开 `test_attention_reference` 的参数表，每行是 `(bias, B, T, mask_kind)`。除了八组无 Mask 的组合，另三组固定 `bias=False, B=2, T=8`，分别传 causal、padding 和两者合并。沿用 `C=32, heads=4`。
 2. 构造布尔表。causal 用 `[8,8]` 的严格上三角。padding 用 `[2,8]`，只把第一条序列的最后一个 key 标为 True。未用的表传 `None`。取第一条序列的首、末两个 query，分别写下三种条件下它们能读的 key，再看对应的两行权重。
 3. 复用 Day 2 的参数复制和两份独立叶子输入。自写层和 `nn.MultiheadAttention` 都传相同的 `attn_mask`、`key_padding_mask`，用 CPU float64、`eval()` 和零 dropout。自写层传 `return_weights=True`，官方层传 `need_weights=True, average_attn_weights=False`。
 4. 逐项比较输出、每头权重、同一 probe 反向得到的输入梯度和各投影参数梯度。每项最大绝对误差都应小于 `1e-6`。在周记录写下三种 Mask 的实测误差。已有全屏蔽行测试负责检查 `ValueError`。想研究批次、长度和 bias 对数值的影响时，再把四种 Mask 设置扩展到原来的八组输入。
@@ -742,7 +743,7 @@ python -m pytest tests/test_encoder.py -q -s \
 
 复用草稿中的 T=3 小例子，分别不传 Mask 和传严格上三角 Mask，打印一个 query 的注意力权重，指出它能读取哪些位置；不用扩展已有测试的参数组合。ViTBlock 使用双向 Attention，GPTBlock 使用同一个多头核心和 causal mask；各自的 pre-LN 与激活、dropout 顺序按后续章节组织。
 
-按仓库当前进度，完成上面的图和重写练习后，周总结还有一项待补。Day 3 已检查 Mask 能隔离扰动，带 Mask 的输出、每头权重和梯度还要与 PyTorch 逐项比较。用 causal、padding 和两者合并各做一次，把实测误差记在本周 README。已做过这项对照时，直接引用当次结果。[Day 3 的对照步骤](#masked-reference)
+Day 3 留下的三种 Mask 数值对照已在 Day 6 完成。复习时可用 `python tmp/attention_rewrite.py` 重跑小例子，再打开周记录，核对 causal、padding 和合并 Mask 的输出、每头权重和梯度误差。[Day 6 实验结果](../experiments/transformer_encoder/week4/README.md#day-6-results) · [两层 Encoder 张量流](../experiments/transformer_encoder/week4/tensor_flow.md)
 
 ### 运行与自查
 

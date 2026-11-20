@@ -3,7 +3,7 @@
 学习指南：[第四周逐日任务](../../../docs/week4.md)  
 总计划：[StudyPlan.md](../../../docs/StudyPlan.md)
 
-第四周 Day 5 已完成。接下来做 Day 6 的统一检查、张量流图和重写练习。Day 3 留下的带 Mask 官方数值对照安排在周末整理时补上。[Day 5 检查结果](#day-5-checks) · [Day 6 操作步骤](../../../docs/week4.md#day-6)
+第四周 Day 6 已完成。两层 Encoder 的张量流、独立重写结果，以及三种 Mask 与 PyTorch 的数值对照都已记录。[Day 6 实验结果](#day-6-results) · [张量流图](tensor_flow.md)
 
 <a id="environment"></a>
 
@@ -25,10 +25,11 @@ python -m pip check
 | 学习日 | 运行入口 | 用途 |
 | --- | --- | --- |
 | Day 1 | `python scripts/attention_basics.py` | 单头小矩阵演示 |
-| Day 2-3 | `python -m pytest tests/test_attention.py -q` | 多头、Mask 行为、无 Mask 的参考输出与梯度 |
+| Day 2-3 | `python -m pytest tests/test_attention.py -q` | 多头、Mask 行为、输出与梯度的参考对照 |
 | Day 4 | `python -m pytest tests/test_layernorm.py tests/test_encoder.py -q` | LayerNorm 对照与 Block 检查 |
 | Day 5 | `python -m pytest tests/test_encoder.py -q` | 位置编码、Block 与 Encoder |
 | Day 6 | `python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q` | 本周统一检查 |
+| Day 6 | `python tmp/attention_rewrite.py` | 零 query 的手算结果、两头的拆分与合并、同一行的双向与因果权重 |
 
 ## Day 1 检查记录（2026-11-06）
 
@@ -176,28 +177,43 @@ pe 的形状为 `[1,128,4]`，出现在 named_buffers 和 state_dict 中，不�
 
 运行 `python -m pytest tests/test_encoder.py -q -s`，结果为 **17 passed**，其中本步新增 3 项。加 -s 可查看位置编码、各层形状、代表梯度形状和扰动差值。
 
-## 后续计划配置与待保存结果
+<a id="day-6-results"></a>
 
-形状中 B 是批次序列数、T 是每条序列的位置数、C 是每个位置的特征数；heads 是头数，每头维度为 C/heads。Q/K 决定关注权重，V 提供被加权的信息；具体矩阵计算见[形状与术语说明](../../../docs/week4.md#attention-shapes)和[Day1 手算](../../../docs/week4.md#day-1)。
+## Day 6 统一检查与重写（2026-11-20）
 
-统一 `[B,T,C]` 输入，自写布尔 Mask 的 True=屏蔽；causal 与 padding 合并后逐 query 检查，任一行没有可关注 key 时明确抛出 ValueError。本轮使用保留首个有效 token 的右侧 padding；padding query 输出不要求为零。B=2、T=8、C=32、heads=4、FFN=128 为起始检查配置。参考运行关闭 dropout，使用相同权重、精度、输入与 Mask。记录每项最大误差、容差、是否使用 CPU/GPU；张量检查结果直接打印并在周末总结。
+在 `petvision` 环境用 CPU 运行，PyTorch 2.14.1+cu130。起初第四周三份测试共 66 项通过。为原有参考测试补入三种 Mask 后，第四周 **69 项通过**（Attention 40、LayerNorm 12、Encoder 17），全仓库 **115 项通过**。单独导入四个 Transformer 模块和练习脚本时，终端没有演示输出。
 
-在 attention.py 的 MultiHeadSelfAttention.forward 中保留 softmax 后、dropout 前的权重供检查；FeedForward 使用 Linear→ReLU→Linear，内部不放 dropout。blocks.py 的 EncoderBlock 分别调用 addnorm1、addnorm2，由各自 AddNorm 在子层输出上做 dropout，再残差相加和 post-LN。位置编码在构造表之前校验 embed_dim 为正偶数。
+```bash
+python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q
+python -m pytest tests/test_attention.py::test_attention_reference -q -s
+python tmp/attention_rewrite.py
+```
 
-数值对照写入 `tests/test_attention.py::test_attention_reference`，Mask 行为分别写入同文件的 test_attention_causal_mask、test_attention_padding_mask、test_attention_combined_masks 和 test_attention_rejects_fully_masked_query，输入与断言见[Day 2](../../../docs/week4.md#reference-check)和[Day 3](../../../docs/week4.md#day-3)。LayerNorm 参数在 normalization.py::LayerNorm.__init__ 注册，位置 pe 在 positional_encoding.py 的构造函数中注册为 buffer。ViT / GPT 复用 Attention、LayerNorm，在各自模型文件定义 ViTBlock / GPTBlock。
+### 三种 Mask 的数值对照
 
-| 文件或目录 | 内容与产生时间 |
-| --- | --- |
-| `tensor_flow.md` | Day 6：模型结构、维度、Mask 与子层说明 |
-| `tests/test_attention.py` | 项目根下：Attention 数值与行为检查 |
-| `tests/test_layernorm.py / tests/test_encoder.py` | 项目根下：归一化、位置编码、组合检查 |
+八组无 Mask 对照和三组带 Mask 对照全部通过。后三组固定 `B=2, T=8, C=32, heads=4`，使用 CPU float64、seed 42、无 bias、零 dropout。两种实现用相同的参数、输入和反向传播用的 probe。下表列出最大绝对误差，容差为 `1e-6`。最后一列取 Q、K、V 和输出投影四项权重梯度中的最大值。[参考测试](../../../tests/test_attention.py)
 
-运行后为结果补上链接、命令和配置；权重与原始数据留在忽略目录。
+| Mask | 输出 | 每头权重 | 输入梯度 | 投影权重梯度 |
+| --- | ---: | ---: | ---: | ---: |
+| causal | 1.11e-16 | 1.11e-16 | 4.44e-16 | 1.78e-15 |
+| padding | 1.11e-16 | 1.11e-16 | 1.67e-16 | 1.78e-15 |
+| 合并 | 1.11e-16 | 1.11e-16 | 3.33e-16 | 1.78e-15 |
+
+用第一条序列的首、末两个 query 看屏蔽方向。只用 causal 时，位置 0 只读 key 0，位置 7 可读全部八个 key。只用 padding 时，最后一个 key 被屏蔽，两个位置都可读 key 0 到 6。两表合并后，位置 0 仍只读 key 0，位置 7 只读 key 0 到 6。
+
+### 独立重写的小例子
+
+草稿直接用矩阵乘法、softmax 和四个投影完成多头计算。零 query 对三个 value 均分权重，输出为 `[3,2]`。两个头的例子使用 `[2,3,8]` 输入和单位投影，拆头后为 `[2,2,3,4]`，合头后恢复到 `[2,3,8]`。每行权重和为 1，因果表上三角的权重全为 0。[可运行的重写草稿](../../../tmp/attention_rewrite.py)
+
+| 第 0 条序列、第 0 头、query 1 | key 0 | key 1 | key 2 |
+| --- | ---: | ---: | ---: |
+| 双向 | 0.232697 | 0.383652 | 0.383652 |
+| 因果 | 0.377541 | 0.622459 | 0 |
+
+加入因果 Mask 后，位置 2 从分母中移除。前两个 key 的分数仍是 0 和 0.5，重新归一化后得到第二行的权重。
 
 ## 周总结
 
-- 参考对照：待运行后填写输出、输入梯度和参数梯度的最大误差、容差及设备。
-- Mask 与形状：待检查后填写未来隔离、padding、全屏蔽处理和张量流链接。
-- 重写与问题：待填写自己重写的片段、检查结果和仍不理解的计算。
+两层 Encoder 的输入和出口都是 `[2,8,32]`。容易混淆的是，拆头后的 Q 和注意力分数恰好都是 `[2,4,8,8]`，但 Q 的最后一轴是头内特征，分数的最后一轴是 key 位置。图中标出了各轴、两条残差的起点，以及相加后的 LayerNorm。[两层 Encoder 张量流](tensor_flow.md)
 
-周末用约 10-20 分钟补充，引用已有文件；未完成项写明卡在哪一步。
+第五周沿用 `MultiHeadSelfAttention` 和 `LayerNorm`，为图像 Patch 使用双向注意力。第六周再用因果 Mask 限制 GPT 读取未来位置。本次结果来自 CPU，设备迁移和 GPU 精度属于另一次实验。[第五周 Day 1](../../../docs/week5.md#day-1)

@@ -6,7 +6,7 @@
 
 第一周在本地 Conda 环境 `petvision` 中用 Python 3.12、NumPy 和 Matplotlib 做练习。视觉模型和 Mini-GPT 的训练预算按本地 RTX 4060 笔记本估算。第八周计划使用云端 48GB GPU，运行时记录型号、可用显存和依赖。
 
-本轮完成小模型的实现、训练和实验报告，并体验预训练推理。完整 Encoder-Decoder、宠物迁移对照、模型微调和 App 放入后续拓展。第一次学习可以从 Python 练习开始。仓库已完成第四周 Day 5，接下来在 Day 6 画出两层 Encoder 的张量形状，重写多头 Attention。[第一周 Day 1](week1.md#day-1) · [第四周 Day 6](week4.md#day-6)
+本轮完成小模型的实现、训练和实验报告，并体验预训练推理。完整 Encoder-Decoder、宠物迁移对照、模型微调和 App 放入后续拓展。第一次学习可以从 Python 练习开始。仓库已完成第四周 Day 6，接下来从第五周的图像 Patch 练习开始。[第一周 Day 1](week1.md#day-1) · [第五周 Day 1](week5.md#day-1)
 
 版本 v1.34，更新于 2026-11-20。
 

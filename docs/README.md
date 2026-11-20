@@ -6,12 +6,9 @@
 
 ## 从仓库现有进度接着学
 
-**第四周 Day 5 已完成，下一次从 Day 6 开始。** 11 月 16 日的记录里，位置编码、两层 Encoder 的前向与反向、因果 Mask 对后缀扰动的隔离都已通过检查。[Day 5 实验记录](../experiments/transformer_encoder/week4/README.md#day-5-checks)
+**第四周 Day 6 已完成，下一次从第五周 Day 1 开始。** 本周 69 项测试通过，三种 Mask 的数值对照和多头 Attention 重写都已有运行结果。[第四周实验记录](../experiments/transformer_encoder/week4/README.md#day-6-results) · [两层 Encoder 张量流](../experiments/transformer_encoder/week4/tensor_flow.md)
 
-1. 在项目根目录执行 `conda activate petvision`，再运行 `python -m pytest tests/test_attention.py tests/test_layernorm.py tests/test_encoder.py -q`，一起核对本周的三个模块。[第四周 Day 6](week4.md#day-6)
-2. 用 `[2,8,32]` 的输入追踪两层 Encoder。在 `tensor_flow.md` 里画出拆头、合头和两次残差相加的形状。然后只看公式重写多头计算，用长度为 3 的序列检查加上因果 Mask 后，哪些位置的权重变成了零。
-
-周末整理时，补上 Day 3 留下的三种 Mask 与 PyTorch 的数值对照。第五周将复用同一个 Attention 做图像分类。[Mask 对照做法](week4.md#masked-reference) · [第五周 Patch 练习](week5.md#day-1)
+第五周先手算一张 32×32 的 RGB 图能切出多少个 4×4 和 8×8 的 Patch，再实现 `PatchEmbedding`，分别核对 64 和 16 个图像 token。加入分类 token 后，序列长度变为 65 和 17。[第五周 Day 1](week5.md#day-1)
 
 ## 每周从哪里接手
 

@@ -4,7 +4,7 @@
 
 八周的目标是能独立实现、训练、调试和解释小模型，重点练习张量形状、梯度、训练评估和对照实验。完整 Encoder-Decoder、宠物数据集迁移、模型微调和 Gradio 应用放到后续学习。
 
-第四周 Day 5 已完成。接下来从 Day 6 开始，沿已有的两层 Encoder 画出张量形状，再按公式重写多头 Attention。第一次跟做可以从第一周三条样本的均方误差算起。[第四周 Day 6](docs/week4.md#day-6) · [第一周 Day 1](docs/week1.md#day-1) · [八周总计划](docs/StudyPlan.md#overview)
+第四周 Day 6 已完成，两层 Encoder 的张量流和带 Mask 的数值对照都已记录。下一步是第五周 Day 1，把一张 32×32 图片切成 Patch。第一次跟做可以从第一周三条样本的均方误差算起。[第五周 Day 1](docs/week5.md#day-1) · [第四周实验结果](experiments/transformer_encoder/week4/README.md#day-6-results) · [第一周 Day 1](docs/week1.md#day-1) · [八周总计划](docs/StudyPlan.md#overview)
 
 ## 八周安排
 

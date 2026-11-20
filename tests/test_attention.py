@@ -384,9 +384,17 @@ def test_attention_rejects_fully_masked_query(mask_kind):
     print(f"fully_masked: kind={mask_kind}, ValueError={error.value}")
 
 
-@pytest.mark.parametrize("bias", [False, True])
-@pytest.mark.parametrize("B,T", [(1, 1), (1, 8), (2, 1), (2, 8)])
-def test_attention_reference(bias, B, T):
+@pytest.mark.parametrize(
+    "bias,B,T,mask_kind",
+    [
+        (bias, B, T, "none")
+        for B in (1, 2)
+        for T in (1, 8)
+        for bias in (False, True)
+    ]
+    + [(False, 2, 8, kind) for kind in ("causal", "padding", "combined")],
+)
+def test_attention_reference(bias, B, T, mask_kind):
     # 全局种子固定模型初始化；独立生成器固定输入与两边共用的 probe。
     torch.manual_seed(42)
     generator = torch.Generator(device="cpu").manual_seed(42)
@@ -450,16 +458,35 @@ def test_attention_reference(bias, B, T):
     attention.zero_grad(set_to_none=True)
     reference.zero_grad(set_to_none=True)
 
-    output, weights = attention(x_custom, return_weights=True)
+    attn_mask = None
+    padding_mask = None
+    if mask_kind in ("causal", "combined"):
+        attn_mask = torch.ones(T, T, dtype=torch.bool).triu(1)
+    if mask_kind in ("padding", "combined"):
+        padding_mask = torch.zeros(B, T, dtype=torch.bool)
+        padding_mask[0, -1] = True
+
+    output, weights = attention(
+        x_custom,
+        attn_mask=attn_mask,
+        key_padding_mask=padding_mask,
+        return_weights=True,
+    )
     reference_output, reference_weights = reference(
         x_reference,
         x_reference,
         x_reference,
         need_weights=True,
         average_attn_weights=False,
+        attn_mask=attn_mask,
+        key_padding_mask=padding_mask,
     )
     assert output.shape == reference_output.shape == (B, T, embed_dim)
     assert weights.shape == reference_weights.shape == (B, 4, T, T)
+    if attn_mask is not None:
+        assert torch.count_nonzero(weights[:, :, attn_mask]) == 0
+    if padding_mask is not None:
+        assert torch.count_nonzero(weights[0, :, :, -1]) == 0
 
     # 同一个非平凡标量目标；eval 切换层行为，仍然允许求导。
     probe = torch.randn(output.shape, generator=generator, dtype=torch.float64)
@@ -513,7 +540,8 @@ def test_attention_reference(bias, B, T):
         )
         max_error = (actual - expected).abs().max().item()
         print(
-            f"B={B}, T={T}, bias={bias}, {name}: shape={tuple(actual.shape)}, "
+            f"B={B}, T={T}, bias={bias}, mask={mask_kind}, {name}: "
+            f"shape={tuple(actual.shape)}, "
             f"max_abs_error={max_error:.6e}, atol={tolerance:.0e}"
         )
         assert max_error < tolerance, (
